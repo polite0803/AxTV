@@ -82,6 +82,10 @@ import axtv.ui.LivePageSpec
 import coil.compose.AsyncImage
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.player.Media3Engine
+import com.github.axtv.dv.danmaku.DanmakuConfig
+import com.github.axtv.dv.danmaku.DanmakuOverlayController
+import com.github.axtv.dv.danmaku.DanmakuOverlayHost
+import com.github.axtv.dv.danmaku.DanmakuSettingsBinder
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.focusRing
 
@@ -123,12 +127,11 @@ fun LiveRoomScreen(
         settings?.liveDanmakuStyle() ?: Settings.DanmakuStyle.SCROLL
     }
     val rollingDanmaku = danmakuStyle == Settings.DanmakuStyle.SCROLL
-    val danmakuSource = remember { LiveDanmakuSource() }
     var danmakuController by remember { mutableStateOf<DanmakuOverlayController?>(null) }
     // 直播的总开关是 live_danmaku_enabled（DanmakuSettingsBinder 读的是点播开关），其余样式参数共用。
     val danmakuConfig = remember(settings) {
-        val source = settings?.let { DanmakuSettingsBinder(it).read() } ?: DanmakuConfig()
-        source.copy(enabled = settings?.liveDanmakuEnabled() == true)
+        val base = settings?.let { DanmakuSettingsBinder(it).read() } ?: DanmakuConfig()
+        base.copy(enabled = settings?.liveDanmakuEnabled() == true)
     }
 
     // 进入房间：有 webRid 时先走 enterRoom，info_by_scene 兜底（原版 op2 的顺序）。
@@ -247,6 +250,17 @@ fun LiveRoomScreen(
                             LiveCover(
                                 coverUrl = room?.cover()?.firstUrl().orEmpty(),
                                 message = if (playFailure == null) "正在连接直播画面…" else "画面不可用",
+                            )
+                        }
+                        // 滚动样式：叠一层录播浮层，弹幕由 LiveDanmakuFeed 回调经 sendLocal 上屏。
+                        // 直播没有时间轴，source 传 null（浮层只跑本地入队的条目）。
+                        if (rollingDanmaku) {
+                            DanmakuOverlayHost(
+                                source = null,
+                                comments = emptyList(),
+                                config = danmakuConfig,
+                                modifier = Modifier.fillMaxSize(),
+                                onControllerReady = { danmakuController = it },
                             )
                         }
                     }

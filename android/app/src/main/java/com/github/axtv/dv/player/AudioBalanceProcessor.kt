@@ -20,6 +20,7 @@
 package com.github.axtv.dv.player
 
 import android.content.Context
+import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -80,7 +81,7 @@ class AudioBalanceProcessor : BaseAudioProcessor() {
     ): AudioProcessor.AudioFormat =
         // 与 rs2.onConfigure 一致：只接 PCM 16bit / PCM float，其它编码声明不处理。
         when (inputAudioFormat.encoding) {
-            AudioProcessor.ENCODING_PCM_16BIT, AudioProcessor.ENCODING_PCM_FLOAT -> inputAudioFormat
+            C.ENCODING_PCM_16BIT, C.ENCODING_PCM_FLOAT -> inputAudioFormat
             else -> AudioProcessor.AudioFormat.NOT_SET
         }
 
@@ -103,7 +104,7 @@ class AudioBalanceProcessor : BaseAudioProcessor() {
             output.flip()
             return
         }
-        val floatInput = inputAudioFormat.encoding == AudioProcessor.ENCODING_PCM_FLOAT
+        val floatInput = inputAudioFormat.encoding == C.ENCODING_PCM_FLOAT
         val bytesPerSample = if (floatInput) 4 else 2
         val channels = inputAudioFormat.channelCount.coerceAtLeast(1)
         val sampleRate = inputAudioFormat.sampleRate.takeIf { it > 0 } ?: FALLBACK_SAMPLE_RATE

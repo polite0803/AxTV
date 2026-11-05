@@ -30,3 +30,6 @@ keystore/
 # JVM 崩溃转储
 hs_err_pid*.log
 replay_pid*.log
+
+# Qoder 会话产物与隔离工作树（禁止入库）
+.qoder/
