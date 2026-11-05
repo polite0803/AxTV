@@ -20,6 +20,9 @@ import axtv.model.FeedResponse;
  */
 public final class FeedApi {
 
+    /** n11.m8031W 里固定不变的 module_id；分区实际由 tag_id 区分。 */
+    private static final String MODULE_FEED_MODULE_ID = "3003101";
+
     private final DouyinApi api;
 
     public FeedApi(DouyinApi api) {
@@ -49,10 +52,24 @@ public final class FeedApi {
      */
     public FeedResponse tabFeed(int count, int refreshIndex, int pullType,
                                 List<String> recentAwemeIds) throws ApiException {
+        return tabFeed(count, refreshIndex, pullType, recentAwemeIds, "");
+    }
+
+    /**
+     * 指定分区（频道）的 tab 推荐流。
+     *
+     * <p>原版分区内容走 `/aweme/v2/web/module/feed/`，该端点现已下线（服务端回
+     * {@code 404 Unsupported path(Janus)}）。tab/feed 本身带 `tag_id` 参数，原版首页传空串，
+     * 这里用它承载分区 id，作为分区内容的替代通路。
+     *
+     * @param tagId 分区 id（频道设置接口的 key）；空串等价于首页推荐
+     */
+    public FeedResponse tabFeed(int count, int refreshIndex, int pullType,
+                                List<String> recentAwemeIds, String tagId) throws ApiException {
         ApiRequest request = ApiRequest.get(DouyinEndpoints.TAB_FEED)
                 .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("filterGids", "")
-                .param("tag_id", "")
+                .param("tag_id", tagId == null ? "" : tagId)
                 .param("share_aweme_id", "")
                 .param("live_insert_type", "")
                 .param("count", String.valueOf(count))
@@ -102,29 +119,61 @@ public final class FeedApi {
     /**
      * 频道/模块推荐流。`/aweme/v2/web/module/feed/`
      *
-     * @param moduleId 频道 id（`/aweme/v1/web/home/channel/setting/` 返回的 channel id）
+     * <p>参数逐键对齐 n11.m8031W：`module_id` 在原实现里是固定值 {@code 3003101}，
+     * 具体分区由 {@code tag_id} 决定（值来自频道设置接口的分区 key）；
+     * `presented_ids` / `pre_item_ids` 是已展示作品 id 的逗号串（原 kq5 维护最近 10 个）。
+     *
+     * @param tagId         分区 id；空串表示「全部」，调用方应改走 {@link #tabFeed}
+     * @param presentedIds  已展示作品 id，原实现取最近 10 个
      */
-    public FeedResponse moduleFeed(String moduleId, int count, int refreshIndex, int pullType) throws ApiException {
-        return api.callFor(ApiRequest.get(DouyinEndpoints.MODULE_FEED)
-                .param("module_id", moduleId)
+    public FeedResponse moduleFeed(String tagId, int count, int refreshIndex, int pullType,
+                                   List<String> presentedIds) throws ApiException {
+        String joined = presentedIds == null || presentedIds.isEmpty()
+                ? ""
+                : String.join(",", presentedIds.subList(0, Math.min(10, presentedIds.size())));
+        ApiRequest request = ApiRequest.get(DouyinEndpoints.MODULE_FEED)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
+                .param("module_id", MODULE_FEED_MODULE_ID)
                 .param("count", String.valueOf(count))
+                .param("filterGids", "")
+                .param("presented_ids", joined)
                 .param("refresh_index", String.valueOf(refreshIndex))
+                .param("refer_id", "")
+                .param("refer_type", "10")
                 .param("pull_type", String.valueOf(pullType))
-                .param("is_active_tab", "1")
-                .param("pc_libra_divert", "1")
+                .param("awemePcRecRawData",
+                        "{\"is_xigua_user\":0,\"danmaku_switch_status\":0,\"is_client\":false}")
+                .param("Seo-Flag", "0")
+                .param("install_time", String.valueOf(System.currentTimeMillis() / 1000 - 86400))
+                .param("tag_id", tagId)
+                .param("use_lite_type", "0")
+                .param("pre_log_id", "")
+                .param("pre_item_ids", joined)
+                .param("pre_room_ids", "")
+                .param("xigua_user", "0")
+                .param("pc_libra_divert", "Windows")
+                .param("support_h265", "1")
                 .param("support_dash", "1")
+                .param("active_id", "")
+                .param("is_active_tab", "false")
                 .commonParams()
                 .sign()
-                .uifidHeader(), FeedResponse.class);
+                .uifidHeader();
+        return api.callFor(request, FeedResponse.class);
     }
 
-    /** 关注流。`/aweme/v1/web/follow/feed/` */
+    /** 关注流。`/aweme/v1/web/follow/feed/`（参数键对齐 n11 关注 Feed 构造点） */
     public FeedResponse followFeed(int count, long cursor, String level) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.FOLLOW_FEED)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("count", String.valueOf(count))
                 .param("cursor", String.valueOf(cursor))
                 .param("level", level)
                 .param("pull_type", "0")
+                .param("aweme_ids", "")
+                .param("room_ids", "")
+                .param("webcast_sdk_version", "170400")
+                .param("webcast_version_code", "170400")
                 .commonParams()
                 .sign()
                 .uifidHeader(), FeedResponse.class);

@@ -32,6 +32,7 @@ public final class InteractionApi {
     public InteractionMutationResponse digg(String awemeId, int action, String itemType) throws ApiException {
         requireInteractionCredential();
         return api.callFor(ApiRequest.postForm(DouyinEndpoints.COMMIT_DIGG)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .body("aweme_id", awemeId)
                 .body("item_type", itemType == null ? "0" : itemType)
                 .body("type", String.valueOf(action))
@@ -50,6 +51,7 @@ public final class InteractionApi {
     public InteractionMutationResponse collect(String awemeId, int action) throws ApiException {
         requireInteractionCredential();
         return api.callFor(ApiRequest.postForm(DouyinEndpoints.AWEME_COLLECT)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .body("aweme_id", awemeId)
                 .body("action", String.valueOf(action))
                 .commonParams()
@@ -62,6 +64,7 @@ public final class InteractionApi {
     /** 不喜欢。`/aweme/v1/web/commit/dislike/item/` */
     public InteractionMutationResponse dislike(String awemeId) throws ApiException {
         return api.callFor(ApiRequest.postForm(DouyinEndpoints.COMMIT_DISLIKE)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .body("aweme_id", awemeId)
                 .commonParams()
                 .sign()
@@ -71,6 +74,7 @@ public final class InteractionApi {
     /** 一级评论。`/aweme/v1/web/comment/list/` */
     public CommentListResponse comments(String awemeId, long cursor, int count) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.COMMENT_LIST)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("aweme_id", awemeId)
                 .param("cursor", String.valueOf(cursor))
                 .param("count", String.valueOf(count))
@@ -82,6 +86,7 @@ public final class InteractionApi {
     /** 二级评论（回复）。`/aweme/v1/web/comment/list/reply/` */
     public CommentListResponse replies(String itemId, String commentId, long cursor, int count) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.COMMENT_REPLY)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("item_id", itemId)
                 .param("comment_id", commentId)
                 .param("cursor", String.valueOf(cursor))

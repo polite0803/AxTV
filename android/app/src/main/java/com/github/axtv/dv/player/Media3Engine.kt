@@ -31,11 +31,16 @@ import axtv.player.PlayerConfig
 import axtv.player.PlayerEngine
 import axtv.player.VideoMediaCache
 import axtv.player.VideoSize
+import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.widget.WidgetPlaybackItem
 import com.github.axtv.dv.widget.WidgetPlayerControls
 import com.github.axtv.dv.widget.WidgetRuntime
 import okhttp3.OkHttpClient
 import java.io.File
+import java.util.concurrent.TimeUnit
+
+/** 与 Settings.videoLoadTimeoutSeconds() 的缺省一致：设置未装配时用这个超时秒数。 */
+private const val DEFAULT_LOAD_TIMEOUT_SECONDS = 10
 
 /**
  * 进程级共享资源：OkHttpClient + 磁盘缓存。
@@ -45,7 +50,21 @@ import java.io.File
  */
 internal object Media3Resources {
 
-    private val httpClient: OkHttpClient by lazy { OkHttpClient.Builder().build() }
+    /**
+     * 『视频加载超时』的消费点：取流数据源的连接/读取超时按设置档位取值。
+     *
+     * 进程级只建一次客户端，所以改完设置要下次进播放器才生效；settings 未装配时用
+     * 核心层同一个默认值 10 秒（Settings.videoLoadTimeoutSeconds 的缺省），不自造数值。
+     */
+    private val httpClient: OkHttpClient by lazy {
+        val seconds = (AppRuntime.settings?.videoLoadTimeoutSeconds() ?: DEFAULT_LOAD_TIMEOUT_SECONDS)
+            .coerceAtLeast(1)
+            .toLong()
+        OkHttpClient.Builder()
+            .connectTimeout(seconds, TimeUnit.SECONDS)
+            .readTimeout(seconds, TimeUnit.SECONDS)
+            .build()
+    }
 
     @Volatile
     private var cache: SimpleCache? = null

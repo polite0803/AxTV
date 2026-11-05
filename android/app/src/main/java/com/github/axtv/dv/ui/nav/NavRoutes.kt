@@ -2,8 +2,8 @@
  * 统一路由表：把 widget 端与本应用内已有的 route 字符串收敛到同一处解析。
  *
  * 规则来源：refactor/app/axtv/app/AppRoutes.java（EXTRA_ROUTE / parse / encode）。
- * 已接线页面：home / detail / player / play/aweme / search / search/results / live /
- *            live/room / mix/list / mix/detail / mix/play / profile(history|favorites|later) /
+ * 已接线页面：home / featured / featured/play / detail / player / play/aweme / search / search/results /
+ *            live / live/room / mix/list / mix/detail / mix/play / profile(history|favorites|later) /
  *            settings / login。
  * 未识别 route 一律落首页（MainActivity 额外记一条日志）。
  * 各目标页面的真实签名见同目录 CONTRACT.md。
@@ -20,6 +20,12 @@ sealed interface NavDestination {
 
     data object Home : NavDestination
 
+    /** 精选频道页（分区内容列表）。 */
+    data object Featured : NavDestination
+
+    /** 精选播放：startIndex 指向 FeaturedRepository.cachedAwemes 的条目序号。 */
+    data class FeaturedPlay(val startIndex: Int = 0) : NavDestination
+
     data class Detail(val awemeId: String) : NavDestination
 
     /** 播放器；startIndex 指向首页信息流队列中的条目序号。 */
@@ -34,7 +40,13 @@ sealed interface NavDestination {
 
     data object Live : NavDestination
 
-    data class LiveRoom(val roomId: String) : NavDestination
+    /**
+     * 直播间。
+     *
+     * @param roomId 解析后的房间 id（room_id → id_str → enter_room_id → web_rid）
+     * @param webRid 列表下发的 web_rid；进房接口只用它，为空时只能走 info_by_scene
+     */
+    data class LiveRoom(val roomId: String, val webRid: String = "") : NavDestination
 
     data object MixList : NavDestination
 
@@ -60,6 +72,8 @@ sealed interface NavDestination {
 val NavDestination.debugLabel: String
     get() = when (this) {
         NavDestination.Home -> "Home"
+        NavDestination.Featured -> "Featured"
+        is NavDestination.FeaturedPlay -> "FeaturedPlay"
         is NavDestination.Detail -> "Detail"
         is NavDestination.Player -> "Player"
         is NavDestination.PlayerAweme -> "PlayerAweme"
@@ -81,6 +95,8 @@ val NavDestination.debugLabel: String
 object NavRoutes {
 
     const val HOME = "home"
+    const val FEATURED = "featured"
+    const val FEATURED_PLAY = "featured/play"
     const val DETAIL = "detail"
     const val PLAYER = "player"
     const val PLAY_AWEME = "play/aweme"
@@ -104,7 +120,7 @@ object NavRoutes {
 
     /** 已知页面集合（供 MainActivity 判断「未识别 route」并记日志）。 */
     private val KNOWN_PAGES = setOf(
-        HOME, DETAIL, PLAYER, PLAY_AWEME,
+        HOME, FEATURED, FEATURED_PLAY, DETAIL, PLAYER, PLAY_AWEME,
         SEARCH, SEARCH_RESULTS,
         LIVE, LIVE_ROOM,
         MIX_LIST, MIX_DETAIL, MIX_PLAY,
@@ -120,14 +136,19 @@ object NavRoutes {
     fun player(startIndex: Int): String =
         if (startIndex <= 0) PLAYER else "$PLAYER?index=$startIndex"
 
+    fun featuredPlay(startIndex: Int): String =
+        if (startIndex <= 0) FEATURED_PLAY else "$FEATURED_PLAY?index=$startIndex"
+
     fun playerAweme(awemeId: String): String =
         "$PLAY_AWEME?awemeId=${AppRoutes.encode(awemeId)}"
 
     fun searchResults(query: String): String =
         "$SEARCH_RESULTS?query=${AppRoutes.encode(query)}"
 
-    fun liveRoom(roomId: String): String =
-        "$LIVE_ROOM?id=${AppRoutes.encode(roomId)}"
+    fun liveRoom(roomId: String, webRid: String = ""): String {
+        val base = "$LIVE_ROOM?id=${AppRoutes.encode(roomId)}"
+        return if (webRid.isBlank()) base else base + "&webRid=${AppRoutes.encode(webRid)}"
+    }
 
     fun mixDetail(mixId: String): String =
         "$MIX_DETAIL?id=${AppRoutes.encode(mixId)}"
@@ -149,6 +170,12 @@ object NavRoutes {
         val args = target.args()
         return when (page) {
             HOME, "" -> NavDestination.Home
+
+            FEATURED -> NavDestination.Featured
+
+            FEATURED_PLAY -> NavDestination.FeaturedPlay(
+                args["index"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+            )
 
             DETAIL -> args["awemeId"].orEmpty()
                 .takeIf { it.isNotEmpty() }
@@ -173,7 +200,7 @@ object NavRoutes {
 
             LIVE_ROOM -> args["id"].orEmpty()
                 .takeIf { it.isNotEmpty() }
-                ?.let { NavDestination.LiveRoom(it) }
+                ?.let { NavDestination.LiveRoom(it, args["webRid"].orEmpty()) }
                 ?: NavDestination.Live
 
             MIX_LIST -> NavDestination.MixList
@@ -211,6 +238,8 @@ object NavRoutes {
     /** 目的地的规范 route（用于返回栈持久化与去重）。 */
     fun routeOf(destination: NavDestination): String = when (destination) {
         NavDestination.Home -> HOME
+        NavDestination.Featured -> FEATURED
+        is NavDestination.FeaturedPlay -> featuredPlay(destination.startIndex)
         is NavDestination.Detail -> detail(destination.awemeId)
         is NavDestination.Player -> player(destination.startIndex)
         is NavDestination.PlayerAweme -> playerAweme(destination.awemeId)

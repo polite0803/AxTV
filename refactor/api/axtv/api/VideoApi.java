@@ -33,6 +33,7 @@ public final class VideoApi {
      */
     public WorkDetailResponse detail(String awemeId) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.AWEME_DETAIL)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("aweme_id", awemeId)
                 .param("origin_type", "0")
                 .param("request_source", "0")
@@ -47,6 +48,7 @@ public final class VideoApi {
     /** 相关推荐。`/aweme/v1/web/aweme/related/` */
     public FeedResponse related(String awemeId, int count, int refreshIndex) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.AWEME_RELATED)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("aweme_id", awemeId)
                 .param("count", String.valueOf(count))
                 .param("refresh_index", String.valueOf(refreshIndex))
@@ -66,6 +68,7 @@ public final class VideoApi {
      */
     public DanmakuResponse danmaku(String itemId, String groupId, long duration) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.DANMAKU)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("item_id", itemId)
                 .param("group_id", groupId == null ? itemId : groupId)
                 .param("duration", String.valueOf(duration))
@@ -84,6 +87,7 @@ public final class VideoApi {
     /** 播放埋点。`/aweme/v2/web/aweme/stats/`（POST 表单）。原实现丢弃响应体，保留 String 仅用于排障。 */
     public String stats(String awemeId, String itemType, long playDeltaMillis) throws ApiException {
         return api.call(ApiRequest.postForm(DouyinEndpoints.AWEME_STATS)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .body("aweme_id", awemeId)
                 .body("item_type", itemType)
                 .body("play_delta", String.valueOf(playDeltaMillis / 1000L))
@@ -95,6 +99,7 @@ public final class VideoApi {
     /** 观看历史。`/aweme/v1/web/history/read/` */
     public UserWorksResponse historyRead(long maxCursor, int count, int status) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.HISTORY_READ)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("max_cursor", String.valueOf(maxCursor))
                 .param("count", String.valueOf(count))
                 .param("status", String.valueOf(status))
@@ -114,6 +119,7 @@ public final class VideoApi {
      */
     public String historyWrite(String awemeId, String enterFrom, long publishTime) throws ApiException {
         return api.call(ApiRequest.postForm(DouyinEndpoints.HISTORY_WRITE)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .body("aweme_id", awemeId)
                 .body("enter_from", enterFrom)
                 .body("publish_time", String.valueOf(publishTime))
@@ -127,6 +133,7 @@ public final class VideoApi {
     /** 稍后再看列表。`/aweme/v1/web/watchlater/list/` */
     public UserWorksResponse watchLater(int offset, int count, int operateType) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.WATCH_LATER)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("offset", String.valueOf(offset))
                 .param("count", String.valueOf(count))
                 .param("operate_type", String.valueOf(operateType))

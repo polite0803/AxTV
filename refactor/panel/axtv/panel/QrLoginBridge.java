@@ -101,6 +101,9 @@ public final class QrLoginBridge {
               window.__dyPollAt = 0;
               function save(url, text) {
                 try {
+                  // 自建会话已经拿到码时，页面自己的响应不再覆盖：两套 token 交错会让界面
+                  // 显示一张没人轮询的旧码。自建会话还没出码前仍接受页面响应，避免两边都空。
+                  if (window.__dySelfQr) return;
                   if (url.indexOf('/passport/web/get_qrcode/') >= 0) window.__dyQr = text;
                   else if (url.indexOf('/passport/web/check_qrconnect/') >= 0) {
                     window.__dyPoll = text;
@@ -147,8 +150,93 @@ public final class QrLoginBridge {
                     + "      poll: window.__dyPoll || null,\n      pollAt: window.__dyPollAt || 0\n"
                     + "    });\n  } catch (e) { return JSON.stringify({error:String(e)}); }\n})()\n";
 
-    public static final long PAGE_LOAD_TIMEOUT_MS = 60_000L;
-    public static final long QR_TIMEOUT_MS = 60_000L;
+    /**
+     * 出码参数：真实登录页请求 get_qrcode / check_qrconnect 时用的那一套（aid=2906 + request_host）。
+     * 缺 request_host 或 aid 换成 6383 都会被风控判成 4031，逐字保留。
+     */
+    static final String SELF_QR_PARAMS =
+            "passport_jssdk_version=3.4.17&passport_jssdk_type=normal&is_from_ttaccountsdk=1"
+                    + "&aid=2906&language=zh&account_app_language=zh-CN&ts=1793880000"
+                    + "&next=https%3A%2F%2Fcreator.douyin.com%2F&need_short_url=true&need_logo=false"
+                    + "&is_new_login=1&is_from_iesaccountsaas=1&p_ui=2.4.19&account_sdk_source=web"
+                    + "&p_js_v=3.4.17&p_js_t=pro&p_zt=3.3.34&p_ver=1.1.4-beta.5&p_ver_real=0"
+                    + "&request_host=https%253A%252F%252Fcreator.douyin.com&p_bd=1.0.1.16";
+
+    /**
+     * 页面自身不出码时的自建会话脚本。
+     *
+     * <p>电视盒子的 WebView 内核常比手机落后好几代，登录页的 UMD 包跑不起来时，页面既不会请求
+     * get_qrcode、也不会轮询，界面只能等到「二维码生成超时」。本脚本只用 ES5 + XMLHttpRequest
+     * （不依赖 fetch/Promise/箭头函数），在同一页面内自己出码并轮询，结果仍写回
+     * {@code __dyQr/__dyPoll}，主流程无需区分来源。
+     *
+     * <p>已实测：同源请求出码与轮询都不需要 sign/a_bogus，只要 aid=2906 与 request_host 正确。
+     */
+    public static final String SELF_QR_SCRIPT =
+            "(function(){\n"
+                    + "  if (window.__dySelf) return;\n"
+                    + "  window.__dySelf = true;\n"
+                    + "  var P = '" + SELF_QR_PARAMS + "';\n"
+                    + "  var token = null;\n"
+                    + "  var confirmedAt = 0;\n"
+                    + "  var busy = false;\n"
+                    + "  function request(method, url, body, done) {\n"
+                    + "    try {\n"
+                    + "      var xhr = new XMLHttpRequest();\n"
+                    + "      xhr.open(method, url, true);\n"
+                    + "      xhr.withCredentials = true;\n"
+                    + "      if (body) xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');\n"
+                    + "      xhr.onreadystatechange = function(){\n"
+                    + "        if (xhr.readyState !== 4) return;\n"
+                    + "        try { done(xhr.responseText); } catch (e) {}\n"
+                    + "      };\n"
+                    + "      xhr.send(body || null);\n"
+                    + "    } catch (e) {}\n"
+                    + "  }\n"
+                    + "  function getQr() {\n"
+                    + "    request('GET', '/passport/web/get_qrcode/?' + P, null, function(text){\n"
+                    + "      var t = null;\n"
+                    + "      try { t = JSON.parse(text).data.token; } catch (e) {}\n"
+                    + "      if (!t) return;\n"
+                    + "      window.__dyQr = text;\n"
+                    + "      window.__dySelfQr = true;\n"
+                    + "      token = t;\n"
+                    + "    });\n"
+                    + "  }\n"
+                    + "  function poll() {\n"
+                    + "    if (busy || confirmedAt) return;\n"
+                    + "    if (!token) { getQr(); return; }\n"
+                    + "    busy = true;\n"
+                    + "    request('POST', '/passport/web/check_qrconnect/?' + P, 'token=' + encodeURIComponent(token), function(text){\n"
+                    + "      busy = false;\n"
+                    + "      window.__dyPoll = text;\n"
+                    + "      window.__dyPollAt = new Date().getTime();\n"
+                    + "      var d = null;\n"
+                    + "      try { d = JSON.parse(text).data; } catch (e) { return; }\n"
+                    + "      if (!d) return;\n"
+                    + "      if (d.status === 'confirmed') {\n"
+                    + "        confirmedAt = new Date().getTime();\n"
+                    + "        window.location.href = d.redirect_url ? d.redirect_url : '/';\n"
+                    + "      } else if (d.status === 'expired' || d.status === 'refused') {\n"
+                    + "        token = null;\n"
+                    + "      }\n"
+                    + "    });\n"
+                    + "  }\n"
+                    + "  getQr();\n"
+                    + "  setInterval(poll, 2000);\n"
+                    + "})()\n";
+
+    /** 自建会话的出码参数（测试用；生产代码直接引用常量）。 */
+    public static String selfQrParams() {
+        return SELF_QR_PARAMS;
+    }
+
+    /** 自建会话脚本（测试用；生产代码直接引用常量）。 */
+    public static String selfQrScript() {
+        return SELF_QR_SCRIPT;
+    }
+
+    public static final long PAGE_LOAD_TIMEOUT_MS = 60_000L;    public static final long QR_TIMEOUT_MS = 60_000L;
     public static final long QR_FIRST_TIMEOUT_MS = 20_000L;
     public static final long EVAL_TIMEOUT_MS = 15_000L;
     public static final long COOKIE_TIMEOUT_MS = 5_000L;
@@ -255,9 +343,13 @@ public final class QrLoginBridge {
             this.webView.loadUrl(LOGIN_URL, PAGE_LOAD_TIMEOUT_MS);
             this.webView.evaluateJavascript(HOOK_SCRIPT, EVAL_TIMEOUT_MS);
 
+            // 页面自己在 20s 内没出码（电视端 WebView 内核旧、登录页 UMD 包跑不起来）时，
+            // 改用页面内自建会话继续出码，而不是干等 60s 后报「二维码生成超时」。
+            long firstDeadline = System.currentTimeMillis() + QR_FIRST_TIMEOUT_MS;
             long deadline = System.currentTimeMillis() + QR_TIMEOUT_MS;
             byte[] image = null;
             String imageRaw = null;
+            boolean selfStarted = false;
             while (!this.cancelled && System.currentTimeMillis() < deadline) {
                 Snapshot head = snapshot();
                 byte[] decoded = head.qrRaw == null ? null : parseQrImage(head.qrRaw);
@@ -266,6 +358,18 @@ public final class QrLoginBridge {
                     imageRaw = head.qrRaw;
                     break;
                 }
+                if (!selfStarted && System.currentTimeMillis() > firstDeadline) {
+                    selfStarted = true;
+                    // 页面已经耗掉首轮预算，自建会话重新起算，否则会剩不到 40s 就报超时。
+                    deadline = System.currentTimeMillis() + QR_TIMEOUT_MS;
+                    this.log.log(Level.INFO, "page did not produce qr in " + QR_FIRST_TIMEOUT_MS
+                            + "ms, start self qr session");
+                    try {
+                        this.webView.evaluateJavascript(SELF_QR_SCRIPT, EVAL_TIMEOUT_MS);
+                    } catch (Exception e) {
+                        this.log.log(Level.WARNING, "self qr session failed to start", e);
+                    }
+                }
                 sleep(POLL_INTERVAL_MS);
             }
             if (this.cancelled) {
@@ -273,7 +377,11 @@ public final class QrLoginBridge {
             }
             if (image == null) {
                 // 原实现：C1902zy.m12465i("抖音二维码生成超时，请重试")
-                publish(new State(Status.FAILED, "抖音二维码生成超时，请重试", null, "", "", false));
+                publish(new State(Status.FAILED,
+                        selfStarted
+                                ? "抖音二维码生成超时（登录页未出码，自动出码也失败），请检查网络后重试"
+                                : "抖音二维码生成超时，请重试",
+                        null, "", "", false));
                 return;
             }
             publish(new State(Status.WAITING_SCAN, "等待扫码", image, "", "", false));
@@ -365,6 +473,14 @@ public final class QrLoginBridge {
                             + "), reload login page (#" + staleRestarts + ")");
                     publish(new State(Status.STARTING, "二维码已失效，正在重新生成", image, "", "", false));
                     this.webView.loadUrl(LOGIN_URL, PAGE_LOAD_TIMEOUT_MS);
+                    if (selfStarted) {
+                        // 重载会清掉页面里的自建会话（__dySelf），旧 token 也随之失效。
+                        try {
+                            this.webView.evaluateJavascript(SELF_QR_SCRIPT, EVAL_TIMEOUT_MS);
+                        } catch (Exception e) {
+                            this.log.log(Level.WARNING, "self qr session failed to restart", e);
+                        }
+                    }
                     freshAt = System.currentTimeMillis();
                     pollAt = 0L;
                     frameRaw = null;

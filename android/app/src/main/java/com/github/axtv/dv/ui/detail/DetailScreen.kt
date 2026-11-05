@@ -573,7 +573,8 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
                         if (metaLine.isNotEmpty()) {
                             HintText(metaLine)
                         }
-                        if (aweme.desc().isNotBlank()) {
+                        // 『进详情页显示简介』的消费点：关闭时只显示标题/作者/元信息，不铺简介正文。
+                        if (aweme.desc().isNotBlank() && AppRuntime.settings?.showDetailsOnStart() != false) {
                             Text(
                                 text = aweme.desc(),
                                 color = AxTvColors.TextSecondary,

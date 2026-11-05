@@ -269,6 +269,22 @@ class PlayerSession(
         refreshProgress()
     }
 
+    /**
+     * 按相对位移跳转（遥控器左右键微调）。
+     *
+     * 与 [seekTo] 不同：先取当前位置，再 clamp 到 [0, duration] 后 seek，
+     * 避免「负值被 ExoPlayer 当 0」与「超长被 clamp」两种边界都出错。
+     * 与核心层 PlayerEngine.seekTo 语义一致（无负值保护）。
+     */
+    fun seekBy(deltaMs: Long) {
+        if (released) {
+            return
+        }
+        val current = positionMs
+        val target = (current + deltaMs).coerceIn(0L, durationMs.coerceAtLeast(0L))
+        seekTo(target)
+    }
+
     fun applySpeed(value: Float) {
         speed = value
         engine.setSpeed(value)
@@ -353,6 +369,36 @@ class PlayerSession(
         released = true
         pendingSurface = null
         engine.release()
+    }
+
+    // ------------------------------------------------------------------ 遥控器键
+
+    /**
+     * 播放页遥控器键分发（对应 ro5.m9957h + r13.f18571e 的媒体键重映射）。
+     *
+     * - 左/右 → 按 [SEEK_STEP_MS] 相对跳转（ro5 的 C1780wn byte 7/9 → -10000L、byte 8 → +10000L）；
+     * - 上/下 → 上一条 / 下一条（Media3Engine.handle 的 MEDIA_PREVIOUS / MEDIA_NEXT）；
+     * - 其它键不认，返回 false 交给焦点系统。
+     *
+     * 与原实现的差异：原版 ro5 把左右键绑成「长按连发」，这里只做单次步进；
+     * 重复按下会再次步进，语义等价且实现更简单。
+     */
+    fun handleRemoteKey(keyCode: Int): Boolean = when (keyCode) {
+        KEY_DPAD_LEFT -> { seekBy(-SEEK_STEP_MS); true }
+        KEY_DPAD_RIGHT -> { seekBy(SEEK_STEP_MS); true }
+        KEY_DPAD_UP -> engine.playPrevious()
+        KEY_DPAD_DOWN -> engine.playNext()
+        else -> false
+    }
+
+    companion object {
+        /** 左右键单次步进：10 000ms，对应 ro5 的 Renderer.DEFAULT_DURATION_TO_PROGRESS_US。 */
+        const val SEEK_STEP_MS = 10_000L
+
+        private const val KEY_DPAD_LEFT = 21
+        private const val KEY_DPAD_RIGHT = 22
+        private const val KEY_DPAD_UP = 19
+        private const val KEY_DPAD_DOWN = 20
     }
 
     // ------------------------------------------------------------------ 错误 / 备用链

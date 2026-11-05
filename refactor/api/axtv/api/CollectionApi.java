@@ -33,6 +33,7 @@ public final class CollectionApi {
     /** 合集详情。`/aweme/v1/web/mix/detail/` */
     public MixDetailResponse mixDetail(String mixId) throws ApiException {
         return api.callFor(ApiRequest.get("/aweme/v1/web/mix/detail/")
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("mix_id", mixId)
                 .commonParams()
                 .sign()
@@ -42,6 +43,7 @@ public final class CollectionApi {
     /** 合集内视频。`/aweme/v1/web/mix/aweme/` */
     public FeedResponse mixAwemes(String mixId, long cursor, int count) throws ApiException {
         return api.callFor(ApiRequest.get("/aweme/v1/web/mix/aweme/")
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("mix_id", mixId)
                 .param("cursor", String.valueOf(cursor))
                 .param("count", String.valueOf(count))
@@ -53,6 +55,7 @@ public final class CollectionApi {
     /** 收藏的合集。`/aweme/v1/web/mix/listcollection/` */
     public MixListResponse mixListCollection(long cursor, int count) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.MIX_LISTCOLLECTION)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("cursor", String.valueOf(cursor))
                 .param("count", String.valueOf(count))
                 .commonParams()
@@ -67,6 +70,7 @@ public final class CollectionApi {
      */
     public ApiStatusResponse recordMixProgress(String mixId, String itemId, int episode, String scene) throws ApiException {
         return api.callFor(ApiRequest.postForm(DouyinEndpoints.MIX_WATCH_RECORD)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .body("mix_id", mixId)
                 .body("item_id", itemId)
                 .body("episode", String.valueOf(episode))
@@ -79,6 +83,7 @@ public final class CollectionApi {
     /** 用户的系列列表。`/aweme/v1/web/series/list/` */
     public MixListResponse seriesList(String secUserId, long cursor, int count) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.SERIES_LIST)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("sec_user_id", secUserId)
                 .param("cursor", String.valueOf(cursor))
                 .param("count", String.valueOf(count))
@@ -92,6 +97,7 @@ public final class CollectionApi {
     /** 系列详情。`/aweme/v1/web/series/detail/` */
     public MixDetailResponse seriesDetail(String seriesId) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.SERIES_DETAIL)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("series_id", seriesId)
                 .param("req_from", "collection")
                 .commonParams()
@@ -102,6 +108,7 @@ public final class CollectionApi {
     /** 系列内视频。`/aweme/v1/web/series/aweme/` */
     public UserWorksResponse seriesAwemes(String seriesId, long cursor, int count, int pullType) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.SERIES_AWEME)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("series_id", seriesId)
                 .param("cursor", String.valueOf(cursor))
                 .param("count", String.valueOf(count))
@@ -115,6 +122,7 @@ public final class CollectionApi {
     /** 首页频道设置。`/aweme/v1/web/home/channel/setting/` */
     public ChannelSettingResponse channelSetting(String channel) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.HOME_CHANNEL_SETTING)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("channel", channel)
                 .commonParams()
                 .sign()
@@ -124,6 +132,7 @@ public final class CollectionApi {
     /** 弹幕表情。`/aweme/v1/web/emoji/list` */
     public EmojiListResponse emojiList() throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.EMOJI_LIST)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .commonParams()
                 .sign()
                 .uifidHeader(), EmojiListResponse.class);

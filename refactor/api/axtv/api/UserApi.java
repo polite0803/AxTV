@@ -30,6 +30,7 @@ public final class UserApi {
     /** 我的主页。`/aweme/v1/web/user/profile/self/` */
     public UserProfileResponse profileSelf() throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.USER_PROFILE_SELF)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .commonParams()
                 .sign()
                 .uifidHeader()
@@ -39,6 +40,7 @@ public final class UserApi {
     /** 他人主页。`/aweme/v1/web/user/profile/other/` */
     public UserProfileResponse profileOther(String secUserId, String source) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.USER_PROFILE_OTHER)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("sec_user_id", secUserId)
                 .param("source", source)
                 .param("publish_video_strategy_type", "2")
@@ -51,6 +53,7 @@ public final class UserApi {
     /** 用户作品。`/aweme/v1/web/aweme/post/` */
     public UserWorksResponse userPosts(String secUserId, long maxCursor, int count) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.AWEME_POST)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("sec_user_id", secUserId)
                 .param("max_cursor", String.valueOf(maxCursor))
                 .param("count", String.valueOf(count))
@@ -68,6 +71,7 @@ public final class UserApi {
     /** 用户"喜欢"列表。`/aweme/v1/web/aweme/favorite/` */
     public UserWorksResponse userFavorites(String secUserId, long maxCursor, long minCursor, int count) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.AWEME_FAVORITE)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("sec_user_id", secUserId)
                 .param("max_cursor", String.valueOf(maxCursor))
                 .param("min_cursor", String.valueOf(minCursor))
@@ -82,6 +86,7 @@ public final class UserApi {
     /** 关注列表。`/aweme/v1/web/user/following/list/` */
     public UserListResponse following(String secUserId, int offset, int count) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.USER_FOLLOWING)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("sec_user_id", secUserId)
                 .param("offset", String.valueOf(offset))
                 .param("count", String.valueOf(count))
@@ -96,6 +101,7 @@ public final class UserApi {
     /** 粉丝列表。`/aweme/v1/web/user/follower/list/` */
     public UserListResponse followers(String secUserId, int offset, int count) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.USER_FOLLOWER)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("sec_user_id", secUserId)
                 .param("offset", String.valueOf(offset))
                 .param("count", String.valueOf(count))
@@ -113,6 +119,7 @@ public final class UserApi {
      */
     public UserWorksResponse collectionList(long cursor, int count) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.AWEME_LISTCOLLECTION)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("cursor", String.valueOf(cursor))
                 .param("count", String.valueOf(count))
                 .commonParams()

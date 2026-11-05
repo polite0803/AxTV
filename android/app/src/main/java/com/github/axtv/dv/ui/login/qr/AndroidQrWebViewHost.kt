@@ -59,12 +59,15 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
     private var pageFinished: CountDownLatch? = null
     private var destroyed = false
     @Volatile private var pageStarted = false
+    /** 主帧加载失败（ERR_NAME_NOT_RESOLVED / ERR_CONNECTION_* 等），用来把真实原因带出 WebView。 */
+    @Volatile private var mainFrameError: String? = null
 
     // ───────────────────────── QrLoginBridge.WebViewHost ─────────────────────────
 
     override fun loadUrl(url: String, timeoutMs: Long) {
         val latch = CountDownLatch(1)
         pageStarted = false
+        mainFrameError = null
         callOnMain {
             val view = ensureWebView()
             pageFinished = latch
@@ -78,7 +81,14 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
             if (pageStarted) {
                 Log.w(TAG, "loadUrl timeout (${timeoutMs}ms) but page already started, continue")
             } else {
-                throw IOException("抖音登录页加载超时（${timeoutMs}ms）")
+                val reason = mainFrameError
+                throw IOException(
+                    if (reason != null) {
+                        "抖音登录页加载失败（$reason）"
+                    } else {
+                        "抖音登录页加载超时（${timeoutMs}ms）"
+                    },
+                )
             }
         }
         pageFinished = null
@@ -228,6 +238,21 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
                 Log.i(TAG, "onPageFinished $url")
                 webView.evaluateJavascript(QrLoginBridge.HOOK_SCRIPT, null)
                 pageFinished?.countDown()
+            }
+
+            /**
+             * 只记主帧错误：子资源（图片/埋点）失败不该让登录页判死，电视盒子常见的
+             * ERR_NAME_NOT_RESOLVED / ERR_CONNECTION_TIMED_OUT 都从这里暴露出来。
+             */
+            override fun onReceivedError(
+                webView: WebView,
+                request: android.webkit.WebResourceRequest,
+                error: android.webkit.WebResourceError,
+            ) {
+                if (!request.isForMainFrame) return
+                val detail = "err=${error.errorCode} ${error.description}"
+                mainFrameError = detail
+                Log.w(TAG, "main frame error: $detail url=${request.url}")
             }
 
             override fun shouldOverrideUrlLoading(webView: WebView, url: String?): Boolean {

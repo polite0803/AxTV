@@ -295,7 +295,9 @@ fun ProfileScreen(
                         }
 
                         is LoadState.Ready -> {
-                            val works = posts.value.works()
+                            // 『个人页倒序播放列表』的消费点：开启后作品网格从旧到新排列。
+                            val reversed = AppRuntime.settings?.reversePlaylistInProfile() == true
+                            val works = if (reversed) posts.value.works().reversed() else posts.value.works()
                             if (works.isEmpty()) {
                                 item { EmptyPane("还没有作品") }
                             } else {

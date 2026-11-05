@@ -40,9 +40,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
+import axtv.settings.Settings
+import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.ui.collection.MixDetailScreen
 import com.github.axtv.dv.ui.collection.MixListScreen
 import com.github.axtv.dv.ui.detail.DetailScreen
+import com.github.axtv.dv.ui.featured.FeaturedScreen
 import com.github.axtv.dv.ui.home.HomeFeedScreen
 import com.github.axtv.dv.ui.library.FavoritesScreen
 import com.github.axtv.dv.ui.library.HistoryScreen
@@ -53,6 +56,7 @@ import com.github.axtv.dv.ui.login.LoginScreen
 import com.github.axtv.dv.ui.nav.NavDestination
 import com.github.axtv.dv.ui.nav.NavRoutes
 import com.github.axtv.dv.ui.nav.PlayerFromAwemeScreen
+import com.github.axtv.dv.ui.nav.PlayerFromFeaturedScreen
 import com.github.axtv.dv.ui.nav.PlayerFromFeedScreen
 import com.github.axtv.dv.ui.nav.RouteRequest
 import com.github.axtv.dv.ui.nav.debugLabel
@@ -65,6 +69,7 @@ private data class TopTab(val label: String, val route: String)
 
 private val TOP_TABS = listOf(
     TopTab("首页", NavRoutes.HOME),
+    TopTab("精选", NavRoutes.FEATURED),
     TopTab("搜索", NavRoutes.SEARCH),
     TopTab("直播", NavRoutes.LIVE),
     TopTab("合集", NavRoutes.MIX_LIST),
@@ -74,6 +79,7 @@ private val TOP_TABS = listOf(
 
 private fun TopTab.isSelected(destination: NavDestination): Boolean = when (route) {
     NavRoutes.HOME -> destination is NavDestination.Home
+    NavRoutes.FEATURED -> destination is NavDestination.Featured || destination is NavDestination.FeaturedPlay
     NavRoutes.SEARCH -> destination is NavDestination.Search
     NavRoutes.LIVE -> destination is NavDestination.Live
     NavRoutes.MIX_LIST -> destination is NavDestination.MixList
@@ -88,6 +94,18 @@ private val RouteStackSaver = listSaver<SnapshotStateList<String>, String>(
     restore = { it.toMutableStateList() },
 )
 
+/**
+ * 设置项『默认首页』的消费点：冷启动（无深链 / 无外部 route）时落在哪一页。
+ *
+ * 原版四档里「移动推荐」是另一套信息流接口，本应用未实现，按首页处理；
+ * 设置页该档文案已标注这一点，避免出现"选了却静默变首页"的歧义。
+ */
+private fun defaultHomeRoute(): String = when (AppRuntime.settings?.defaultHomeScreen()) {
+    Settings.HomeScreen.FEATURED -> NavRoutes.FEATURED
+    Settings.HomeScreen.FOLLOWING -> NavRoutes.LIVE
+    else -> NavRoutes.HOME
+}
+
 @Composable
 fun AxTvApp(
     initialRoute: String? = null,
@@ -97,7 +115,7 @@ fun AxTvApp(
     val initial = initialRoute
         ?.takeIf { it.isNotBlank() }
         ?.let { NavRoutes.normalize(it) }
-        ?: NavRoutes.HOME
+        ?: defaultHomeRoute()
 
     val backStack = rememberSaveable(saver = RouteStackSaver) {
         if (initial == NavRoutes.HOME) {
@@ -151,10 +169,20 @@ fun AxTvApp(
     val currentRoute = backStack.lastOrNull() ?: NavRoutes.HOME
     val destination = remember(currentRoute) { NavRoutes.parse(currentRoute) }
 
+    // 播放页要真正全屏：顶部 tab 栏不渲染（画面被顶栏挤占就不满屏）；直播页保留顶栏（侧栏布局另算）。
+    val immersive = destination is NavDestination.Player ||
+        destination is NavDestination.PlayerAweme ||
+        destination is NavDestination.FeaturedPlay ||
+        destination is NavDestination.MixPlay
+
     AxTvTheme {
         BackHandler(enabled = backStack.size > 1) { goBack() }
+        // 『禁用双击返回退出』的消费点：开启后在栈底吞掉 BACK，不退出应用。
+        BackHandler(enabled = backStack.size == 1 && AppRuntime.settings?.disableDoubleBackExit() == true) { }
         Column(modifier = Modifier.fillMaxSize().background(AxTvColors.Bg)) {
-            TopTabBar(current = destination, onSelect = { navigateTab(it.route) })
+            if (!immersive) {
+                TopTabBar(current = destination, onSelect = { navigateTab(it.route) })
+            }
             when (val target = destination) {
                 NavDestination.Home -> HomeFeedScreen(
                     rememberedFocusIndex = homeFocusIndex,
@@ -163,6 +191,18 @@ fun AxTvApp(
                         navigate(NavRoutes.player(startIndex))
                     },
                     onOpenRoute = { navigate(it) },
+                    modifier = Modifier.weight(1f),
+                )
+
+                NavDestination.Featured -> FeaturedScreen(
+                    onOpenPlayer = { startIndex -> navigate(NavRoutes.featuredPlay(startIndex)) },
+                    onOpenSettings = { navigate(NavRoutes.SETTINGS) },
+                    modifier = Modifier.weight(1f),
+                )
+
+                is NavDestination.FeaturedPlay -> PlayerFromFeaturedScreen(
+                    startIndex = target.startIndex,
+                    onBack = { goBack() },
                     modifier = Modifier.weight(1f),
                 )
 
@@ -204,12 +244,16 @@ fun AxTvApp(
                 NavDestination.Live -> Box(modifier = Modifier.weight(1f)) {
                     LiveListScreen(
                         onBack = { goBack() },
-                        onOpenRoom = { roomId -> navigate(NavRoutes.liveRoom(roomId)) },
+                        onOpenRoom = { roomId, webRid -> navigate(NavRoutes.liveRoom(roomId, webRid)) },
                     )
                 }
 
                 is NavDestination.LiveRoom -> Box(modifier = Modifier.weight(1f)) {
-                    LiveRoomScreen(roomId = target.roomId, onBack = { goBack() })
+                    LiveRoomScreen(
+                        roomId = target.roomId,
+                        webRid = target.webRid,
+                        onBack = { goBack() },
+                    )
                 }
 
                 NavDestination.MixList -> Box(modifier = Modifier.weight(1f)) {
@@ -268,7 +312,10 @@ fun AxTvApp(
                     )
                 }
 
-                NavDestination.Settings -> SettingsScreen(modifier = Modifier.weight(1f))
+                NavDestination.Settings -> SettingsScreen(
+                    modifier = Modifier.weight(1f),
+                    onOpenRoute = { navigate(it) },
+                )
 
                 NavDestination.Login -> Box(modifier = Modifier.weight(1f)) {
                     LoginScreen(

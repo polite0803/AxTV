@@ -9,10 +9,11 @@
  * - .../ui/player/PlayerSurface.kt（SURFACE_VIEW / TEXTURE_VIEW 两种宿主写法，本文件就地复刻）
  *
  * 取流链路：
- *   LiveApi.enterRoom(roomId) → LiveRoomEnterResponse.firstRoom() → LiveRoom.streamUrl()
+ *   LiveApi.enterRoom(webRid) → LiveRoomEnterResponse.firstRoom() → LiveRoom.streamUrl()
  *   → LiveStreamResolver.resolveWithFallback(..., AUTO) 得到首选地址
  *   → flv/hls 全部取值兜底，失败时自动切下一个地址（只重试一次）→ 仍失败出错误卡片。
- *   取不到房间时退回 LiveApi.roomInfoByScene(roomId, "web_room")。
+ *   没有 webRid 或进房拿不到房间时，退回 LiveApi.roomInfoByScene(roomId)
+ *   （scene 固定 aweme_video_feed_pc）。
  *
  * 弹幕：列表样式（LiveDanmakuFeed）；不使用录播的滚动浮层。
  *
@@ -92,6 +93,7 @@ private const val VISIBLE_COMMENTS = 8
 @Composable
 fun LiveRoomScreen(
     roomId: String,
+    webRid: String = "",
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -114,8 +116,8 @@ fun LiveRoomScreen(
     var onlineCount by remember { mutableStateOf<Long?>(null) }
     var danmakuState by remember { mutableStateOf(DanmakuState.CONNECTING) }
 
-    // 进入房间：enterRoom 为主，roomInfoByScene 为兜底。
-    LaunchedEffect(roomId, reloadToken) {
+    // 进入房间：有 webRid 时先走 enterRoom，info_by_scene 兜底（原版 op2 的顺序）。
+    LaunchedEffect(roomId, webRid, reloadToken) {
         loading = true
         loadError = null
         playFailure = null
@@ -125,7 +127,7 @@ fun LiveRoomScreen(
         comments = emptyList()
         onlineCount = null
         danmakuState = DanmakuState.CONNECTING
-        LiveRepository.room(roomId)
+        LiveRepository.room(roomId, webRid)
             .onSuccess { loaded ->
                 if (loaded == null) {
                     loadError = "未取到直播间信息（房间可能已下播或已失效）"

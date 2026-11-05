@@ -6,11 +6,20 @@
  *
  * 播放链路：ExoPlayer（Media3Engine）← PlayerEngine（状态机）← PlayerSession ← 本页；
  * 数据源由调用方通过 PlaylistProvider 注入，本页不直接访问 API。
+ *
+ * 全屏：无按键 4 秒后顶部标题与底部按钮一起隐去（应用顶栏在播放页不渲染，见 AxTvApp）。
+ * 方向键与确认键始终由画面层接收（不让底部按钮抢焦点，否则控制层一隐藏焦点就落空）：
+ * 上下换视频、左右 ±10s 微调、确认播放/暂停、菜单键开播放面板，任意按键唤醒控制层，
+ * BACK 第一次只唤醒控制层。语义出处 refactor/app/p000/on5.java 的 r13 tap map
+ * （21/22 → seek、19/20 → 换条）与 PlayerSession.handleRemoteKey。
  */
 package com.github.axtv.dv.ui.player
 
+import android.view.KeyEvent as AndroidKeyEvent
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -39,9 +49,14 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -62,8 +77,15 @@ import com.github.axtv.dv.widget.WidgetPlaybackItem
 import com.github.axtv.dv.widget.WidgetRuntime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import java.util.Calendar
 import java.util.Locale
 import kotlin.math.abs
+
+/** 控制层（顶部标题 + 底部按钮）无操作自动隐藏延时。 */
+private const val CONTROLS_AUTO_HIDE_MS = 4_000L
+
+/** 播放时钟取时间隔（整点 / 半点模式最多滞后一分钟）。 */
+private const val CLOCK_TICK_MS = 15_000L
 
 @Composable
 fun PlayerOverlayScreen(
@@ -89,6 +111,11 @@ fun PlayerOverlayScreen(
     val completionAction = remember(settings) {
         settings?.completionAction() ?: Settings.CompletionAction.AUTO_NEXT
     }
+    // 设置页三项：暂停时是否隐藏控件 / 底部是否画进度条 / 播放时钟显示模式。
+    val cleanPause = remember(settings) { settings?.cleanPause() ?: false }
+    val showProgressBar = remember(settings) { settings?.playerProgressBar() ?: false }
+    val clockMode = remember(settings) { settings?.playbackClock() ?: Settings.PlaybackClock.NEVER }
+    val clockText = rememberPlayerClock(clockMode)
 
     val session = remember(provider, settings) {
         PlayerSession(
@@ -188,16 +215,100 @@ fun PlayerOverlayScreen(
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     val menuTriggerRequester = remember { FocusRequester() }
     val firstMenuItemRequester = remember { FocusRequester() }
+    val surfaceFocusRequester = remember { FocusRequester() }
 
-    // 菜单开合时把焦点交给对应区域；下一帧再请求，避免节点尚未 attach。
+    /**
+     * 控制层（顶部标题 + 底部按钮）显隐：无按键 [CONTROLS_AUTO_HIDE_MS] 后隐藏，
+     * 任意遥控器按键唤醒。
+     *
+     * 保持显示的条件：菜单打开、播放出错，或「暂停中且未开启设置项『纯净暂停』」。
+     */
+    var chromeVisible by rememberSaveable { mutableStateOf(true) }
+    var chromeWakeAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val latestMenuOpen by rememberUpdatedState(menuOpen)
+
+    /** 「纯净暂停」关闭时，暂停要把控制层留住；开启时暂停也保持全屏纯净画面。 */
+    val keepChromeWhilePaused = !session.isPlaying && !cleanPause
+
+    fun wakeChrome() {
+        chromeVisible = true
+        chromeWakeAt = System.currentTimeMillis()
+    }
+
+    /**
+     * 遥控器键分发（画面层始终持有焦点，对应原版 r13 的 tap map 绑在播放器节点上）。
+     *
+     * - 左/右 → ±[PlayerSession.SEEK_STEP_MS] 微调，长按连发（原版 ro5 即连发语义）；
+     * - 上/下 → 上一条 / 下一条，只认首次按下（连发会一路跳过 N 条）；
+     * - 确认 → 播放/暂停；菜单键 → 打开播放菜单；
+     * - 其余键不认，交回系统（BACK 由 BackHandler 处理）。
+     *
+     * 控制层只是"看得见的一层"，不参与焦点导航：底部按钮保留指针点击，方向键不会被它们吃掉。
+     * 菜单面板打开时整层让位，面板内部自己走焦点导航。
+     * 每条按键都会唤醒控制层（标准 TV 播放器语义）。
+     */
+    fun dispatchPlayerKey(event: KeyEvent): Boolean {
+        if (latestMenuOpen) return false
+        if (event.type != KeyEventType.KeyDown) return false
+        // 用 nativeKeyEvent.keyCode：Compose 的 Key 对 TV 方向键解析不出稳定的 keycode（实测拿到 Unknown/0）。
+        val keyCode = event.nativeKeyEvent.keyCode
+        val isSwitch = keyCode == AndroidKeyEvent.KEYCODE_DPAD_UP || keyCode == AndroidKeyEvent.KEYCODE_DPAD_DOWN
+        val isSeek = keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT || keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT
+        val isConfirm = keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
+            keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+            keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER
+        val isOpenMenu = keyCode == AndroidKeyEvent.KEYCODE_MENU || keyCode == AndroidKeyEvent.KEYCODE_INFO
+        if (!isSwitch && !isSeek && !isConfirm && !isOpenMenu) return false
+        val suppressedByRepeat = isSwitch && event.nativeKeyEvent.repeatCount > 0
+        if (!suppressedByRepeat) {
+            when {
+                isConfirm -> session.togglePlayPause()
+                isOpenMenu -> menuOpen = true
+                else -> session.handleRemoteKey(keyCode)
+            }
+        }
+        wakeChrome()
+        return true
+    }
+
+    // 画面层持有焦点：进入播放页先抢一次，菜单关闭后收回来（否则按键会落进焦点空洞）。
     LaunchedEffect(menuOpen) {
         withFrameNanos { }
         runCatching {
-            if (menuOpen) firstMenuItemRequester.requestFocus() else menuTriggerRequester.requestFocus()
+            if (menuOpen) firstMenuItemRequester.requestFocus() else surfaceFocusRequester.requestFocus()
         }
     }
 
-    Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
+    // 自动隐藏倒计时：每次按键（chromeWakeAt）与播放态变化都会重启。
+    LaunchedEffect(
+        chromeVisible,
+        chromeWakeAt,
+        menuOpen,
+        keepChromeWhilePaused,
+        session.error,
+    ) {
+        if (!chromeVisible || menuOpen || session.error != null || keepChromeWhilePaused) {
+            return@LaunchedEffect
+        }
+        val remaining = chromeWakeAt + CONTROLS_AUTO_HIDE_MS - System.currentTimeMillis()
+        delay(remaining.coerceAtLeast(0L))
+        chromeVisible = false
+    }
+
+    // 切条目也算一次交互（连播时标题短暂浮现，与原版换条后重置控制层一致）。
+    LaunchedEffect(session.playlistIndex) { wakeChrome() }
+
+    // 控制层隐藏时 BACK 先唤出控制层，再按一次才退出播放页。
+    BackHandler(enabled = !chromeVisible && !menuOpen) { wakeChrome() }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .focusRequester(surfaceFocusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event -> dispatchPlayerKey(event) },
+    ) {
         PlayerSurface(
             session = session,
             surfaceType = surfaceType,
@@ -213,7 +324,7 @@ fun PlayerOverlayScreen(
         )
 
         Column(modifier = Modifier.fillMaxSize()) {
-            PlayerHeader(session, surfaceType)
+            if (chromeVisible) PlayerHeader(session, surfaceType, clockText)
 
             Box(
                 modifier = Modifier.fillMaxWidth().weight(1f),
@@ -238,11 +349,31 @@ fun PlayerOverlayScreen(
                         session.state != PlayerState.ENDED && session.state != PlayerState.ERROR ->
                         PlayerHint(text = "加载中…")
 
-                    !session.isPlaying && session.firstFrameRendered -> PlayerHint(text = "已暂停")
+                    !cleanPause && !session.isPlaying && session.firstFrameRendered ->
+                        PlayerHint(text = "已暂停")
                 }
             }
 
-            PlayerBottomBar(session, menuTriggerRequester, onOpenMenu = { menuOpen = true })
+            if (chromeVisible) {
+                PlayerBottomBar(
+                    session = session,
+                    menuTriggerRequester = menuTriggerRequester,
+                    showProgress = showProgressBar,
+                    onOpenMenu = { menuOpen = true },
+                )
+            }
+        }
+
+        // 时钟：控制层可见时随标题栏显示，隐藏时浮在右上角（设置项『播放时钟』的唯一落点）。
+        if (!chromeVisible && clockText != null) {
+            Text(
+                text = clockText,
+                color = Color.White.copy(alpha = 0.82f),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 20.dp, end = 32.dp),
+                style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium),
+            )
         }
 
         if (menuOpen) {
@@ -263,7 +394,11 @@ fun PlayerOverlayScreen(
 }
 
 @Composable
-private fun PlayerHeader(session: PlayerSession, surfaceType: Settings.SurfaceType) {
+private fun PlayerHeader(
+    session: PlayerSession,
+    surfaceType: Settings.SurfaceType,
+    clockText: String?,
+) {
     val surfaceLabel = when (surfaceType) {
         Settings.SurfaceType.SURFACE_VIEW -> "SurfaceView"
         Settings.SurfaceType.TEXTURE_VIEW -> "TextureView"
@@ -276,21 +411,37 @@ private fun PlayerHeader(session: PlayerSession, surfaceType: Settings.SurfaceTy
             .padding(horizontal = 32.dp, vertical = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // 标题吃掉剩余宽度并省略号收尾：抖音标题普遍很长，不加权重要把条数/时钟/进度挤出屏幕。
         Text(
             text = session.currentTitle.ifEmpty { "播放器浮层" },
             color = AxTvColors.TextPrimary,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold),
         )
         Spacer(Modifier.width(12.dp))
         Text(
             text = "第 ${session.playlistIndex + 1}/${session.itemCount} 条 · 画面：$surfaceLabel",
             color = AxTvColors.TextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             style = TextStyle(fontSize = 13.sp),
         )
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.width(12.dp))
+        if (clockText != null) {
+            Text(
+                text = clockText,
+                color = AxTvColors.TextSecondary,
+                maxLines = 1,
+                style = TextStyle(fontSize = 13.sp),
+            )
+            Spacer(Modifier.width(12.dp))
+        }
         Text(
             text = "${formatTime(session.positionMs)} / ${formatTime(session.durationMs)}",
             color = AxTvColors.TextSecondary,
+            maxLines = 1,
             style = TextStyle(fontSize = 13.sp),
         )
     }
@@ -340,6 +491,7 @@ private fun PlayerErrorCard(
 private fun PlayerBottomBar(
     session: PlayerSession,
     menuTriggerRequester: FocusRequester,
+    showProgress: Boolean,
     onOpenMenu: () -> Unit,
 ) {
     val progress = if (session.durationMs > 0L) {
@@ -354,19 +506,21 @@ private fun PlayerBottomBar(
             .padding(horizontal = 32.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .background(AxTvColors.Divider, RoundedCornerShape(2.dp)),
-        ) {
-            if (progress > 0f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress)
-                        .height(4.dp)
-                        .background(AxTvColors.Accent, RoundedCornerShape(2.dp)),
-                )
+        if (showProgress) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .background(AxTvColors.Divider, RoundedCornerShape(2.dp)),
+            ) {
+                if (progress > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(progress)
+                            .height(4.dp)
+                            .background(AxTvColors.Accent, RoundedCornerShape(2.dp)),
+                    )
+                }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -544,4 +698,35 @@ private val defaultCommentDanmakuLoader: suspend (itemId: String, durationMs: Lo
 private fun formatTime(millis: Long): String {
     val totalSeconds = (millis / 1000L).coerceAtLeast(0L)
     return String.format(Locale.US, "%02d:%02d", totalSeconds / 60L, totalSeconds % 60L)
+}
+
+/**
+ * 播放时钟（设置页『播放时钟』的唯一消费点）。
+ *
+ * 模式语义：ALWAYS 常显、HOURLY 只在整点显示、HOURLY_AND_HALF 在整点与半点显示、NEVER 不显示。
+ * 每 [CLOCK_TICK_MS] 取一次时间，保证整点 / 半点后的一分钟内出现，不必逐秒刷新。
+ * 不显示时返回 null，由调用方决定是渲染在标题栏还是浮在右上角。
+ */
+@Composable
+private fun rememberPlayerClock(mode: Settings.PlaybackClock): String? {
+    if (mode == Settings.PlaybackClock.NEVER) return null
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(mode) {
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            delay(CLOCK_TICK_MS)
+        }
+    }
+    val calendar = Calendar.getInstance().apply { timeInMillis = nowMs }
+    val hour = calendar.get(Calendar.HOUR_OF_DAY)
+    val minute = calendar.get(Calendar.MINUTE)
+    if (!clockVisibleAt(mode, minute)) return null
+    return String.format(Locale.US, "%02d:%02d", hour, minute)
+}
+
+private fun clockVisibleAt(mode: Settings.PlaybackClock, minute: Int): Boolean = when (mode) {
+    Settings.PlaybackClock.ALWAYS -> true
+    Settings.PlaybackClock.HOURLY -> minute == 0
+    Settings.PlaybackClock.HOURLY_AND_HALF -> minute == 0 || minute == 30
+    Settings.PlaybackClock.NEVER -> false
 }

@@ -13,6 +13,9 @@ import axtv.model.LiveFeedResponseHome;
 import axtv.model.LiveRoomEnterResponse;
 import axtv.model.LiveRoomResponse;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
  * 直播 HTTP 接口。WebSocket 弹幕见 axtv.live。
  *
@@ -23,6 +26,9 @@ import axtv.model.LiveRoomResponse;
  * 按场景取房间信息是 byte 12 → {@link LiveRoomResponse}。
  */
 public final class LiveApi {
+
+    /** n11.m8027S 里的固定场景值（原版唯一取值）。 */
+    private static final String INFO_BY_SCENE = "aweme_video_feed_pc";
 
     private final DouyinApi api;
 
@@ -62,31 +68,53 @@ public final class LiveApi {
         return api.callFor(request.commonParams().sign().uifidHeader(), LiveFeedResponseHome.class);
     }
 
-    /** 关注的主播谁在直播。`/webcast/web/feed/follow/` */
+    /**
+     * 关注的主播谁在直播。`/webcast/web/feed/follow/`
+     *
+     * <p>与推荐流同一条 m8002r 通路（i=216）：live 基础层 + m8011D0 公共参数。
+     */
     public LiveFeedResponse followFeed(String scene) throws ApiException {
         return api.callFor(liveRequest(DouyinEndpoints.LIVE_FOLLOW_FEED)
                 .param("scene", scene)
-                .param("count", "20"), LiveFeedResponse.class);
+                .sign()
+                .uifidHeader(), LiveFeedResponse.class);
     }
 
     /**
      * 进房。`/webcast/room/web/enter/`
      *
-     * <p>参数由 helper 拼装（含 aid / device_platform / webcast_sdk_version 等），
-     * 这里只保留可核实项（见 NOTES.md「存疑」）。
+     * <p>参数不是 live 基础层，而是 n11.m8057p 用 k04.m6904p(webRid) 拼的 11 个键；
+     * webRid 为空时原版直接抛 {@code IllegalArgumentException("webRid 不能为空")}。
+     * 发 room_id 会被服务端判成 {@code status_code=10011 Request params error}。
+     *
+     * @param webRid 房间的 web 号（列表接口的 {@code web_rid}），不是数字 room_id
      */
-    public LiveRoomEnterResponse enterRoom(String roomId) throws ApiException {
-        return api.callFor(liveRequest(DouyinEndpoints.LIVE_ENTER)
-                .param("room_id", roomId)
-                .param("webcast_sdk_version", "1.3.0")
-                .param("device_platform", "web"), LiveRoomEnterResponse.class);
+    public LiveRoomEnterResponse enterRoom(String webRid) throws ApiException {
+        if (Texts.isBlank(webRid)) {
+            throw new IllegalArgumentException("webRid 不能为空");
+        }
+        return api.callFor(ApiRequest.get(DouyinEndpoints.LIVE_ENTER)
+                .base(DouyinEndpoints.LIVE_HOST)
+                .params(k04EnterParams(webRid))
+                // k04.m6901m：进房用 107 位随机 msToken（k04.p 里先占位空串）
+                .param("msToken", Texts.randomLiveMsToken())
+                // k04.m6910v：Referer 是 https://live.douyin.com/{webRid}
+                .referer(DouyinEndpoints.liveRoomReferer(webRid))
+                // m8002r 的 z=true：算 a_bogus；i=208 的 bit7 置位 → 不带 uifid 头
+                .sign(), LiveRoomEnterResponse.class);
     }
 
-    /** 按场景取房间信息。`/webcast/room/info_by_scene/` */
-    public LiveRoomResponse roomInfoByScene(String roomId, String scene) throws ApiException {
+    /**
+     * 按场景取房间信息。`/webcast/room/info_by_scene/`
+     *
+     * <p>n11.m8027S：live 基础层 + room_id + 固定 scene=aweme_video_feed_pc + region=cn；
+     * 原版此处不算 a_bogus（m8002r 的 z=false）。
+     */
+    public LiveRoomResponse roomInfoByScene(String roomId) throws ApiException {
         return api.callFor(liveRequest(DouyinEndpoints.LIVE_INFO_BY_SCENE)
                 .param("room_id", roomId)
-                .param("scene", scene), LiveRoomResponse.class);
+                .param("scene", INFO_BY_SCENE)
+                .param("region", "cn"), LiveRoomResponse.class);
     }
 
     /** 分区直播列表。`/webcast/web/partition/detail/room/v2/` */
@@ -94,17 +122,40 @@ public final class LiveApi {
         return api.callFor(liveRequest(DouyinEndpoints.LIVE_PARTITION)
                 .param("partition", partition)
                 .param("partition_type", String.valueOf(partitionType))
+                .param("count", "15")
                 .param("offset", String.valueOf(offset))
-                .param("count", String.valueOf(count)), LiveFeedResponse.class);
+                .sign(), LiveFeedResponse.class);
     }
 
+    /**
+     * n11.m7994b：live 侧基础参数 = zy0.m12473a() 的 26 项再覆盖 device_platform/app_name/
+     * live_id/enter_from/language/tz_name，随后走 m8011D0 公共参数。
+     * 原版每个 webcast 接口都从这里起手，缺了会被服务端判成
+     * `status_code=10011 Request params error`。
+     *
+     * <p>签名不在这里：m8002r 的 z 位由各调用点决定，只有分区列表与进房传 true。
+     */
     private ApiRequest liveRequest(String path) {
         return ApiRequest.get(path)
                 .base(DouyinEndpoints.LIVE_HOST)
-                .param("aid", "6383")
-                .param("app_name", "douyin_web")
-                .param("device_platform", "web")
-                .msTokenOnly()
-                .sign();
+                .params(DouyinEndpoints.LIVE_BASE_PARAMS)
+                .commonParams();
+    }
+
+    /** k04.m6904p：进房专用 11 键。msToken 先占空串，调用方随后覆盖成 107 位随机串。 */
+    private static Map<String, String> k04EnterParams(String webRid) {
+        LinkedHashMap<String, String> params = new LinkedHashMap<>();
+        params.put("aid", "6383");
+        params.put("app_name", "douyin_web");
+        params.put("live_id", "1");
+        params.put("device_platform", "web");
+        params.put("language", "zh-CN");
+        params.put("browser_language", "zh-CN");
+        params.put("browser_platform", "Win32");
+        params.put("browser_name", "Chrome");
+        params.put("browser_version", "125.0.0.0");
+        params.put("web_rid", webRid);
+        params.put("msToken", "");
+        return params;
     }
 }

@@ -257,6 +257,11 @@ final class DouyinEndpoints {
         }
     }
 
+    /** 对应 k04.m6910v：进房 Referer 为 https://live.douyin.com/{webRid}。 */
+    static String liveRoomReferer(String webRid) {
+        return LIVE_HOST + "/" + Texts.nvl(webRid);
+    }
+
     /** 对应 m7996d：搜索页 Referer（带随机 aid 与搜索类型）。 */
     static String searchReferer(String keyword, String type) {
         if (Texts.isBlank(keyword)) {

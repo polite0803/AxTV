@@ -26,6 +26,7 @@ import axtv.model.LiveFeedResponse
 import axtv.model.LiveFeedResponseHome
 import axtv.model.LiveRoom
 import axtv.model.LiveRoomUtils
+import axtv.settings.Settings
 import axtv.ui.DetailPageSpec
 import com.github.axtv.dv.adapter.AppRuntime
 import kotlinx.coroutines.CancellationException
@@ -86,12 +87,16 @@ internal object LiveRepository {
     }
 
     /**
-     * 进入直播间：先走 enterRoom（原版推流地址主入口）；拿不到房间时退回
-     * roomInfoByScene（按场景取房间信息）。
+     * 进入直播间。原版 op2 的顺序：有 webRid 时先走 enterRoom（推流地址主入口），
+     * 拿不到可用房间再退回 roomInfoByScene（按场景取房间信息）；没有 webRid 就直接走
+     * roomInfoByScene。enterRoom 只认 web_rid，传数字 room_id 会被服务端判参数错误。
+     *
+     * @param roomId 解析后的房间 id（卡片上的 resolvedRoomId），供 info_by_scene 使用
+     * @param webRid 列表接口下发的 web_rid；空串表示调用方没有（小组件 deep link 等）
      *
      * 返回 Result.success(null) 表示两条链路都成功但接口没给房间（例如已下播）。
      */
-    suspend fun room(roomId: String): Result<LiveRoom?> = withContext(Dispatchers.IO) {
+    suspend fun room(roomId: String, webRid: String = ""): Result<LiveRoom?> = withContext(Dispatchers.IO) {
         var failure: Throwable? = null
         try {
             val api = AppRuntime.api
@@ -99,19 +104,21 @@ internal object LiveRepository {
                     IllegalStateException("API 尚未装配（AppRuntime.api == null）"),
                 )
             val liveApi = LiveApi(api)
-            val fromEnter = try {
-                liveApi.enterRoom(roomId).firstRoom()
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (t: Throwable) {
-                failure = t
-                null
-            }
-            if (fromEnter != null) {
-                return@withContext Result.success(fromEnter)
+            if (webRid.isNotBlank()) {
+                val fromEnter = try {
+                    liveApi.enterRoom(webRid).firstRoom()
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (t: Throwable) {
+                    failure = t
+                    null
+                }
+                if (fromEnter != null) {
+                    return@withContext Result.success(fromEnter)
+                }
             }
             val fromScene = try {
-                liveApi.roomInfoByScene(roomId, INFO_BY_SCENE).data()?.room()
+                liveApi.roomInfoByScene(roomId).data()?.room()
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (t: Throwable) {
@@ -133,9 +140,6 @@ internal object LiveRepository {
 
 /** partition_type 取值沿用原接口的 web 分区（1）；未能从证据里找到第二取值。 */
 private const val PARTITION_TYPE = 1
-
-/** info_by_scene 的 scene 取值待取证，先用 web 房间场景。 */
-private const val INFO_BY_SCENE = "web_room"
 
 internal fun LiveFeedResponse.toCards(): List<LiveCardUi> =
     data()?.data().orEmpty()
@@ -165,6 +169,7 @@ private fun LiveRoom.toCard(index: Int): LiveCardUi = LiveCardUi(
 /**
  * 拉流候选地址：先按原版选流顺序（FULL_HD1 → HD1 → SD2 → SD1 → 键并集）挑一档，
  * 再用 flv/hls 全部取值做兜底，供失败重试时切下一个地址。
+ * 挑哪一档由设置页『直播清晰度』决定（原实现硬编码 AUTO，所以那 4 行点了没反应）。
  */
 internal fun LiveRoom.streamCandidates(): List<String> {
     val streamUrl = streamUrl() ?: return emptyList()
@@ -177,12 +182,25 @@ internal fun LiveRoom.streamCandidates(): List<String> {
         emptyMap<String, List<String>>(),
     )
     val primary = LiveStreamResolver
-        .resolveWithFallback(info, LiveQualityPreference.AUTO)
+        .resolveWithFallback(info, AppRuntime.settings.liveQualityPreference())
         ?.urls()
         .orEmpty()
     return (primary + flv.values + hls.values)
         .filter { it.isNotBlank() }
         .distinct()
+}
+
+/**
+ * 『直播清晰度』→ 取流偏好。
+ *
+ * 直播没有「自动」档（qm4 遍历时就过滤掉了 AUTO），所以 AUTO 与 HIGHEST 都取最高；
+ * 流畅 540p 在核心层枚举里叫 P540。settings 为 null 时保持历史的 AUTO 行为。
+ */
+private fun Settings?.liveQualityPreference(): LiveQualityPreference = when (this?.liveVideoResolution()) {
+    Settings.VideoResolution.P1080 -> LiveQualityPreference.P1080
+    Settings.VideoResolution.P720 -> LiveQualityPreference.P720
+    Settings.VideoResolution.P480 -> LiveQualityPreference.P540
+    else -> LiveQualityPreference.HIGHEST
 }
 
 /** 把 ApiException 的种类翻译成可读文案；无法归类时保留原始 message。 */

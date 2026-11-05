@@ -190,7 +190,18 @@ fun HomeFeedScreen(
                 HomeTabsSpec.TAB_FEATURED,
                 HomeTabsSpec.TAB_MOBILE,
             ).forEach { tab ->
-                HomeTabChip(label = tab, selected = tab == activeTab, onClick = { activeTab = tab })
+                HomeTabChip(
+                    label = tab,
+                    selected = tab == activeTab,
+                    onClick = {
+                        // 「精选」是真入口：跳到独立精选页；「关注」「移动推荐」保持占位，本轮不动。
+                        if (tab == HomeTabsSpec.TAB_FEATURED) {
+                            onOpenRoute(NavRoutes.FEATURED)
+                        } else {
+                            activeTab = tab
+                        }
+                    },
+                )
             }
         }
         Spacer(Modifier.height(16.dp))

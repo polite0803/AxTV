@@ -11,6 +11,8 @@
  */
 package com.github.axtv.dv.ui.settings
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -44,6 +46,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -67,11 +70,21 @@ import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.adapter.SettingsBinder
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.focusRing
+import com.github.axtv.dv.ui.nav.NavRoutes
 import kotlin.math.roundToInt
 
 private val MAIN_COUNT = SettingsPageSpec.MAIN_PAGE.size
 private val PANEL_COUNT = SettingsPageSpec.DANMAKU_STYLE_PANEL.size
 private const val THEME_PREVIEW_KEY = "theme_preview"
+
+/** 「设置页 GitHub 主页」行打开的地址（与 git remote 同源，本仓库唯一对外主页）。 */
+private const val GITHUB_HOME_URL = "https://github.com/polite0803/AxTV"
+
+/** 只读展示行：显示登录/凭据状态，本来就没有点击动作。 */
+private val READONLY_KEYS = setOf(
+    "settings_account", "auth_status", "auth_security_status",
+    "auth_cookie", "auth_security_payload", "auth_private_key",
+)
 
 /** 结构行：不参与焦点链。 */
 private fun Control.isStructural(): Boolean = when (type()) {
@@ -219,21 +232,62 @@ private fun isRowVisible(row: SettingsRow, liveDanmakuOn: Boolean): Boolean = wh
     else -> true
 }
 
+/** 未接入行的统一副文案：值能落盘但没人读的行一律标这一句。 */
+private const val TEXT_UNWIRED = "未接入"
+
+/**
+ * 「未接入」键清单：核心层有 getter/setter，但生产代码里没有任何消费点（或本应用根本没有该能力）。
+ *
+ * 判定来源：逐键 grep 消费点（39 项只写不读 + 15 项无处理）。这些行置灰、不吃点击，
+ * 避免出现「按下去值变了、界面也记住了，但行为一样」的假响应。
+ * 已接线的项不在此列：video_resolution / video_codec / live_video_resolution / player_surface_type /
+ * client_identity_branch / playback_completion / playback_clock / player_progress_bar / clean_pause /
+ * video_load_timeout / default_home / show_details_on_start / reverse_profile_playlist /
+ * disable_double_back_exit 与全部弹幕滑杆。
+ */
+private val UNWIRED_KEYS = setOf(
+    // 开关：值能落盘但没有消费点。
+    "ambient_backdrop", "filter_mobile_video", "pip_enabled", "reverse_navigation",
+    "featured_auto_play", "tv_launcher_channel",
+    // 个人页没有「历史」标签页（历史是独立路由 profile/history），这档无处可去。
+    "profile_history_tab",
+    "surface_buffer_align", "separate_video_fetch", "video_start_prefetch",
+    "mix_playlist_panel", "filter_package",
+    // 枚举：取色链路 / 字号 / 主题 / 音量均衡还没有消费方。
+    "live_danmaku_style", "app_font_scale", "theme_mode",
+    "color_style", "color_contrast", "color_transition",
+    "audio_balance",
+    // 历史容量：本应用的历史记录是服务端接口（VideoApi.historyRead），没有本地历史库可裁剪。
+    "feed_history_capacity",
+    // 动作行：没有对应界面或外部链接
+    "account_management", "auth_config_actions", "about_telegram", "about_qr_links",
+    "camera", "profile",
+)
+
+/** 动态单选行里未接入的那两组（整组灰掉，避免只灰表头留下面 4 行可选）。 */
+private val UNWIRED_SELECT_KEYS = setOf("form_factor", "color_source")
+
 private fun isRowEnabled(
     row: SettingsRow,
     liveDanmakuOn: Boolean,
     anyDanmakuOn: Boolean,
     colorFromContent: Boolean,
 ): Boolean = when {
+    row is ControlRow && row.key in UNWIRED_KEYS -> false
+    row is SelectRow && row.binderKey in UNWIRED_SELECT_KEYS -> false
+    row.key == "danmaku_layout" -> anyDanmakuOn
+    row.key == "live_danmaku_style" -> liveDanmakuOn
+    row.key == "danmaku_emoji" -> anyDanmakuOn
     row !is ControlRow -> true
     row.key == "color_style" || row.key == "color_contrast" -> colorFromContent
-    row.key == "live_danmaku_style" -> liveDanmakuOn
-    row.key == "danmaku_emoji" || row.key == "danmaku_layout" -> anyDanmakuOn
     else -> true
 }
 
-private fun rowHint(key: String, colorFromContent: Boolean): String? = when (key) {
-    "color_style", "color_contrast" -> if (!colorFromContent) "仅画面取色时生效" else null
+private fun rowHint(key: String, colorFromContent: Boolean): String? = when {
+    key in UNWIRED_KEYS -> TEXT_UNWIRED
+    key in READONLY_KEYS -> "只读展示"
+    key == "color_style" || key == "color_contrast" ->
+        if (!colorFromContent) "仅画面取色时生效" else null
     else -> null
 }
 
@@ -271,7 +325,11 @@ private fun formatTenth(value: Float): String =
 
 @OptIn(ExperimentalTvFoundationApi::class)
 @Composable
-fun SettingsScreen(modifier: Modifier = Modifier) {
+fun SettingsScreen(
+    modifier: Modifier = Modifier,
+    onOpenRoute: (String) -> Unit = {},
+) {
+    val context = LocalContext.current
     val rows = remember { buildRows() }
     // 装配根因修复：此前只写 remember 内存状态，从未接触 Settings；现由 Application 注入的真实实例读写。
     val binder = remember { AppRuntime.settings?.let(::SettingsBinder) }
@@ -339,6 +397,10 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
     val dynamicCount = rows.count { it is SelectRow }
     val controlCount = rows.count { it !is ThemePreviewRow }
+    // 未接入计数：把三个条件门都置真后仍然禁用的行，就是被 UNWIRED 清单关掉的那些。
+    val unwiredCount = rows.count {
+        it.isFocusableRow() && !isRowEnabled(it, liveDanmakuOn = true, anyDanmakuOn = true, colorFromContent = true)
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
@@ -356,7 +418,8 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                     Text(
                         text = "规格 ${MAIN_COUNT + PANEL_COUNT} 项 = 主设置页 $MAIN_COUNT + 面板 $PANEL_COUNT" +
                             "（NOTES 记 77，规格数组另有接口身份 2 项）" +
-                            " + 动态枚举行 $dynamicCount = $controlCount 个控件行",
+                            " + 动态枚举行 $dynamicCount = $controlCount 个控件行" +
+                            " · 未接入 $unwiredCount 行（置灰标「未接入」，点击不生效）",
                         color = AxTvColors.TextSecondary,
                         style = TextStyle(fontSize = 13.sp),
                     )
@@ -407,6 +470,12 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                             onAction = { key ->
                                 when (key) {
                                     "about_update" -> showUpdateDialog = true
+
+                                    // 弹幕布局：面板 15 行就在同一列的下方，把焦点送过去即是「进入布局设置」。
+                                    "danmaku_layout" -> runCatching {
+                                        focusRequesters["style_opacity"]?.requestFocus()
+                                    }
+
                                     "quality" -> runCatching {
                                         focusRequesters["live_resolution_HIGHEST"]?.requestFocus()
                                     }
@@ -415,31 +484,48 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
                                         focusRequesters["style_opacity"]?.requestFocus()
                                     }
 
+                                    // 登录方式：本应用的登录入口只有 Login 页（扫码 + Cookie），直接过去。
+                                    "auth_login_mode" -> onOpenRoute(NavRoutes.LOGIN)
+
+                                    // GitHub 主页：交给系统浏览器 / TV 上的浏览器（无接收者时静默失败）。
+                                    "about_github" -> runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_HOME_URL))
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                        )
+                                    }
+
                                     else -> Unit
                                 }
                             },
                         )
                     }
 
-                    is SelectRow -> SelectSettingItem(
-                        label = row.label,
-                        description = row.description,
-                        selected = dynamicIndexes[row.binderKey] == row.optionIndex,
-                        modifier = Modifier.focusRequester(focusRequesters.getValue(row.key)),
-                        onFocused = { focusedKey = row.key },
-                        onClick = {
-                            dynamicIndexes[row.binderKey] = row.optionIndex
-                            binder?.writeEnumIndex(row.binderKey, row.optionIndex)
-                            // 点播清晰度改变后，未单独设过的直播清晰度由 Settings 内部跟随；
-                            // 这里同步 UI 状态，避免仍显示旧档位。
-                            if (row.binderKey == "video_resolution") {
-                                dynamicIndexes["live_video_resolution"] =
-                                    binder?.readEnumIndex("live_video_resolution")
-                                        ?: dynamicIndexes["live_video_resolution"]
-                                        ?: 0
-                            }
-                        },
-                    )
+                    is SelectRow -> {
+                        val selectEnabled =
+                            isRowEnabled(row, liveDanmakuOn, anyDanmakuOn, colorFromContent)
+                        SelectSettingItem(
+                            label = row.label,
+                            description = row.description
+                                ?: if (!selectEnabled) TEXT_UNWIRED else null,
+                            selected = dynamicIndexes[row.binderKey] == row.optionIndex,
+                            enabled = selectEnabled,
+                            modifier = Modifier.focusRequester(focusRequesters.getValue(row.key)),
+                            onFocused = { focusedKey = row.key },
+                            onClick = {
+                                dynamicIndexes[row.binderKey] = row.optionIndex
+                                binder?.writeEnumIndex(row.binderKey, row.optionIndex)
+                                // 点播清晰度改变后，未单独设过的直播清晰度由 Settings 内部跟随；
+                                // 这里同步 UI 状态，避免仍显示旧档位。
+                                if (row.binderKey == "video_resolution") {
+                                    dynamicIndexes["live_video_resolution"] =
+                                        binder?.readEnumIndex("live_video_resolution")
+                                            ?: dynamicIndexes["live_video_resolution"]
+                                            ?: 0
+                                }
+                            },
+                        )
+                    }
 
                     is ThemePreviewRow -> ThemePreview(
                         themeModeIndex = enumIndexes["theme_mode"] ?: 0,
@@ -641,6 +727,7 @@ private fun SelectSettingItem(
     description: String?,
     selected: Boolean,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     onFocused: () -> Unit = {},
     onClick: () -> Unit,
 ) {
@@ -652,12 +739,13 @@ private fun SelectSettingItem(
                 isFocused = it.isFocused
                 if (it.isFocused) onFocused()
             }
-            .clickable(onClick = onClick)
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier.focusable())
             .background(
                 color = if (selected) AxTvColors.SurfaceHigh else AxTvColors.Surface,
                 shape = RoundedCornerShape(10.dp),
             )
             .focusRing(isFocused, RoundedCornerShape(10.dp))
+            .alpha(if (enabled) 1f else 0.55f)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),

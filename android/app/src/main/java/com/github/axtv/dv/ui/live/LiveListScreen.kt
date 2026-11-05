@@ -68,7 +68,7 @@ import com.github.axtv.dv.ui.focusRing
 @Composable
 fun LiveListScreen(
     onBack: () -> Unit,
-    onOpenRoom: (roomId: String) -> Unit,
+    onOpenRoom: (roomId: String, webRid: String) -> Unit,
 ) {
     val branch = remember { AppRuntime.settings?.clientIdentityBranch() }
     var selectedTabName by rememberSaveable { mutableStateOf(LiveTab.FEED.name) }
@@ -184,7 +184,7 @@ private fun LiveRoomGrid(
     listState: androidx.compose.foundation.lazy.LazyListState,
     firstCardRequester: FocusRequester,
     modifier: Modifier = Modifier,
-    onOpenRoom: (String) -> Unit,
+    onOpenRoom: (roomId: String, webRid: String) -> Unit,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         // 列数随可用宽度变化：320dp 起一列，最多 4 列（TV 常见 960dp / 1280dp 分别落 3 / 4 列）。
@@ -203,7 +203,7 @@ private fun LiveRoomGrid(
                             card = card,
                             modifier = Modifier.weight(1f),
                             requester = if (rowIndex == 0 && colIndex == 0) firstCardRequester else null,
-                            onClick = { onOpenRoom(card.roomId) },
+                            onClick = { onOpenRoom(card.roomId, card.webRid) },
                         )
                     }
                     repeat(columns - rows[rowIndex].size) {

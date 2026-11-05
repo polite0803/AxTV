@@ -54,6 +54,7 @@ public final class SearchApi {
         Map<String, String> params = videoSearchParams("aweme_general", keyword, offset, count,
                 sortType, publishTime, filterDuration, searchId);
         return api.call(ApiRequest.get("/aweme/v1/web/general/search/single/")
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .params(params)
                 .referer(DouyinEndpoints.searchReferer(keyword, "general"))
                 .sign()
@@ -73,6 +74,7 @@ public final class SearchApi {
         Map<String, String> params = videoSearchParams("aweme_video_web", keyword, offset, count,
                 sortType, publishTime, filterDuration, searchId);
         return api.callFor(ApiRequest.get(DouyinEndpoints.SEARCH_ITEM)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .params(params)
                 .referer(DouyinEndpoints.searchReferer(keyword, "general"))
                 .sign()
@@ -105,6 +107,7 @@ public final class SearchApi {
         params.put("list_type", "single");
         api.injectCommonParams(params);
         return api.callFor(ApiRequest.get(DouyinEndpoints.SEARCH_DISCOVER)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .params(params)
                 .referer(DouyinEndpoints.searchReferer(keyword, "user"))
                 .sign()
@@ -132,6 +135,7 @@ public final class SearchApi {
         params.put("list_type", "single");
         api.injectCommonParams(params);
         return api.callFor(ApiRequest.get(DouyinEndpoints.SEARCH_LIVE)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .params(params)
                 .referer(DouyinEndpoints.searchReferer(keyword, "live"))
                 .sign()
@@ -145,6 +149,7 @@ public final class SearchApi {
      */
     public SearchSugResponse suggestions(String keyword) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.SEARCH_SUG)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("keyword", keyword)
                 .param("source", "aweme_video_web")
                 .referer(DouyinEndpoints.searchReferer(keyword, "general"))
@@ -154,6 +159,7 @@ public final class SearchApi {
     /** 搜索框下方推荐词。`/aweme/v1/web/api/suggest_words/` */
     public SuggestWordsResponse suggestWords(String keyword, int count) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.SUGGEST_WORDS)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("keyword", keyword)
                 .param("count", String.valueOf(count))
                 .param("business_id", "1")
@@ -167,6 +173,7 @@ public final class SearchApi {
     /** 热榜。`/aweme/v1/web/hot/search/list/`（无业务参数，只注入 msToken） */
     public HotSearchResponse hotSearch() throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.HOT_SEARCH)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .referer(DouyinEndpoints.SEARCH_REFERER)
                 .msTokenOnly(), HotSearchResponse.class);
     }
@@ -174,6 +181,7 @@ public final class SearchApi {
     /** SEO 内链。`/aweme/v1/web/seo/inner/link/` */
     public SeoLinkResponse seoInnerLink(String awemeId) throws ApiException {
         return api.callFor(ApiRequest.get(DouyinEndpoints.SEO_INNER_LINK)
+                .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("aweme_id", awemeId)
                 .referer(DouyinEndpoints.SEARCH_REFERER)
                 .commonParams()

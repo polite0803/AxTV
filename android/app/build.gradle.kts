@@ -45,8 +45,8 @@ android {
         applicationId = "com.github.axtv.dv"
         minSdk = 24          // 原版 23；因 WorkManager 2.12.0 的 manifest minSdk=24 抬到 24（放弃 API 23 设备）
         targetSdk = 36       // 原版 37（compileSdk 37 / Android 17 预览），档 2 构建用 36
-        versionCode = 2        // 0.0.2: Media3 接线 + API typed + Widget
-        versionName = "0.0.2"
+        versionCode = 3        // 0.0.3: 精选频道页接线 + 未登录可用
+        versionName = "0.0.3"
     }
 
     signingConfigs {

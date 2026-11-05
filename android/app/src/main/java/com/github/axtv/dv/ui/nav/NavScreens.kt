@@ -36,6 +36,7 @@ import axtv.api.VideoApi
 import axtv.model.Aweme
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.ui.AxTvColors
+import com.github.axtv.dv.ui.featured.FeaturedRepository
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.home.HomeFeedRepository
 import com.github.axtv.dv.ui.player.PlayerOverlayScreen
@@ -164,6 +165,34 @@ fun PlayerFromFeedScreen(
             modifier = modifier,
             retryLabel = "重试",
             onRetry = { attempt += 1 },
+        )
+    }
+}
+
+/**
+ * 精选队列播放：队列来自 FeaturedScreen 点击条目时写入的 [FeaturedRepository.cachedAwemes]。
+ * 无队列（例如直接从外部 route 进入 featured/play）时只提示返回，不再拉数据。
+ */
+@Composable
+fun PlayerFromFeaturedScreen(
+    startIndex: Int,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val queue = FeaturedRepository.cachedAwemes
+    when {
+        queue.isNotEmpty() -> PlayerOverlayScreen(
+            modifier = modifier,
+            playlistProvider = remember(queue, startIndex) {
+                awemePlaylistProvider(queue, startIndex)
+            },
+        )
+
+        else -> NavMessageScreen(
+            title = "播放器",
+            message = "精选播放队列为空，请先在精选页选择视频。",
+            onBack = onBack,
+            modifier = modifier,
         )
     }
 }
