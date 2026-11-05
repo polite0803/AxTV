@@ -1,33 +1,37 @@
 /*
  * Android 适配层 —— api：装配 DouyinApi。
  *
- * JsonCodec 本轮不实现：api/NOTES.md §5 明确其依赖 refactor/model 的序列化重构，
- * 这里显式抛 UnsupportedOperationException，不返回空实现伪装成功。
+ * JsonCodec 由核心层 axtv.api.ModelJsonCodec 提供：基于 @JsonKey + FlexibleJson
+ * 直接解码 axtv.model 的 record，不引入 Gson/Moshi/kotlinx.serialization。
  */
 package com.github.axtv.dv.adapter
 
+import axtv.api.ClientIdentityBranch
 import axtv.api.CookieStore
 import axtv.api.DeviceProfile
 import axtv.api.DouyinApi
-import axtv.api.JsonCodec
+import axtv.api.ModelJsonCodec
 import axtv.sign.AbogusSigner
 import com.github.axtv.dv.api.OkHttpEngine
 
 object ApiAssembler {
 
     fun create(signer: AbogusSigner, cookies: CookieStore, device: DeviceProfile): DouyinApi =
+        create(signer, cookies, device, ClientIdentityBranch.WEB)
+
+    /** 启动时快照设置里的客户端身份分支，本次进程内所有请求统一使用。 */
+    fun create(
+        signer: AbogusSigner,
+        cookies: CookieStore,
+        device: DeviceProfile,
+        branch: ClientIdentityBranch,
+    ): DouyinApi =
         DouyinApi(
             OkHttpEngine(),
             AndroidSignProvider(signer),
             cookies,
             device,
-            UnimplementedJsonCodec,
-        )
-}
-
-private object UnimplementedJsonCodec : JsonCodec {
-    override fun <T : Any?> decode(json: String, type: Class<T>): T =
-        throw UnsupportedOperationException(
-            "JsonCodec 未实现：refactor/model 的序列化尚未重构（api/NOTES.md §5），本轮不伪装成功",
+            ModelJsonCodec(),
+            branch,
         )
 }

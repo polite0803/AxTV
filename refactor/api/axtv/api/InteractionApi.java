@@ -7,7 +7,15 @@
  */
 package axtv.api;
 
-/** 互动：点赞、收藏、不喜欢、评论。 */
+import axtv.model.CommentListResponse;
+import axtv.model.InteractionMutationResponse;
+
+/**
+ * 互动：点赞、收藏、不喜欢、评论。
+ *
+ * <p>返回类型以原实现的解析协程为准：互动写接口解成 {@link InteractionMutationResponse}
+ * （原实现解完即丢弃），评论列表解成 {@link CommentListResponse}（ez0 byte 4/5）。
+ */
 public final class InteractionApi {
 
     private final DouyinApi api;
@@ -21,9 +29,9 @@ public final class InteractionApi {
      *
      * @param action 1=点赞 0=取消（原实现两个分支）
      */
-    public String digg(String awemeId, int action, String itemType) throws ApiException {
+    public InteractionMutationResponse digg(String awemeId, int action, String itemType) throws ApiException {
         requireInteractionCredential();
-        return api.call(ApiRequest.postForm(DouyinEndpoints.COMMIT_DIGG)
+        return api.callFor(ApiRequest.postForm(DouyinEndpoints.COMMIT_DIGG)
                 .body("aweme_id", awemeId)
                 .body("item_type", itemType == null ? "0" : itemType)
                 .body("type", String.valueOf(action))
@@ -31,7 +39,7 @@ public final class InteractionApi {
                 .sign()
                 .uifidHeader()
                 .ticketGuardHeaders()
-                .logTicketGuardVerdicts());
+                .logTicketGuardVerdicts(), InteractionMutationResponse.class);
     }
 
     /**
@@ -39,48 +47,48 @@ public final class InteractionApi {
      *
      * @param action 1=收藏 0=取消
      */
-    public String collect(String awemeId, int action) throws ApiException {
+    public InteractionMutationResponse collect(String awemeId, int action) throws ApiException {
         requireInteractionCredential();
-        return api.call(ApiRequest.postForm(DouyinEndpoints.AWEME_COLLECT)
+        return api.callFor(ApiRequest.postForm(DouyinEndpoints.AWEME_COLLECT)
                 .body("aweme_id", awemeId)
                 .body("action", String.valueOf(action))
                 .commonParams()
                 .sign()
                 .uifidHeader()
                 .ticketGuardHeaders()
-                .logTicketGuardVerdicts());
+                .logTicketGuardVerdicts(), InteractionMutationResponse.class);
     }
 
     /** 不喜欢。`/aweme/v1/web/commit/dislike/item/` */
-    public String dislike(String awemeId) throws ApiException {
-        return api.call(ApiRequest.postForm(DouyinEndpoints.COMMIT_DISLIKE)
+    public InteractionMutationResponse dislike(String awemeId) throws ApiException {
+        return api.callFor(ApiRequest.postForm(DouyinEndpoints.COMMIT_DISLIKE)
                 .body("aweme_id", awemeId)
                 .commonParams()
                 .sign()
-                .uifidHeader());
+                .uifidHeader(), InteractionMutationResponse.class);
     }
 
     /** 一级评论。`/aweme/v1/web/comment/list/` */
-    public String comments(String awemeId, long cursor, int count) throws ApiException {
-        return api.call(ApiRequest.get(DouyinEndpoints.COMMENT_LIST)
+    public CommentListResponse comments(String awemeId, long cursor, int count) throws ApiException {
+        return api.callFor(ApiRequest.get(DouyinEndpoints.COMMENT_LIST)
                 .param("aweme_id", awemeId)
                 .param("cursor", String.valueOf(cursor))
                 .param("count", String.valueOf(count))
                 .commonParams()
                 .sign()
-                .uifidHeader());
+                .uifidHeader(), CommentListResponse.class);
     }
 
     /** 二级评论（回复）。`/aweme/v1/web/comment/list/reply/` */
-    public String replies(String itemId, String commentId, long cursor, int count) throws ApiException {
-        return api.call(ApiRequest.get(DouyinEndpoints.COMMENT_REPLY)
+    public CommentListResponse replies(String itemId, String commentId, long cursor, int count) throws ApiException {
+        return api.callFor(ApiRequest.get(DouyinEndpoints.COMMENT_REPLY)
                 .param("item_id", itemId)
                 .param("comment_id", commentId)
                 .param("cursor", String.valueOf(cursor))
                 .param("count", String.valueOf(count))
                 .commonParams()
                 .sign()
-                .uifidHeader());
+                .uifidHeader(), CommentListResponse.class);
     }
 
     private void requireInteractionCredential() throws ApiException {

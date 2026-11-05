@@ -125,6 +125,7 @@ public final class SettingsPageSpec {
         m.put("reverse_navigation", "reverse_navigation");
         m.put("show_details_on_start", "show_details_on_start");
         m.put("theme_mode", "theme_mode");
+        m.put("client_identity_branch", "client_identity_branch");
         m.put("auth_cookie", "cookie_string");
         m.put("auth_security_payload", "interaction_security_payload");
         m.put("auth_private_key", "interaction_private_key");
@@ -267,6 +268,8 @@ public final class SettingsPageSpec {
                 {"about_telegram", "action_button"},
                 {"about_qr_links", "qr_links_card"},
                 {"about_version", "app_version"},
+                {"interface_identity_header", "section_header"},
+                {"client_identity_branch", "enum_row"},
                 {"form_factor_header", "section_header"},
                 {"form_factor_note", "note"},
                 {"app_font_scale", "enum_row"},

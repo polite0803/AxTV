@@ -25,14 +25,17 @@ final class DouyinEndpoints {
     /** f14562o：接口路径 → Referer 基址。 */
     static final Map<String, String> REFERER;
 
-    /** www.douyin.com 用的 UA（Chrome 147）。 */
-    static final String WEB_USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
+    /** Webcast 分支的浏览器头；sec-ch-ua 版本与 QQBrowser 的 Chromium 116 对齐。 */
+    static final Map<String, String> WEBCAST_HEADERS;
 
-    /** live.douyin.com 用的 UA（QQ 浏览器）。 */
-    static final String LIVE_USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.5845.97 "
-                    + "Safari/537.36 Core/1.116.567.400 QQBrowser/19.7.6764.400";
+    /** App Feed 分支只发 App 场景需要的头，不含任何桌面指纹。 */
+    static final Map<String, String> APP_FEED_HEADERS;
+
+    /** zy0.m12473a()：所有 www.douyin.com 接口的 26 个基础 query 参数，逐字保留。 */
+    static final Map<String, String> WEB_BASE_PARAMS;
+
+    /** n11.m7994b()：live.douyin.com 在 26 个基础参数之上的 6 个覆盖/新增。 */
+    static final Map<String, String> LIVE_BASE_PARAMS;
 
     // ---- 端点常量 ----
     static final String TAB_FEED = "/aweme/v1/web/tab/feed/";
@@ -96,8 +99,66 @@ final class DouyinEndpoints {
         headers.put("sec-fetch-dest", "empty");
         headers.put("sec-fetch-mode", "cors");
         headers.put("sec-fetch-site", "same-origin");
-        headers.put("user-agent", WEB_USER_AGENT);
         DEFAULT_HEADERS = Collections.unmodifiableMap(headers);
+
+        Map<String, String> webcast = new LinkedHashMap<>();
+        webcast.put("accept", "application/json, text/plain, */*");
+        webcast.put("accept-language", "zh-CN");
+        webcast.put("cache-control", "no-cache");
+        webcast.put("pragma", "no-cache");
+        webcast.put("priority", "u=1, i");
+        webcast.put("sec-ch-ua", "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"116\", \"Google Chrome\";v=\"116\"");
+        webcast.put("sec-ch-ua-mobile", "?0");
+        webcast.put("sec-ch-ua-platform", "\"Windows\"");
+        webcast.put("sec-fetch-dest", "empty");
+        webcast.put("sec-fetch-mode", "cors");
+        webcast.put("sec-fetch-site", "same-origin");
+        WEBCAST_HEADERS = Collections.unmodifiableMap(webcast);
+
+        Map<String, String> appFeed = new LinkedHashMap<>();
+        appFeed.put("accept", "*/*");
+        appFeed.put("accept-language", "zh-CN,zh;q=0.9");
+        APP_FEED_HEADERS = Collections.unmodifiableMap(appFeed);
+
+        // zy0.m12473a()：26 个桌面基础参数，逐字照抄（含 2560/1440 的屏幕兜底）。
+        Map<String, String> webBase = new LinkedHashMap<>();
+        webBase.put("device_platform", "webapp");
+        webBase.put("aid", "6383");
+        webBase.put("channel", "channel_pc_web");
+        webBase.put("update_version_code", "170400");
+        webBase.put("pc_client_type", "1");
+        webBase.put("pc_libra_divert", "Windows");
+        webBase.put("support_h265", "1");
+        webBase.put("support_dash", "1");
+        webBase.put("version_code", "170400");
+        webBase.put("version_name", "17.4.0");
+        webBase.put("cookie_enabled", "true");
+        webBase.put("screen_width", "2560");
+        webBase.put("screen_height", "1440");
+        webBase.put("browser_language", "zh-CN");
+        webBase.put("browser_platform", "Win32");
+        webBase.put("browser_name", "Chrome");
+        webBase.put("browser_version", "147.0.0.0");
+        webBase.put("browser_online", "true");
+        webBase.put("engine_name", "Blink");
+        webBase.put("engine_version", "147.0.0.0");
+        webBase.put("os_name", "Windows");
+        webBase.put("os_version", "10");
+        webBase.put("platform", "PC");
+        webBase.put("downlink", "10");
+        webBase.put("effective_type", "4g");
+        webBase.put("round_trip_time", "50");
+        WEB_BASE_PARAMS = Collections.unmodifiableMap(webBase);
+
+        // n11.m7994b()：live 端把 device_platform 改成 web，并补 5 个直播侧参数。
+        Map<String, String> liveBase = new LinkedHashMap<>(WEB_BASE_PARAMS);
+        liveBase.put("device_platform", "web");
+        liveBase.put("app_name", "douyin_web");
+        liveBase.put("live_id", "1");
+        liveBase.put("enter_from", "web_live");
+        liveBase.put("language", "zh-CN");
+        liveBase.put("tz_name", "Asia/Shanghai");
+        LIVE_BASE_PARAMS = Collections.unmodifiableMap(liveBase);
 
         Map<String, String> referers = new LinkedHashMap<>();
         referers.put(TAB_FEED, DEFAULT_REFERER);
@@ -144,6 +205,24 @@ final class DouyinEndpoints {
     }
 
     private DouyinEndpoints() {
+    }
+
+    /** 按所选身份分支返回请求头模板，并写入该分支的唯一 UA。 */
+    static Map<String, String> headersFor(ClientIdentityBranch branch, String userAgent) {
+        Map<String, String> template;
+        switch (branch) {
+            case WEBCAST:
+                template = WEBCAST_HEADERS;
+                break;
+            case APP_FEED:
+                template = APP_FEED_HEADERS;
+                break;
+            default:
+                template = DEFAULT_HEADERS;
+        }
+        LinkedHashMap<String, String> headers = new LinkedHashMap<>(template);
+        headers.put("user-agent", userAgent);
+        return headers;
     }
 
     /**

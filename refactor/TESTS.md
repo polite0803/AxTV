@@ -57,7 +57,7 @@ $JAVA -Dfile.encoding=UTF-8 -cp .workbuddy/build-final SmokeTest
 
 ## 3. JUnit 5 工程化测试（refactor/tests/，2026-11-05）
 
-SmokeTest 的 **147 项断言逐条**拆分为 **22 个 JUnit 5 测试类**，位于
+SmokeTest 的 **147 项断言逐条**拆分为 **24 个 JUnit 5 测试类**（新增模型编解码与类型化门面 33 项，用例总数 180），位于
 `refactor/tests/src/test/java/axtv/test/`（另有共享夹具 `TestFixtures`：Aweme 工厂 + 内存假 TvProvider）。
 
 构建形态：`refactor/` 是 Gradle 根工程，`:tests` 模块的 **main 源集直接指向 11 个既有源码目录**
@@ -72,7 +72,7 @@ cd refactor
 ./gradlew :tests:test        # Windows 用 gradlew.bat；或直接 ./run-tests.sh / run-tests.bat
 ```
 
-**当前结果：147 tests / 0 failures / 0 errors。**
+**当前结果：180 tests / 0 failures / 0 errors（依据 2026-11-05 10:54 的 JUnit XML 记录）。**
 报告：JUnit XML `tests/build/test-results/test/`，HTML `tests/build/reports/tests/test/`。
 
 | 测试类 | 项数 | 覆盖域 |
@@ -99,7 +99,9 @@ cd refactor
 | HistoryGroupSpecTest | 7 | 历史按月分组 |
 | DetailPageSpecTest | 4 | 详情页规格 |
 | LiveBrowseSpecTest | 4 | 直播浏览/搜索 |
-| **合计** | **147** | 与第 2 节 SmokeTest 逐项对应 |
+| ModelJsonCodecTest | 11 | 模型 JSON 编解码 |
+| TypedFacadeAndFeedDataSourceTest | 22 | 类型化门面与取流数据源 |
+| **合计** | **180** | 24 个测试类（另含共享夹具 `TestFixtures`） |
 
 CI：`.github/workflows/refactor-tests.yml` —— push/PR 触及 `refactor/**` 时自动跑
 `./gradlew :tests:test --no-daemon`，并把测试报告上传为 artifact（推送到 GitHub 后生效）。

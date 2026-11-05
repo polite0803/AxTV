@@ -82,6 +82,10 @@ public final class SettingsKeys {
     public static final String DANMAKU_BLOCK_WORDS = "danmaku_block_words";
     public static final String DANMAKU_FILTER_PACKAGE = "danmaku_filter_package";
 
+    // ─────────────── 接口 ───────────────
+    /** 客户端身份分支（0 = Web 接口 / 1 = Webcast / 2 = App Feed），下次启动生效。 */
+    public static final String CLIENT_IDENTITY_BRANCH = "client_identity_branch";
+
     // ─────────────── 界面 / 主题 ───────────────
     public static final String UI_FORM_FACTOR = "ui_form_factor";
     public static final String APP_FONT_SCALE = "app_font_scale";

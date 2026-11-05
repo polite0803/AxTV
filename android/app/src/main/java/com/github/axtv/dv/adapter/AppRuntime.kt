@@ -37,8 +37,9 @@ object AppRuntime {
         val cookieStore = SharedPrefsCookieStore(application)
         val signer = AbogusSigner(AndroidAssets(application), QuickJsRuntimeFactoryAdapter, AndroidSignLog)
         this.signer = signer
-        this.settings = Settings(SharedPrefsSettingsStore(application), settingsDevice)
-        this.api = ApiAssembler.create(signer, cookieStore, device)
+        val settings = Settings(SharedPrefsSettingsStore(application), settingsDevice)
+        this.settings = settings
+        this.api = ApiAssembler.create(signer, cookieStore, device, settings.clientIdentityBranch())
     }
 
     fun shutdown() {

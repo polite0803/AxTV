@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 关注的直播：四列宽 736dp × 92dp（纵向可拉到 192dp）；原 SIZE_LIVE 320×92 / SIZE_42 320×192（LiveWidget:28 / NOTES §3.5） -->
+<!-- API 31+：以 targetCellWidth="4" 为唯一权威，与桌面网格列数无关；API <31：宿主按 minWidth=736dp 推算，跨列数会漂移（4 列网格≈整行、5 列=4 列、6 列=5 列）。 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/widget_live_description"
-    android:minWidth="320dp"
-    android:minHeight="80dp"
+    android:minWidth="736dp"
+    android:minHeight="92dp"
     android:updatePeriodMillis="0"
-    android:initialLayout="@layout/glance_default_loading_layout"
+    android:initialLayout="@layout/widget_live"
     android:resizeMode="vertical|horizontal"
-    android:minResizeWidth="280dp"
-    android:minResizeHeight="72dp"
+    android:minResizeWidth="736dp"
+    android:minResizeHeight="92dp"
     android:widgetCategory="home_screen"
     android:targetCellWidth="4"
-    android:targetCellHeight="1"/>
+    android:targetCellHeight="1" />

@@ -17,7 +17,7 @@
 | `n11.m8003r0` Set-Cookie 解析 | — | `SetCookie` | 37 | **原算法只取分号分隔的最后一段**，行为照抄 |
 | `n11.m8000k` bd-tt-error-code 检查 | — | `DouyinApi.call` 内 | — | `bst-tt-error-code` 非 "0" 即抛错 |
 | `n11.m7999i` x-secsdk-web-signature | — | `SignProvider.xSecSdkWebSignature`（默认方法） | 71 | MD5(uifid_ts_A96D…7E4E_参数串) |
-| `n11` 的 8 类解析协程 | — | `JsonCodec`（接口） | 18 | 核心层不绑 JSON 库 |
+| `n11` 的 8 类解析协程 | — | `JsonCodec`（接口）+ `ModelJsonCodec` | 18 / 304 | 核心层不绑 JSON 库；默认实现按 @JsonKey 反射绑定 record |
 | `fl4` 的 cookie 读写 | 1138 | `CookieStore`（接口） | 73 | 只抽 API 层需要的 9 个方法 |
 | `n11` 的 OkHttp 双客户端 | — | `HttpEngine`（接口） | 31 | 30s 三个超时；跟随/不跟随重定向 |
 | `kz0.f12695V` 小写 uifid 头 / `m8065v` ticket-guard 头 | — | `ApiRequest.uifidHeader()` / `ticketGuardHeaders()` | 218 | 语义化建模 |
@@ -111,8 +111,8 @@ timestamp = 秒级
 |---|---|
 | `HttpEngine` | OkHttp 适配（两个 client：普通 30s、Cookie 引导不跟随重定向），或 JDK `HttpClient` |
 | `CookieStore` | SharedPreferences：`cookie_string`、`self_user_id`、`user_unique_id`、`mobile_feed_device_id`、`mobile_feed_install_id`；`ticketGuard()` 读 5 个 `interaction_*` 键 |
-| `SignProvider` | 由 `axtv.sign` 的 `AbogusSigner` + `SignJsEngine` 实现；`ticketGuardHeaders` 依赖 `bd-ticket-guard-client-data` 的 protobuf 编解码（原 `AbstractC0656g4`，**本轮未重构**） |
-| `JsonCodec` | 直接用 kotlinx.serialization + 原 `com.github.mytv.p004dv.model.*`；若用 `axtv.model` 记录类，需自己写基于 `@JsonKey` 的反射或代码生成解码器 |
+| `SignProvider` | 由 `axtv.sign` 的 `AbogusSigner` + `SignJsEngine` 实现；`ticketGuardHeaders` 已由 `axtv.api.TicketGuardHeaderCodec` 实现（**取证更正：`m4464l` 是 Base64(JSON)+SHA256withECDSA，不是 protobuf**）；`serverCert` 的 ECDH 分支离线不可复现，抛 `TicketGuardUnsupportedException` |
+| `JsonCodec` | 核心层已提供 `ModelJsonCodec`：`axtv.panel.Json` 解析 JSON 树 + `@JsonKey`/`FlexibleJson` 反射绑定 `axtv.model` record，零第三方依赖；Android 直接注入即可 |
 | `DeviceProfile` | `Build.VERSION.RELEASE` / `Build.MODEL` / `SDK_INT` |
 
 ## 6. 存疑
@@ -122,7 +122,9 @@ timestamp = 秒级
 2. **`m8002r` 的布尔参数语义**：原函数签名里有 `z`（是否签名）与另一个布尔（是否跟随重定向），
    已按 `ApiRequest.sign()` / `HttpEngine.followRedirects` 建模；但"Cookie 引导不跟随重定向"
    只在 `MsTokenBootstrap` 路径上确认，其余端点默认 `true`。
-3. **`bd-ticket-guard-*` 5 个头的值**依赖 `AbstractC0656g4` 的 protobuf 编码（`m4464l`），
-   本轮只留接口与说明，未实现。
+3. **`bd-ticket-guard-*` 5 个头的值**：取证更正——`AbstractC0656g4.m4464l` 产出 `Base64(JSON)`（字段
+   `ts_sign` / `req_content` / `req_sign` / `timestamp` / `t_trust`），签名是
+   `SHA256withECDSA("ticket=<t>&path=<p>&timestamp=<s>")`，**不是 protobuf**。已由
+   `TicketGuardHeaderCodec` 零依赖实现；仅 `serverCert` 的 ECDH+HKDF 加密分支未实现（离线无法取证）。
 4. **`SetCookie` 的原算法只取最后一段**（`a=1; Path=/; HttpOnly` → 取 `HttpOnly` → 无效），
    这是原实现的真实行为，未做"修正"；意味着 App 实际几乎不靠 Set-Cookie 更新 cookie。

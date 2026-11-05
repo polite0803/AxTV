@@ -1,3 +1,4 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
 
 plugins {
@@ -38,14 +39,14 @@ if (!hasReleaseSigning) {
 
 android {
     namespace = "com.github.axtv.dv"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.github.axtv.dv"
-        minSdk = 23          // 原版 AndroidManifest minSdkVersion=23
-        targetSdk = 35       // 原版 37（compileSdk 37 / Android 17 预览），构建用 35 起步
-        versionCode = 1        // AxTV 首发版
-        versionName = "0.0.1"
+        minSdk = 24          // 原版 23；因 WorkManager 2.12.0 的 manifest minSdk=24 抬到 24（放弃 API 23 设备）
+        targetSdk = 36       // 原版 37（compileSdk 37 / Android 17 预览），档 2 构建用 36
+        versionCode = 2        // 0.0.2: Media3 接线 + API typed + Widget
+        versionName = "0.0.2"
     }
 
     signingConfigs {
@@ -78,13 +79,19 @@ android {
         // java.time、java.util.stream、List.of/Map.of/Set.of、String.isBlank 等（见官方 desugared_apis 清单）。
         isCoreLibraryDesugaringEnabled = true
     }
-    kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
 
     sourceSets {
         getByName("main") {
             java.srcDirs(refactorModules)
         }
+    }
+}
+
+// Kotlin 2.3+ 必须用顶层 kotlin {} DSL 设置 jvmTarget（android.kotlinOptions 里的字符串写法已废弃）。
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 
@@ -96,6 +103,7 @@ tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
     exclude(jvmOnlyExcludes)
 }
+
 dependencies {
     // 核心库 desugaring：把 java.time / java.util.stream / List.of·Map.of·Set.of / String.isBlank 等
     // Java 8+ API 反向移植到 minSdk 23 的运行时。java.nio.file 与 InputStream.readAllBytes 不在其覆盖范围，
@@ -121,8 +129,6 @@ dependencies {
 
     implementation(libs.okhttp)
     implementation(libs.coil.compose)
-    implementation(libs.glance.appwidget)
-    implementation(libs.glance.material3)
     implementation(libs.work.runtime)
     // quickjs-android 暂缓：JitPack 对 com.github.dokar3:quickjs-quickjs-android-wrapper 返回 401
     // （无构建记录）。本轮改为内置 APK 自带的 libquickjs-android-wrapper.so（jniLibs/）

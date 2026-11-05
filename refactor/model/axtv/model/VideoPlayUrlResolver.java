@@ -208,6 +208,37 @@ public final class VideoPlayUrlResolver {
                 selectCandidateUrls(playAddr, playAddr265, source.bitRate(), resolveTargetResolution(target), false));
     }
 
+    // ---------------------------------------------------------------- Aweme 直达入口
+
+    /**
+     * 从 {@link Aweme} 直接取可播 URL（清晰度按设置项解析，等价于 target=null）。
+     *
+     * <p>地址来源是作品自带的 {@code video.play_addr} / {@code play_addr_265} /
+     * {@code bit_rate[].play_addr.url_list}，不额外请求接口。挑出的 URL 可能是：
+     * <ul>
+     *   <li>{@code douyinvod.com/{32hex}/{8hex}/...} 已签名 CDN 直链（首选）</li>
+     *   <li>{@code douyin.com/aweme/v1/play/?video_id=...} 播放接口地址（需 302）</li>
+     *   <li>带 {@code signature=} 的 CDN 地址</li>
+     *   <li>以上都不命中时的最后一条兜底地址</li>
+     * </ul>
+     * 无可用地址（作品为空 / 没有 url_list）时返回空串，由播放器决定如何提示。
+     */
+    public String playableUrl(Aweme aweme) {
+        return playableUrl(aweme, null);
+    }
+
+    /** 同 {@link #playableUrl(Aweme)}，但显式指定清晰度档位。 */
+    public String playableUrl(Aweme aweme, TargetResolution target) {
+        if (aweme == null) {
+            return "";
+        }
+        Video video = aweme.video();
+        if (video == null) {
+            return "";
+        }
+        return resolveFinalPlayUrl(video, target, aweme);
+    }
+
     /** 原 {@code resolveFinalPlayUrl(Video, lq5)}（无 aweme 版本）。 */
     public String resolveFinalPlayUrl(Video video, TargetResolution target) {
         return selectBestPlayUrl(selectCandidateUrls(

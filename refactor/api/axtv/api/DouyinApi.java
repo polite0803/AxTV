@@ -41,14 +41,22 @@ public final class DouyinApi {
     private final CookieStore cookies;
     private final DeviceProfile device;
     private final JsonCodec json;
+    private final UserAgentProvider userAgents;
 
+    /** 默认按 Web 接口分支；设置项切换时由 6 参构造器传入启动快照。 */
     public DouyinApi(HttpEngine http, SignProvider signer, CookieStore cookies,
                      DeviceProfile device, JsonCodec json) {
+        this(http, signer, cookies, device, json, ClientIdentityBranch.WEB);
+    }
+
+    public DouyinApi(HttpEngine http, SignProvider signer, CookieStore cookies,
+                     DeviceProfile device, JsonCodec json, ClientIdentityBranch branch) {
         this.http = http;
         this.signer = signer;
         this.cookies = cookies;
         this.device = device;
         this.json = json;
+        this.userAgents = new UserAgentProvider(branch, device);
     }
 
     public CookieStore cookies() {
@@ -67,6 +75,28 @@ public final class DouyinApi {
      * @throws ApiException 网络错误 / HTTP 错误 / 空体 / 接口 status_code != 0
      */
     public String call(ApiRequest request) throws ApiException {
+        ApiResponse response = execute(request);
+        if (request.isRawBytes()) {
+            return new String(response.bodyBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        if (response.isEmptyBody()) {
+            throw ApiException.emptyBody(response.statusCode());
+        }
+        return response.bodyText();
+    }
+
+    /**
+     * 执行一次请求并返回原始响应字节，供 protobuf 端点（/aweme/v2/feed/）使用。
+     * 文本视图会把非 UTF-8 字节替换成 U+FFFD，protobuf 只能走字节通道。
+     *
+     * @throws ApiException 网络错误 / HTTP 错误 / 接口 status_code != 0（空体由解码器判定）
+     */
+    public byte[] callBytes(ApiRequest request) throws ApiException {
+        return execute(request).bodyBytes();
+    }
+
+    /** 公共参数 → 签名 → 组头 → 发送 → Set-Cookie 回写 → 状态码检查。 */
+    private ApiResponse execute(ApiRequest request) throws ApiException {
         LinkedHashMap<String, String> query = new LinkedHashMap<>(request.query());
         Map<String, String> form = request.form();
 
@@ -78,22 +108,24 @@ public final class DouyinApi {
         }
 
         String body = form.isEmpty() ? "" : Texts.joinQuery(form);
-        String userAgent = userAgentFor(request);
+        String userAgent = userAgents.userAgent();
         String path = request.path();
+        // 头与签名必须同值：本次实际分支/UA 打一条可筛选的日志（logcat 标签 System.out）。
+        System.out.println("I AxTV_UA: branch=" + userAgents.branch() + " ua=" + userAgent
+                + " path=" + path);
 
         // ② 签名
         if (request.needsUserCenterSignChain()) {
             applyUserCenterSignChain(query, body, path, userAgent);
         } else if (request.signMode() == ApiRequest.SignMode.A_BOGUS) {
-            String abogus = signer.signABogus(path, Texts.joinQuery(query), body,
-                    isLiveHost(request.baseUrl()) ? userAgent : null);
+            String abogus = signer.signABogus(path, Texts.joinQuery(query), body, userAgent);
             if (!Texts.isBlank(abogus)) {
                 query.put("a_bogus", abogus);
             }
         }
 
         // ③ 请求头
-        Map<String, String> headers = buildHeaders(request, path, query, body, userAgent);
+        Map<String, String> headers = buildHeaders(request, path, query);
 
         // ④ 发送
         String url = request.baseUrl() + path + (query.isEmpty() ? "" : "?" + Texts.joinQuery(query));
@@ -133,13 +165,7 @@ public final class DouyinApi {
                 throw ApiException.headerError(errorCode, response.bodyText());
             }
         }
-        if (request.isRawBytes()) {
-            return new String(response.bodyBytes(), java.nio.charset.StandardCharsets.UTF_8);
-        }
-        if (response.isEmptyBody()) {
-            throw ApiException.emptyBody(response.statusCode());
-        }
-        return response.bodyText();
+        return response;
     }
 
     /** 解码成指定类型（JSON 库由调用方注入，核心层不绑定）。 */
@@ -149,6 +175,15 @@ public final class DouyinApi {
             return json.decode(body, type);
         } catch (Exception e) {
             throw ApiException.decode(request.path(), e);
+        }
+    }
+
+    /** 用注入的 JSON 编解码器解析响应文本（protobuf 端点的 JSON 回退分支复用）。 */
+    public <T> T decodeBody(String body, Class<T> type, String path) throws ApiException {
+        try {
+            return json.decode(body, type);
+        } catch (Exception e) {
+            throw ApiException.decode(path, e);
         }
     }
 
@@ -166,12 +201,9 @@ public final class DouyinApi {
      * webid ← user_unique_id（**仅当全为数字**时写入）。
      */
     void injectCommonParams(Map<String, String> query) {
-        Map<String, String> jar = cookies.cookies();
         query.put("msToken", currentMsToken());
-        query.put("screen_width", valueOr(jar.get("dy_swidth"), DEFAULT_SCREEN_WIDTH));
-        query.put("screen_height", valueOr(jar.get("dy_sheight"), DEFAULT_SCREEN_HEIGHT));
-        query.put("cpu_core_num", valueOr(jar.get("device_web_cpu_core"), DEFAULT_CPU_CORE));
-        query.put("device_memory", valueOr(jar.get("device_web_memory_size"), DEFAULT_MEMORY));
+        injectDeviceParams(query);
+        Map<String, String> jar = cookies.cookies();
         String verifyFp = jar.get("s_v_web_id");
         if (verifyFp != null) {
             query.put("verifyFp", verifyFp);
@@ -185,6 +217,18 @@ public final class DouyinApi {
         if (!Texts.isBlank(uniqueId) && Texts.allDigits(uniqueId)) {
             query.put("webid", uniqueId);
         }
+    }
+
+    /**
+     * tab/feed 的屏幕、CPU、内存四项（n11.m8036b0 里单独取值，不经 m8011D0）。
+     * 全部来自 cookie，缺省值与 m8011D0 共用同一组常量。
+     */
+    void injectDeviceParams(Map<String, String> query) {
+        Map<String, String> jar = cookies.cookies();
+        query.put("screen_width", valueOr(jar.get("dy_swidth"), DEFAULT_SCREEN_WIDTH));
+        query.put("screen_height", valueOr(jar.get("dy_sheight"), DEFAULT_SCREEN_HEIGHT));
+        query.put("cpu_core_num", valueOr(jar.get("device_web_cpu_core"), DEFAULT_CPU_CORE));
+        query.put("device_memory", valueOr(jar.get("device_web_memory_size"), DEFAULT_MEMORY));
     }
 
     private String currentMsToken() {
@@ -203,8 +247,7 @@ public final class DouyinApi {
      * （原文案 "… 将不带 x-secsdk-web-signature"）。
      */
     void applyUserCenterSignChain(Map<String, String> query, String body, String path, String userAgent) {
-        String abogus = signer.signABogus(path, Texts.joinQuery(query), body,
-                isLiveHostForPath(path) ? userAgent : null);
+        String abogus = signer.signABogus(path, Texts.joinQuery(query), body, userAgent);
         if (!Texts.isBlank(abogus)) {
             query.put("a_bogus", abogus);
         }
@@ -224,14 +267,14 @@ public final class DouyinApi {
 
     // ------------------------------------------------------------------ 请求头
 
-    private Map<String, String> buildHeaders(ApiRequest request, String path,
-                                             Map<String, String> query, String body, String userAgent) {
-        LinkedHashMap<String, String> headers = new LinkedHashMap<>(DouyinEndpoints.DEFAULT_HEADERS);
-        headers.put("user-agent", userAgent);
-        String referer = request.referer() != null
-                ? request.referer()
-                : DouyinEndpoints.refererFor(path, query);
-        headers.put("referer", referer);
+    private Map<String, String> buildHeaders(ApiRequest request, String path, Map<String, String> query) {
+        LinkedHashMap<String, String> headers = new LinkedHashMap<>(userAgents.headers());
+        if (userAgents.branch() != ClientIdentityBranch.APP_FEED) {
+            String referer = request.referer() != null
+                    ? request.referer()
+                    : DouyinEndpoints.refererFor(path, query);
+            headers.put("referer", referer);
+        }
         String cookie = cookies.cookieHeader();
         if (!Texts.isBlank(cookie)) {
             headers.put("cookie", cookie);
@@ -249,23 +292,6 @@ public final class DouyinApi {
             }
         }
         return headers;
-    }
-
-    private String userAgentFor(ApiRequest request) {
-        if (request.isMobile()) {
-            return device.mobileUserAgent();
-        }
-        return isLiveHost(request.baseUrl())
-                ? DouyinEndpoints.LIVE_USER_AGENT
-                : DouyinEndpoints.WEB_USER_AGENT;
-    }
-
-    private static boolean isLiveHost(String baseUrl) {
-        return baseUrl != null && baseUrl.contains("live.douyin.com");
-    }
-
-    private static boolean isLiveHostForPath(String path) {
-        return path != null && path.startsWith("/webcast/");
     }
 
     // ------------------------------------------------------------------ 诊断（m8063u）

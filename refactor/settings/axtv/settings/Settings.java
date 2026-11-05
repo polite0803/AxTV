@@ -7,6 +7,7 @@
  */
 package axtv.settings;
 
+import axtv.api.ClientIdentityBranch;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -683,6 +684,16 @@ public final class Settings {
 
     public void setDefaultHomeScreen(HomeScreen screen) {
         store.putInt(SettingsKeys.DEFAULT_HOME_SCREEN, screen.value);
+    }
+
+    /** 客户端身份分支（默认 Web 接口；启动时快照，下次启动生效）。 */
+    public ClientIdentityBranch clientIdentityBranch() {
+        return ClientIdentityBranch.fromValue(
+                store.getInt(SettingsKeys.CLIENT_IDENTITY_BRANCH, ClientIdentityBranch.WEB.value));
+    }
+
+    public void setClientIdentityBranch(ClientIdentityBranch branch) {
+        store.putInt(SettingsKeys.CLIENT_IDENTITY_BRANCH, branch.value);
     }
 
     /** 混合播放列表浮层（默认 true）。 */

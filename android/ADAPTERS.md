@@ -22,7 +22,7 @@
 | `HttpEngine` | `api/OkHttpEngine.kt`：连接/读/写各 30s，双 client（跟随/不跟随重定向） | okhttp | 🟡 编译通过；真实请求待设备 | `api/NOTES.md`（HttpEngine 章节常量表） |
 | `CookieStore` | `api/SharedPrefsCookieStore.kt`：SharedPreferences(`douyin_auth`) + `SetCookie.parse` 回写 | 无 | 🟡 编译通过；`ticketGuard()` 仍 `empty()` | `api/NOTES.md` |
 | `DeviceProfile` | `adapter/AndroidDeviceProfile.kt`（api 用 `Build.*`；settings 用 TV/leanback 判定） | 无 | 🟡 编译通过；TV 判定待设备 | `api/NOTES.md` DeviceProfile 章节 |
-| `SignProvider` 注入 | `adapter/AndroidSignProvider.kt` + `adapter/ApiAssembler.kt`（`JsonCodec` 未实现，显式抛错） | 无 | 🟡 URL/参数/a_bogus 拼装 JUnit 通过（真跑） | `api/NOTES.md` |
+| `SignProvider` 注入 | `adapter/AndroidSignProvider.kt` + `adapter/ApiAssembler.kt`（注入核心层 `ModelJsonCodec`） | 无 | 🟡 URL/参数/a_bogus 拼装 JUnit 通过（真跑）；解码 JVM 用例见 `refactor/tests` | `api/NOTES.md` |
 | `MsTokenBootstrap` 存储 | 复用 `CookieStore` 的 SP 键（msToken / ttwid 等） | 无 | 🟡 编译通过 | `api/NOTES.md` |
 
 ## 3. 播放器（player + player UI）

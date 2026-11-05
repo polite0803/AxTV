@@ -149,6 +149,8 @@ public final class QrLoginBridge {
     public static final long POLL_INTERVAL_MS = 1_000L;
     /** 二维码过期后最多重新生成几次（原 {@code ez3.f5677f >= 8}）。 */
     public static final int MAX_RESTARTS = 8;
+    /** 页面超过这么久既没出新二维码帧、也没再发 check_qrconnect，就重载登录页重新出码。 */
+    public static final long QR_STALE_MS = 25_000L;
 
     private final WebViewHost webView;
     private final Logger log = Logger.getLogger("QrLoginManager");
@@ -246,14 +248,16 @@ public final class QrLoginBridge {
             this.webView.evaluateJavascript(HOOK_SCRIPT, EVAL_TIMEOUT_MS);
 
             long deadline = System.currentTimeMillis() + QR_TIMEOUT_MS;
-            long timeout = QR_FIRST_TIMEOUT_MS;
             byte[] image = null;
+            String imageRaw = null;
             while (!this.cancelled && System.currentTimeMillis() < deadline) {
-                image = pollQr(timeout);
-                if (image != null) {
+                Snapshot head = snapshot();
+                byte[] decoded = head.qrRaw == null ? null : parseQrImage(head.qrRaw);
+                if (decoded != null) {
+                    image = decoded;
+                    imageRaw = head.qrRaw;
                     break;
                 }
-                timeout = QR_TIMEOUT_MS;
                 sleep(POLL_INTERVAL_MS);
             }
             if (this.cancelled) {
@@ -266,12 +270,75 @@ public final class QrLoginBridge {
             }
             publish(new State(Status.WAITING_SCAN, "等待扫码", image, "", "", false));
 
-            // 等待用户扫码：轮询 Cookie，出现 sessionid 即视为登录成功。
+            // 等待扫码：每秒同时做两件事——
+            // 1) 读 Cookie：出现 sessionid 即登录完成（权威判据，creator / www 两个域由宿主合并）；
+            // 2) 读页面快照：__dyQr 变了就立刻把新二维码推给 UI（页面换码后界面不再显示旧码），
+            //    并记录页面自己 check_qrconnect 的最新响应（__dyPoll）用于取证。
+            String frameRaw = imageRaw;
+            long freshAt = System.currentTimeMillis();
+            long pollAt = 0L;
+            String lastPoll = null;
+            String lastPollStatus = null;
+            int staleRestarts = 0;
             while (!this.cancelled) {
                 String cookie = readCookie();
                 if (AuthStore.hasSessionId(cookie)) {
                     publish(new State(Status.SUCCESS, "登录成功", image, cookie, "", false));
                     return;
+                }
+                Snapshot snapshot = snapshot();
+                if (snapshot.qrRaw != null && !snapshot.qrRaw.equals(frameRaw)) {
+                    byte[] next = parseQrImage(snapshot.qrRaw);
+                    if (next != null) {
+                        image = next;
+                        frameRaw = snapshot.qrRaw;
+                        freshAt = System.currentTimeMillis();
+                        this.log.log(Level.INFO, "qr frame updated, bytes=" + next.length + ", freshAt=" + freshAt);
+                        publish(new State(Status.WAITING_SCAN, "等待扫码", image, "", "", false));
+                    }
+                }
+                if (snapshot.pollAt > pollAt) {
+                    pollAt = snapshot.pollAt;
+                }
+                if (snapshot.pollRaw != null && !snapshot.pollRaw.equals(lastPoll)) {
+                    lastPoll = snapshot.pollRaw;
+                    this.log.log(Level.INFO, "check_qrconnect: " + redactPoll(snapshot.pollRaw));
+                    // 页面换码走的是 check_qrconnect 响应里的 data.qrcode（不是重新发 get_qrcode），
+                    // 所以这里也要解一帧，否则界面会一直显示已经过期的那张码。
+                    byte[] rotated = parseQrImage(snapshot.pollRaw);
+                    if (rotated != null && !java.util.Arrays.equals(rotated, image)) {
+                        image = rotated;
+                        freshAt = System.currentTimeMillis();
+                        frameRaw = null;
+                        this.log.log(Level.INFO, "qr rotated from check_qrconnect, bytes="
+                                + rotated.length + ", freshAt=" + freshAt);
+                        publish(new State(Status.WAITING_SCAN, "等待扫码", image, "", "", false));
+                    }
+                    String pollStatus = pollStatus(snapshot.pollRaw);
+                    if (pollStatus != null && !pollStatus.equals(lastPollStatus)) {
+                        lastPollStatus = pollStatus;
+                        this.log.log(Level.INFO, "poll status=" + pollStatus);
+                        if ("scan".equals(pollStatus) || "scanned".equals(pollStatus)) {
+                            publish(new State(Status.SCANNED, "已扫码，请在手机上确认登录", image, "", "", false));
+                        }
+                    }
+                }
+                long aliveAt = Math.max(freshAt, pollAt);
+                if (System.currentTimeMillis() - aliveAt > QR_STALE_MS) {
+                    if (staleRestarts >= MAX_RESTARTS) {
+                        publish(new State(Status.EXPIRED, "二维码长时间未刷新，请重试", image, "", "", false));
+                        return;
+                    }
+                    staleRestarts++;
+                    this.log.log(Level.INFO, "qr stale " + (QR_STALE_MS / 1000) + "s (freshAt=" + freshAt
+                            + ", pollAt=" + pollAt + ", now=" + System.currentTimeMillis()
+                            + "), reload login page (#" + staleRestarts + ")");
+                    publish(new State(Status.STARTING, "二维码已失效，正在重新生成", image, "", "", false));
+                    this.webView.loadUrl(LOGIN_URL, PAGE_LOAD_TIMEOUT_MS);
+                    freshAt = System.currentTimeMillis();
+                    pollAt = 0L;
+                    frameRaw = null;
+                    lastPoll = null;
                 }
                 sleep(POLL_INTERVAL_MS);
             }
@@ -289,6 +356,67 @@ public final class QrLoginBridge {
                 }
             }
         }
+    }
+
+    /**
+     * 读页面快照（{@link #SNAPSHOT_SCRIPT}）：二维码帧、页面自己 check_qrconnect 的最新响应与时间戳。
+     *
+     * <p>扫描/过期状态由页面自己判定，本类只负责把结果如实带给 UI 与日志；登录成功仍以
+     * Cookie 里出现 sessionid 为唯一判据。
+     */
+    private Snapshot snapshot() {
+        try {
+            String raw = this.webView.evaluateJavascript(SNAPSHOT_SCRIPT, EVAL_TIMEOUT_MS);
+            String json = unwrapJsResult(raw);
+            if (json == null || json.isEmpty()) {
+                return Snapshot.EMPTY;
+            }
+            Map<String, Object> map = Json.parseObject(json);
+            long pollAt = 0L;
+            try {
+                pollAt = Long.parseLong(Json.optString(map, "pollAt"));
+            } catch (NumberFormatException ignored) {
+                // 页面还没轮询过
+            }
+            return new Snapshot(
+                    Json.optString(map, "qr"),
+                    Json.optString(map, "poll"),
+                    pollAt);
+        } catch (Exception e) {
+            return Snapshot.EMPTY;
+        }
+    }
+
+    /** 从 check_qrconnect 原始响应里抠 {@code "status":"..."}（页面用它区分 未扫码/已扫码）。 */
+    static String pollStatus(String poll) {
+        if (poll == null) {
+            return null;
+        }
+        int key = poll.indexOf("\"status\"");
+        if (key < 0) {
+            return null;
+        }
+        int colon = poll.indexOf(':', key);
+        int open = colon < 0 ? -1 : poll.indexOf('"', colon + 1);
+        int close = open < 0 ? -1 : poll.indexOf('"', open + 1);
+        if (close < 0) {
+            return null;
+        }
+        return poll.substring(open + 1, close);
+    }
+
+    /** 日志脱敏：token/ticket/sessionid 的值换成 ***，并截断超长内容。 */
+    static String redactPoll(String poll) {
+        if (poll == null) {
+            return "";
+        }
+        String text = poll.replaceAll("(?i)(\"(?:token|ticket|sessionid|sessionid_ss)\"\\s*:\\s*\")[^\"]*\"", "$1***\"");
+        return text.length() > 240 ? text.substring(0, 240) + "..." : text;
+    }
+
+    /** 页面快照：{@code qr} 为 get_qrcode 原始响应，{@code poll} 为 check_qrconnect 原始响应。 */
+    record Snapshot(String qrRaw, String pollRaw, long pollAt) {
+        static final Snapshot EMPTY = new Snapshot(null, null, 0L);
     }
 
     /**

@@ -14,12 +14,15 @@ package axtv.model;
  * @param status          审核/展示状态（{@code status}，接口可能返回字符串）
  * @param diggType        点赞类型（{@code digg_type}，接口可能返回字符串）
  * @param score           权重分，决定同屏优先级（{@code score}）
- * @param danmakuType     弹幕类型（{@code danmaku_type}，接口可能返回字符串）
+ * @param danmakuType     弹幕类型（{@code danmaku_type}，接口可能返回字符串）。
+ *                        取证（2026-11-05）：src/ 反编译产物中该字段只有定义、无任何调用点
+ *                        （渲染链 wo0/om5/i42/wx5 均不读取），取值语义未知；原版全部按滚动渲染
  * @param diggCount       点赞数（{@code digg_count}，接口可能返回字符串）
  * @param showDigg        是否显示点赞按钮（{@code show_digg}，接口可能返回字符串）
  * @param showCopy        是否显示复制（{@code show_copy}，接口可能返回字符串）
  * @param fromCopy        是否来自复制（{@code from_copy}，接口可能返回字符串）
- * @param danmakuTypeBits 类型位掩码（{@code danmaku_type_bits}，接口可能返回字符串）
+ * @param danmakuTypeBits 类型位掩码（{@code danmaku_type_bits}，接口可能返回字符串）。
+ *                        取证（2026-11-05）：src/ 中无任何读取点，不参与弹幕分类
  * @param hasEmoji        是否含表情（{@code has_emoji}，接口可能返回字符串）
  * @param dislikeType     不喜欢类型（{@code dislike_type}，接口可能返回字符串）
  * @param isAd            是否广告（{@code is_ad}，接口可能返回字符串）

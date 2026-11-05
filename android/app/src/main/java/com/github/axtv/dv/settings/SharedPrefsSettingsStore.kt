@@ -14,9 +14,14 @@ class SharedPrefsSettingsStore(context: Context) : SettingsStore {
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences("axtv_settings", Context.MODE_PRIVATE)
 
-    override fun getString(key: String, defValue: String): String =
+    /**
+     * 注意：核心层（Settings.java）有 8 处传 null 表示「无默认值，缺失时应返回 null 交给 parse 走默认分支」。
+     * Java 接口是平台类型，Kotlin 覆写必须保持可空，否则会插入 checkNotNullParameter 在入口直接 NPE。
+     * 不能用 "" 代替 null：会把「缺失」变成「空字符串」，可能让 parse 进入非默认分支。
+     */
+    override fun getString(key: String, defValue: String?): String? =
         try {
-            prefs.getString(key, defValue) ?: defValue
+            prefs.getString(key, defValue)
         } catch (e: ClassCastException) {
             dropDirty(key, e)
             defValue
@@ -65,7 +70,11 @@ class SharedPrefsSettingsStore(context: Context) : SettingsStore {
 
     override fun contains(key: String): Boolean = prefs.contains(key)
 
-    override fun putString(key: String, value: String) {
+    /**
+     * value 允许为空，与 SharedPreferences.Editor.putString(key, null) 的语义一致（= 移除该键），
+     * 避免核心层将来以 null 清除配置时在 Kotlin 入口被 checkNotNullParameter 拦截。
+     */
+    override fun putString(key: String, value: String?) {
         prefs.edit().putString(key, value).apply()
     }
 

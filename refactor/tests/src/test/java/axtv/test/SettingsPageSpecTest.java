@@ -11,8 +11,8 @@ import org.junit.jupiter.api.Test;
 class SettingsPageSpecTest {
 
     @Test
-    void mainPageHas62Controls() {
-        assertEquals(62, SettingsPageSpec.MAIN_PAGE.size());
+    void mainPageHas64Controls() {
+        assertEquals(64, SettingsPageSpec.MAIN_PAGE.size());
     }
 
     @Test
@@ -32,8 +32,8 @@ class SettingsPageSpecTest {
     }
 
     @Test
-    void groupedHas13Groups() {
-        assertEquals(13, SettingsPageSpec.grouped().size());
+    void groupedHas14Groups() {
+        assertEquals(14, SettingsPageSpec.grouped().size());
     }
 
     @Test

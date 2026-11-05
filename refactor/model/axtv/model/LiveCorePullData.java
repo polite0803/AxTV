@@ -12,7 +12,8 @@ package axtv.model;
  * @param options    档位描述节点（{@code options}），可能嵌了一层 JSON 字符串；<b>可空</b>
  * @param streamData 各档位地址节点（{@code stream_data}），同样可能是字符串；<b>可空</b>
  */
-public record LiveCorePullData(Object options, Object streamData) {
+public record LiveCorePullData(@JsonKey("options") Object options,
+                               @JsonKey("stream_data") Object streamData) {
 
     public LiveCorePullData() {
         this(null, null);

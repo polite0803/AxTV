@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 搜索热搜：四列宽 736dp × 64dp（纵向可拉到 192dp）；原 SIZE_SEARCH 320×64 / SIZE_42 320×192（SearchWidget:40 / NOTES §3.6） -->
+<!-- API 31+：以 targetCellWidth="4" 为唯一权威，与桌面网格列数无关；API <31：宿主按 minWidth=736dp 推算，跨列数会漂移（4 列网格≈整行、5 列=4 列、6 列=5 列）。 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/widget_search_description"
-    android:minWidth="320dp"
-    android:minHeight="56dp"
+    android:minWidth="736dp"
+    android:minHeight="64dp"
     android:updatePeriodMillis="0"
-    android:initialLayout="@layout/glance_default_loading_layout"
+    android:initialLayout="@layout/widget_search"
     android:resizeMode="vertical|horizontal"
-    android:minResizeWidth="280dp"
-    android:minResizeHeight="56dp"
+    android:minResizeWidth="736dp"
+    android:minResizeHeight="64dp"
     android:widgetCategory="home_screen"
     android:targetCellWidth="4"
-    android:targetCellHeight="1"/>
+    android:targetCellHeight="1" />

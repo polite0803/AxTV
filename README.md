@@ -1,83 +1,70 @@
-# AxTV 反编译 + 重构工程（基于 myDV 2.3.43）
+# AxTV
 
-本目录是对 `myDV-2.3.43.apk`（抖音 Android TV 客户端，原包名 `com.github.mytv.dv`，重构后 applicationId 为 `com.github.axtv.dv`）的**完整反编译产物**与**重构中的干净工程**。
+面向 Android TV 与电视盒子的抖音客户端。为遥控器操作设计：方向键移动焦点、确定键进入、返回键逐级退出，界面使用 Compose for TV 构建。
 
-## 目录结构
+> 当前版本 0.0.2，仍在开发中。下面按「已接入主界面」「已实现、待接入」「桌面小组件」「系统能力」区分实际状态。
 
-```
-AxTV/
-├── myDV-2.3.43.apk          原始 APK（12.9 MB）
-├── README.md                本文件
-├── docs/                    分析文档
-│   ├── 功能清单.md           全量功能清单 + 类/文件定位
-│   ├── 核心流程.md           关键链路（登录 / 签名 / 取流 / 播放 / 直播 / 面板）
-│   └── 反编译报告.md         工具、参数、成功率、失败项
-├── src/                     ★ 反编译全量源码（只读，勿改）
-│   ├── sources/             jadx 输出：8461 个 .java
-│   ├── resources/           解码后的资源：AndroidManifest.xml、res/、assets/
-│   └── app/                 ★ 应用自有代码抽取（6264 个 .java）
-│       ├── p000/            R8 扁平化命名空间（6077 个类）
-│       └── com/github/mytv/dv/  保留可读名的应用类（187 个：MainActivity / model / widget）
-└── refactor/                ★ 重构中的干净工程（234 文件 / 24,490 行 / 411 class，javac 17 零错误）
-    ├── CONVENTIONS.md       重构约定（必读）
-    ├── PLAN.md              重构路线与进度
-    ├── COVERAGE.md          ★ 功能覆盖矩阵：99 条功能行逐条核对，零删减
-    ├── TESTS.md             ★ 147 项行为烟雾测试 + 复现命令
-    ├── sign/axtv/sign/      签名引擎（a_bogus / sign.js）
-    ├── api/axtv/api/        抖音 Web API 客户端（45 个端点）
-    ├── model/axtv/model/    数据模型（87 个 record）+ 取流算法
-    ├── player/axtv/player/  播放器（状态机 / 缩放 / 缓存 / PIP / 降档）
-    ├── live/axtv/live/      直播 WS + protobuf 帧 + 弹幕几何
-    ├── panel/axtv/panel/    手机↔电视 局域网面板（9978/9979/9980）
-    ├── settings/axtv/settings/  71 个配置键 / 更新 / 崩溃
-    ├── app/axtv/app/        Application + MainActivity + 路由 + 按键 + PIP
-    ├── tv/axtv/tv/          电视频道发布（EPG，两个 Preview Channel）
-    ├── ui/axtv/ui/          设置页 77 控件 + 画质 10 档 + 选集面板行为规格
-    └── widget/axtv/widget/  6 个 Glance 桌面小组件（39 类，行为规格全还原）
+## 功能
 
-android/                    ★ Android 壳工程骨架（gradle + Manifest 还原 + 资源已拷入）
-    └── ADAPTERS.md         ★ 适配层总表：接口 → Android 实现 → NOTES 规格出处
-```
+### 已接入主界面
 
-`src/` 是**证据**（原样保留，可回溯一切行为）；`refactor/` 是**结论**（去混淆、可读、可继续开发）。
+- **首页推荐信息流**：真实接口数据，展示作者、文案、点赞 / 评论 / 收藏计数；支持焦点移动、焦点记忆与分页加载。首页接口依赖登录态，未登录时会提示空响应或 Cookie 失效。
+- **登录**：扫码登录（二维码渲染、状态轮询、刷新与过期重试）、手动导入 Cookie、登录态校验与登出。
+- **播放**：基于 Media3 / ExoPlayer 的点播播放；同一播放实例内切换画质、倍速、播完行为（自动下一个 / 暂停 / 重播）、SurfaceView / TextureView 渲染切换、失败后切换备用地址重试、进度显示与跳转。播放浮层提供播放 / 暂停、进度拖动与菜单焦点操作。
+- **设置**：72 个配置键，覆盖播放、弹幕、直播、外观、账号、接口身份等分组；含「客户端身份分支」（Web 接口 / Webcast / App Feed，默认 Web 接口），统一决定请求 User-Agent 与签名输入。
+- **检查更新**：从 GitHub Releases 获取版本信息，校验 APK 签名后下载安装。
+- **崩溃日志**：未捕获异常落盘，并提供崩溃信息页面。
 
-## 反编译是怎么做的
+### 已实现、待接入主界面导航
+
+以下页面与数据层已经完成，但主界面导航入口尚未接入，当前版本从首页暂不可达：
+
+- **视频详情**：作者与简介、点赞 / 收藏 / 不喜欢、评论与楼中楼、加载更多评论。
+- **搜索**：最近搜索、热搜词、联想词，综合 / 视频 / 直播 / 用户结果。
+- **直播**：直播列表与直播间，含在线人数、清晰度选择与直播弹幕。
+- **合集与追更**：合集详情、剧集列表、上次播放定位、收藏合集、我的系列。
+- **个人中心**：历史、收藏、稍后再看；未登录时明确提示「去登录」，不显示空白页。
+
+### 桌面小组件（6 个）
+
+- **继续观看 / 稍后再看 / 合集追更 / 关注的直播 / 搜索热词**：真实接口数据，封面下载到本地缓存（按账号隔离，失败回落纯色占位）。
+- **正在播放**：显示当前进程内的播放内容；播放会话未建立时媒体键无效。
+- 点击组件可进入应用对应页面。
+
+### TV 适配
+
+- 遥控器 / 键盘焦点导航，返回键语义与页面焦点恢复。
+- TV 桌面启动入口。
+- 桌面小组件后台定时刷新（WorkManager）。
+
+## 安装
+
+- 系统要求：Android 7.0（API 24）及以上，适用于 Android TV 与电视盒子。
+- 从 Releases 下载 APK 后执行 `adb install -r AxTV.apk`，或在电视文件管理器中安装（需允许安装未知来源应用）。
+- 首次使用建议先在设置中完成登录：扫码或导入 Cookie。
+
+## 构建
+
+环境：JDK 17、Android SDK（compileSdk 等参数见工程配置）。
 
 ```bash
-# 工具：jadx 1.5.6 (CLI)  +  JDK 17
-java -Xmx6g -cp jadx-1.5.6-all.jar jadx.cli.JadxCLI \
-     -d src --deobf -j 8 --show-bad-code --comments-level info myDV-2.3.43.apk
+cd android
+./gradlew :app:assembleDebug
+# Windows
+gradlew.bat :app:assembleDebug
 ```
 
-- `--deobf`：开去混淆（能得到 `AbstractC1545qb` / `C1402` 这类可追踪的名字，而不是纯 `a.b.c`）
-- `--show-bad-code`：即使某方法反编译不完整也导出（保证"不遗留"），坏代码处有 jadx 注释标记
-- 结果：10854 个类全部导出为 8461 个 `.java`，204 处方法级失败（见 `docs/反编译报告.md`）
+产物位于 `android/app/build/outputs/apk/debug/app-debug.apk`。仓库已包含构建所需的全部源码。
 
-## 三个必须先知道的坑
+## 已知限制
 
-1. **应用代码不是按包组织的**。R8 full mode 把应用自有类和部分第三方类一起压平进了 `p000` 包，
-   类名被混淆成 `n11` / `ro5` / `C1400n`。**不要靠包名判断归属**，要靠：
-   - 日志 TAG（`VideoPlayer` / `ABogusSigner` / `DouyinDirectApi` / `LiveWS` / `CookieServer` …）
-   - 中文字面量（UI 文案集中在 `on5` / `eu5` / `qm4` / `ro5`）
-   - 对 `com.github.mytv.p004dv.R` 与 `model.*` 的引用
-2. **`p000` 里混了少量被重命名的第三方类**（已确认：`androidx.navigation` 的 `NavBackStackEntry`
-   就是 `p63`）。所以 `src/app/` 是"近似"的应用代码集合，不是严格边界。
-3. **原 App 是 Kotlin**，jadx 输出的是反编译出的 Java。Kotlin 语法糖（默认参数、内联、协程、
-   密封类）在 Java 里会变形，看到 `p70.m8973g0(...)` 这类调用要意识到它原本是 `CoroutineScope.launch`。
+- 首页推荐需要登录态；未登录时推荐接口可能返回空响应。
+- 扫码登录依赖手机端抖音确认，二维码过期需刷新；登录态通过 Cookie 持久化。
+- 详情、搜索、直播、合集、个人中心等页面已完成页面与数据层，但导航入口尚未接入。
+- 弹幕渲染层已接入播放浮层，点播评论到弹幕的数据注入链路尚未接线。
+- 「正在播放」小组件只反映本进程状态，进程结束后清空。
+- 尚未完成全量真机回归，部分接口行为可能随服务端策略变化。
 
-## 建议的阅读顺序
+## 许可证
 
-1. `docs/功能清单.md` —— 先知道这 App 有哪些功能
-2. `docs/核心流程.md` —— 再知道关键链路怎么走
-3. `refactor/*/NOTES.md` —— 每个模块的类映射与设计
-4. 需要抠细节时回 `src/app/` 查原类（每份重构代码的文件头都写了来源类路径）
-
-## 重构进度
-
-**功能零删减是硬约束**：原版每条功能都在 `src/` 里有完整实现，`refactor/` 的进度只影响"可读性"。
-逐条核对表见 [`refactor/COVERAGE.md`](refactor/COVERAGE.md)（99 条功能行：✅ 81 / 🟡 18 / ⬜ 0（剩余缺口全为绘制层）），
-路线与剩余工作见 [`refactor/PLAN.md`](refactor/PLAN.md)，行为验证见 [`refactor/TESTS.md`](refactor/TESTS.md)。
-
-核心域（签名 / API / 模型 / 播放器 / 直播 / 面板 / 设置 / 应用外壳 / EPG）已全部可读重建并编译通过；
-本轮新增**设置页 77 个控件与 71 个配置键的一一对照**，把「功能没被删」变成可核对的数据。
-剩余主要是 Compose 页面绘制（约 12 万行）与 Glance 组件树绘制，按「行为规格先行、绘制随后」逐页面推进。
+本项目基于 myDV 衍生，按 GNU General Public License v3.0 授权。完整条款见 [LICENSE](LICENSE)，第三方说明见 [NOTICE.md](NOTICE.md)。

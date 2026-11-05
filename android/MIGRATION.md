@@ -30,7 +30,7 @@
 
 | 页面 | 文件 | 规格出处 | 原版来源 / 说明 |
 |---|---|---|---|
-| 首页信息流 | `app/src/main/java/com/github/axtv/dv/ui/home/HomeFeedScreen.kt` | `refactor/ui/NOTES.md` §信息流、`FeedPageSpec.java`、`HomeTabsSpec.java` | `i42` 容器 / `on5` 视频页；TvLazyRow + TvLazyColumn，焦点索引提升到 `AxTvApp` 跨页记忆并恢复 |
+| 首页信息流 | `app/src/main/java/com/github/axtv/dv/ui/home/HomeFeedScreen.kt` | `refactor/ui/NOTES.md` §信息流、`FeedPageSpec.java`、`HomeTabsSpec.java` | `i42` 容器 / `on5` 视频页；LazyRow + LazyColumn，焦点索引提升到 `AxTvApp` 跨页记忆并恢复 |
 | 设置页 | `.../ui/settings/SettingsScreen.kt` | `refactor/ui/NOTES.md` §设置页（`qm4.java:7.3k`，62 项）、`SettingsPageSpec.java` | 取 19 个代表项，覆盖 TITLE/SECTION_HEADER/SWITCH/ENUM/ACTION/VERSION/NOTE/CARD；↑↓ 行焦点链、←→ 枚举、OK 切换 |
 | 播放器浮层 | `.../ui/player/PlayerOverlayScreen.kt` | `refactor/ui/NOTES-player-ui.md`、`PlayerMenuSpec.java`、`PlayerUiPalette.java` | `lq2` 菜单装配；画面 `AndroidView(SurfaceView)` 占位（原版 `bp0.java:116-121` PlayerView），浮层 Compose；画质/倍速/弹幕/屏蔽词/简介/返回 |
 
@@ -51,12 +51,12 @@
 2. **首页/详情**：Tab 容器与分页 → 信息流卡片 → 合集/评论面板。
 3. **设置页全量**：把 62 项按 `SettingsPageSpec` 批量展开到同一渲染器，再接 `SettingsStore`。
 4. **直播页**：`LivePageSpec` + 焦点让位与弹幕样式。
-5. **性能与低端盒**：Compose 1.7.6 + TvLazyList 在 1GB 盒子上先测首帧/滑动掉帧，再决定是否换 `BringIntoViewSpec` 或降级 TextureView。
+5. **性能与低端盒**：Compose 1.11.4 + `androidx.compose.foundation.lazy` 在 1GB 盒子上先测首帧/滑动掉帧，再决定是否换 `BringIntoViewSpec` 或降级 TextureView。
 6. **TV 集成**：`TvProvider`/Widget 与 Compose 页面并行，不阻塞 UI 主线。
 
 ## 7. 已知风险
 
-- **低端盒性能**：电视盒子 GPU/JIT 弱，TvLazyColumn 的焦点自动滚动 + 自绘边框可能掉帧；基线阶段未接图片加载（Coil）与弹幕，真实负载后需复测。（推测）
-- **焦点**：原版手写焦点盒/让位 vs tv-material 默认行为，边距与滚动位置会有可见差异；`TvLazyRow/TvLazyColumn` 在 alpha11 已标记 deprecated（确认），后续升级要迁移到 `BringIntoViewSpec`。
+- **低端盒性能**：电视盒子 GPU/JIT 弱，LazyColumn 的焦点自动滚动 + 自绘边框可能掉帧；基线阶段未接图片加载（Coil）与弹幕，真实负载后需复测。（推测）
+- **焦点**：原版手写焦点盒/让位 vs tv-material 默认行为，边距与滚动位置会有可见差异；tv-foundation 1.0.0 已删除 `TvLazy*`，本轮全部迁到 `androidx.compose.foundation.lazy`（LEANBACK 设备默认 `PivotBringIntoViewSpec` 的 30% pivot 与 TvLazy `PivotOffsets` 默认值一致）。
 - **Surface 合成**：`AndroidView(SurfaceView)` 与 Compose 浮层的 z-order 在部分盒子/TextureView 模式下会闪黑或浮层被盖；原版已提供 `PlayerSurfaceMode` 兜底，接入 Media3 时必须按该模式验证。（推测）
 - **版本代差**：原版 Compose 1.12.1 / material3 1.5.0-alpha25 vs 基线 1.7.6 / 1.3.1，API 行为（尤其焦点/滚动）不能假设一致。（确认）

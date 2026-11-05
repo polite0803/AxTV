@@ -14,10 +14,16 @@ class SharedPrefsWidgetStorage(context: Context) : WidgetStorage {
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences(WidgetStorage.PREFS_NAME, Context.MODE_PRIVATE)
 
-    override fun getString(key: String, def: String): String =
-        prefs.getString(key, def) ?: def
+    /**
+     * 注意：核心层 WidgetStore.read 固定传 null，用「缺失返回 null」判断默认快照分支
+     * （WidgetStore.java:27 `getString(key, null)` → `raw == null` 才走 def）。
+     * Java 接口为平台类型，Kotlin 覆写必须可空，否则入口 checkNotNullParameter 直接 NPE。
+     */
+    override fun getString(key: String, def: String?): String? =
+        prefs.getString(key, def)
 
-    override fun putString(key: String, value: String) {
+    /** value 为 null 表示移除该键，与 SharedPreferences.Editor.putString(key, null) 一致。 */
+    override fun putString(key: String, value: String?) {
         val editor = prefs.edit()
         if (value == null) editor.remove(key) else editor.putString(key, value)
         editor.apply()

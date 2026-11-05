@@ -26,3 +26,7 @@ keystore/
 *.apks
 *.iml
 *.hprof
+
+# JVM 崩溃转储
+hs_err_pid*.log
+replay_pid*.log

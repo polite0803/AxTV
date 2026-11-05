@@ -25,7 +25,7 @@
 | 首页单 tab 推荐流 `/aweme/v1/web/tab/feed/`（上滑加载更多、刷新序号、插入直播） | ✅ | `refactor/api/FeedApi.tabFeed`；Tab 容器行为已落 `ui/HomeTabsSpec`（四 Tab↔ab4 枚举、同 Tab 再触发刷新文案、双击返回退出状态机）；页面 ⬜ `on5`(10.4k) |
 | 频道推荐流 `/aweme/v2/web/module/feed/` | ✅ | `FeedApi.moduleFeed` |
 | 关注流 `/aweme/v1/web/follow/feed/` | ✅ | `FeedApi.followFeed` |
-| 移动端推荐流 `/aweme/v2/feed/`（snssdk + 移动 UA） | 🟡 | `FeedApi.mobileFeed`（device_id/iid 由 CookieStore 持久化；参数由 helper 构造，未逐字核） |
+| 移动端推荐流 `/aweme/v2/feed/`（snssdk + 移动 UA） | ✅ | `FeedApi.mobileFeed` 返回 `FeedResponse`；protobuf 由 `MobileFeedProtoCodec` 零依赖解码（`g13` 字段映射），JSON 回退保留 |
 | 频道设置 `/aweme/v1/web/home/channel/setting/` | ✅ | `refactor/api/CollectionApi.channelSetting` |
 | 视频详情 `/aweme/v1/web/aweme/detail/`（发布者卡片、简介展开、音乐、统计） | 🟡 接口 / 页面行为 | `VideoApi.detail`；页面行为已落 `ui/DetailPageSpec`（封面比例双态/时长 M:SS/标题三级兜底「未命名视频」/直播分区四态「正在刷新直播间…共 N 个直播间」/选台副标题/直播间卡「频道 N · 正在看 · X 人」/无可播放空态「没有可播放的视频」）；绘制 ⬜ `eu5`(11.6k) |
 | 相关推荐 `/aweme/v1/web/aweme/related/` | ✅ | `VideoApi.related` |
@@ -109,7 +109,7 @@
 | 扫码登录状态机（60s 页加载 / 60s·20s 二维码超时 / 15s JS 求值 / 5s Cookie 刷新 / 最多 8 次重开） | 🟡 | `panel/QrLoginBridge`（396 行）；3 个 jadx 溢出方法按常量重建，轮询间隔与成功判定标存疑 |
 | 多账号（accounts_list / current_account_id / account_*） | ✅ | `settings/Settings` + `SettingsKeys` |
 | 互动凭据解析（security payload 三层 + 私钥归一化 PEM） | ✅ | `panel/InteractionSecurityParser`（233 行） |
-| `bd-ticket-guard-*` 5 个请求头（protobuf 编码） | 🟡 | `SignProvider.ticketGuardHeaders` 接口与语义已还原；编码器（原 `AbstractC0656g4.m4464l`）⬜ |
+| `bd-ticket-guard-*` 5 个请求头 | ✅ | `TicketGuardHeaderCodec`（Base64(JSON)+SHA256withECDSA，零依赖）；`serverCert` 的 ECDH 分支抛 `TicketGuardUnsupportedException`（离线不可复现） |
 | 我的主页 / self_user_id | ✅ 接口 | `UserApi.profileSelf` |
 | 本地 PIN 锁（每账号 pinHash + pinSalt，sha256(salt+":"+pin) 校验） | ✅ | `settings/Settings`（`hasPin` / `hashPin` / 清空 PIN）；PIN 输入页 UI ⬜ |
 
@@ -179,15 +179,15 @@
 
 | 状态 | 条目数 |
 |---|---|
-| ✅ 已重构 | 81（其中 3 条为「接口 ✅ / 页面 ⬜」双状态：视频详情页、用户主页、关注/粉丝列表 UI） |
-| 🟡 部分（缺项已登记，源码仍在 `src/`） | 18 |
+| ✅ 已重构 | 80（其中 3 条为「接口 ✅ / 页面 ⬜」双状态：视频详情页、用户主页、关注/粉丝列表 UI） |
+| 🟡 部分（缺项已登记，源码仍在 `src/`） | 19 |
 | ⬜ 未开始（整条） | 0（矩阵内已无整条 ⬜；剩余缺口均为页面绘制层或 jadx 溢出项，已在各 🟡 行内标注） |
 | 合计 | 99 条功能行（此前统计块多计 3，已按精确行数校正） |
 
 **本轮新增落点**：`refactor/tv/`（EPG，8 类）、`refactor/app/`（MainActivity 4 类）、
 `refactor/ui/`（设置页 77 控件 + 画质 10 档 + 选集面板规格）、
 `refactor/widget/`（39 类 / 3545 行，含 933 行六组件渲染规格 + 518 行 NOTES）、
-`refactor/TESTS.md`（59 项行为验证）。
+`refactor/TESTS.md`（180 项 JUnit 5 用例，24 个测试类）。
 
 **剩余 ⬜ 收敛过程（三轮子任务实证修正）**：
 1. ~~Hilt 替代~~ → **结案**：全工程无 DI 框架，0 处 Hilt/`@Inject`；

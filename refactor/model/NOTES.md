@@ -525,10 +525,10 @@
 |---|---|---|---|
 | M1 | 设备解码能力查询 | `VideoPlayUrlResolver.queryDecoderMaxDims()` | 需 Android 侧实现 `DecoderCapabilities`：遍历 `MediaCodecList(REGULAR_CODECS)`，跳过 encoder，对 `video/hevc`、`video/avc` 分别取所有解码器 `VideoCapabilities` 的 width/height upper bound，按「宽×高」取最大一组；查不到返回 0 |
 | M2 | 清晰度/编码偏好的持久化 | `fl4.f6266n`、`fl4.f6274r`、`SharedPreferences("video_resolution")` | 需 settings 模块实现 `VideoPlayUrlResolver.Settings` |
-| M3 | embedded JSON 字符串解包 | `DataModelKt.unwrapEmbeddedJsonStringOrNull` | 规则：值是字符串且 trim 后以 `{`/`[` 开头 → 再解析一次；失败视为 null。需 JsonCodec 实现 |
+| M3 | embedded JSON 字符串解包 | `DataModelKt.unwrapEmbeddedJsonStringOrNull` | 规则：值是字符串且 trim 后以 `{`/`[` 开头 → 再解析一次；失败视为 null。已由 `axtv.api.ModelJsonCodec` 在绑定 `Object` 字段时实现 |
 | M4 | `options.qualities` 解析 | `DataModelKt.extractQualities` | 先尝试「解包字符串 → 反序列化为 `List<LiveStreamQuality>`」，失败再直接按对象反序列化；异常时返回空表 |
 | M5 | SDK 档位地址提取 | `DataModelKt.resolveSdkQualities` 的 JSON 导航部分 | 路径 `stream_data.data[quality.sdk_key].main.{flv,hls}`；`data` 节点缺失时退化为「按 level 从 flv/hls 的 values 末尾倒取」。已拆成纯计算版 `DataModels.resolveSdkQualities(...)`，由调用方先做 JSON 导航 |
-| M6 | `LiveCorePullData.options/streamData` 的具体类型 | kotlinx `JsonElement` | 现为 `Object`（已解析的 JSON 树），由 JsonCodec 决定 |
+| M6 | `LiveCorePullData.options/streamData` 的具体类型 | kotlinx `JsonElement` | 现为 `Object`（已解析的 JSON 树），由 `ModelJsonCodec` 解包为 `Map`/`List`/标量 |
 | M7 | 解码能力查询的异步初始化 | `init()` 里 `new Thread(...)` | 现为同步注入；Android 侧若查询耗时可在子线程完成后调用 `init(null, caps)` |
 | M8 | `LiveDanmakuSettings` 的 SharedPreferences 读写 | 由 settings 模块负责，本层只保留默认值 | — |
 

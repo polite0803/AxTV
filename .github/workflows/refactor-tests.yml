@@ -23,6 +23,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Make gradlew executable
+        working-directory: refactor
+        run: chmod +x gradlew
+
       - name: Setup Gradle (cache)
         uses: gradle/actions/setup-gradle@v4
 

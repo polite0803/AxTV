@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 继续看：四列宽 736dp × 192dp（1920×1080/5 列推导，见任务报告）；原 SIZE_22 156×192 / SIZE_42 320×192（ContinueWidget.java:28 / NOTES §3.2） -->
+<!-- API 31+：以 targetCellWidth="4" 为唯一权威，与桌面网格列数无关；API <31：宿主按 minWidth=736dp 推算，跨列数会漂移（4 列网格≈整行、5 列=4 列、6 列=5 列）。 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/widget_continue_description"
-    android:minWidth="156dp"
-    android:minHeight="180dp"
+    android:minWidth="736dp"
+    android:minHeight="192dp"
     android:updatePeriodMillis="0"
-    android:initialLayout="@layout/glance_default_loading_layout"
+    android:initialLayout="@layout/widget_continue"
     android:resizeMode="vertical|horizontal"
-    android:minResizeWidth="140dp"
-    android:minResizeHeight="160dp"
+    android:minResizeWidth="736dp"
+    android:minResizeHeight="192dp"
     android:widgetCategory="home_screen"
-    android:targetCellWidth="2"
-    android:targetCellHeight="2"/>
+    android:targetCellWidth="4"
+    android:targetCellHeight="2" />

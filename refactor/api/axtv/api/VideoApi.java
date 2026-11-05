@@ -6,7 +6,18 @@
  */
 package axtv.api;
 
-/** 视频 / 弹幕 / 历史 / 稍后再看。 */
+import axtv.model.DanmakuResponse;
+import axtv.model.FeedResponse;
+import axtv.model.UserWorksResponse;
+import axtv.model.WorkDetailResponse;
+
+/**
+ * 视频 / 弹幕 / 历史 / 稍后再看。
+ *
+ * <p>返回类型以原实现的解析协程为准（gz0 byte 5、ez0 byte 6/12/25/27）：
+ * 详情/相关/弹幕/历史/稍后再看均返回强类型；`stats` 与 `history/write` 原实现只取字符串、
+ * 不解析响应体，因此保留 {@code String}。
+ */
 public final class VideoApi {
 
     private final DouyinApi api;
@@ -20,8 +31,8 @@ public final class VideoApi {
      *
      * @param awemeId 作品 id
      */
-    public String detail(String awemeId) throws ApiException {
-        return api.call(ApiRequest.get(DouyinEndpoints.AWEME_DETAIL)
+    public WorkDetailResponse detail(String awemeId) throws ApiException {
+        return api.callFor(ApiRequest.get(DouyinEndpoints.AWEME_DETAIL)
                 .param("aweme_id", awemeId)
                 .param("origin_type", "0")
                 .param("request_source", "0")
@@ -30,12 +41,12 @@ public final class VideoApi {
                 .commonParams()
                 .sign()
                 .uifidHeader()
-                .ticketGuardHeaders());
+                .ticketGuardHeaders(), WorkDetailResponse.class);
     }
 
     /** 相关推荐。`/aweme/v1/web/aweme/related/` */
-    public String related(String awemeId, int count, int refreshIndex) throws ApiException {
-        return api.call(ApiRequest.get(DouyinEndpoints.AWEME_RELATED)
+    public FeedResponse related(String awemeId, int count, int refreshIndex) throws ApiException {
+        return api.callFor(ApiRequest.get(DouyinEndpoints.AWEME_RELATED)
                 .param("aweme_id", awemeId)
                 .param("count", String.valueOf(count))
                 .param("refresh_index", String.valueOf(refreshIndex))
@@ -43,7 +54,7 @@ public final class VideoApi {
                 .param("sub_channel_id", "")
                 .commonParams()
                 .sign()
-                .uifidHeader());
+                .uifidHeader(), FeedResponse.class);
     }
 
     /**
@@ -53,8 +64,8 @@ public final class VideoApi {
      * @param groupId  弹幕分组 id（详情接口返回的 danmaku_group_id，缺省与 itemId 相同）
      * @param duration 视频时长（毫秒）
      */
-    public String danmaku(String itemId, String groupId, long duration) throws ApiException {
-        return api.call(ApiRequest.get(DouyinEndpoints.DANMAKU)
+    public DanmakuResponse danmaku(String itemId, String groupId, long duration) throws ApiException {
+        return api.callFor(ApiRequest.get(DouyinEndpoints.DANMAKU)
                 .param("item_id", itemId)
                 .param("group_id", groupId == null ? itemId : groupId)
                 .param("duration", String.valueOf(duration))
@@ -67,10 +78,10 @@ public final class VideoApi {
                 .param("support_h265", "1")
                 .commonParams()
                 .sign()
-                .uifidHeader());
+                .uifidHeader(), DanmakuResponse.class);
     }
 
-    /** 播放埋点。`/aweme/v2/web/aweme/stats/`（POST 表单） */
+    /** 播放埋点。`/aweme/v2/web/aweme/stats/`（POST 表单）。原实现丢弃响应体，保留 String 仅用于排障。 */
     public String stats(String awemeId, String itemType, long playDeltaMillis) throws ApiException {
         return api.call(ApiRequest.postForm(DouyinEndpoints.AWEME_STATS)
                 .body("aweme_id", awemeId)
@@ -82,8 +93,8 @@ public final class VideoApi {
     }
 
     /** 观看历史。`/aweme/v1/web/history/read/` */
-    public String historyRead(long maxCursor, int count, int status) throws ApiException {
-        return api.call(ApiRequest.get(DouyinEndpoints.HISTORY_READ)
+    public UserWorksResponse historyRead(long maxCursor, int count, int status) throws ApiException {
+        return api.callFor(ApiRequest.get(DouyinEndpoints.HISTORY_READ)
                 .param("max_cursor", String.valueOf(maxCursor))
                 .param("count", String.valueOf(count))
                 .param("status", String.valueOf(status))
@@ -91,7 +102,7 @@ public final class VideoApi {
                 .commonParams()
                 .sign()
                 .uifidHeader()
-                .userCenterSignChain());
+                .userCenterSignChain(), UserWorksResponse.class);
     }
 
     /**
@@ -99,6 +110,7 @@ public final class VideoApi {
      *
      * <p>原实现里参数很多（app_name / enter_from / keyword / language / publish_time …），
      * 由 helper 拼装，这里只保留可核实的关键项，其余标「存疑」。
+     * <p>原实现不解析响应体，保留 {@code String}。
      */
     public String historyWrite(String awemeId, String enterFrom, long publishTime) throws ApiException {
         return api.call(ApiRequest.postForm(DouyinEndpoints.HISTORY_WRITE)
@@ -113,14 +125,14 @@ public final class VideoApi {
     }
 
     /** 稍后再看列表。`/aweme/v1/web/watchlater/list/` */
-    public String watchLater(int offset, int count, int operateType) throws ApiException {
-        return api.call(ApiRequest.get(DouyinEndpoints.WATCH_LATER)
+    public UserWorksResponse watchLater(int offset, int count, int operateType) throws ApiException {
+        return api.callFor(ApiRequest.get(DouyinEndpoints.WATCH_LATER)
                 .param("offset", String.valueOf(offset))
                 .param("count", String.valueOf(count))
                 .param("operate_type", String.valueOf(operateType))
                 .param("list_type", "0")
                 .commonParams()
                 .sign()
-                .userCenterSignChain());
+                .userCenterSignChain(), UserWorksResponse.class);
     }
 }
