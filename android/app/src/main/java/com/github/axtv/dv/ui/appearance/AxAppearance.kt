@@ -13,7 +13,6 @@ package com.github.axtv.dv.ui.appearance
 
 import android.content.Context
 import android.content.res.Configuration
-import android.content.res.Resources
 import android.os.Build
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -146,9 +145,14 @@ internal object AxAppearance {
     private fun initialPalette(): AxPalette {
         val settings = AppRuntime.settings
         seedArgb.intValue = settings?.globalSeedArgb() ?: 0
-        val uiMode = Resources.getSystem().configuration.uiMode
+        // 对象初始化阶段不能碰 Resources.getSystem()：它在 JVM 单测里是抛异常的 stub，
+        // 会让整个 AxAppearance 类初始化失败（ExceptionInInitializerError），
+        // 连带 SettingsBinder 的外观同步分支一起红。
+        // 这里按「非显式浅色就先用暗色基线」占位，AxTvTheme 组合期会用
+        // LocalConfiguration.current.uiMode 立刻算出真值。
+        val dark = settings?.themeMode() != Settings.ThemeMode.LIGHT
         return AxPaletteEngine.compute(
-            dark = resolveDark(settings, uiMode),
+            dark = dark,
             contrast = settings?.colorContrast() ?: Settings.ColorContrast.STANDARD,
             style = settings?.colorStyle() ?: Settings.ColorStyle.BY_SCENE,
             source = settings?.colorSource() ?: Settings.ColorSource.BRAND,

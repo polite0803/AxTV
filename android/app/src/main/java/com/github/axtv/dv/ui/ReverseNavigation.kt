@@ -20,8 +20,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.KeyEvent as ComposeKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalView
+import com.github.axtv.dv.adapter.AppRuntime
 
-/** 把 DPAD 上/下互换后重新派发；其它按键原样放行。[enabled] 为假时不加任何拦截。 */
+/**
+ * DPAD 上/下互换。[enabled] 只表示「当前页面允许参与」（播放页的上下键是换条，不参与）。
+ *
+ * 开关本身在每次按键时现读设置：AppRuntime.settings 不是快照状态，
+ * 若在组合期读它，改完设置根节点不会重组，这条开关就得重启才生效。
+ */
 @Composable
 fun Modifier.reverseDpadUpDown(enabled: Boolean): Modifier {
     if (!enabled) {
@@ -33,6 +39,9 @@ fun Modifier.reverseDpadUpDown(enabled: Boolean): Modifier {
 }
 
 private fun swapDpad(event: ComposeKeyEvent, root: android.view.View, remapping: BooleanArray): Boolean {
+    if (AppRuntime.settings?.reverseNavigation() != true) {
+        return false
+    }
     val native = event.nativeKeyEvent
     val swappedCode = when (native.keyCode) {
         KeyEvent.KEYCODE_DPAD_UP -> KeyEvent.KEYCODE_DPAD_DOWN
