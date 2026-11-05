@@ -71,4 +71,4 @@ Compose 的像素绘制无法用纯 JDK 表达，所以采用**行为规格先�
 - **Kotlin → Java 变形**：`p70.m8973g0(...)` 其实是 `CoroutineScope.launch`；`C0029C` / `RendererCapabilities` 是 jadx 的改名/合并产物，要按上下文还原真实类型
 - **`p000` 里混了被重命名的第三方类**：`AbstractC1545qb`(7507 行) 是 `androidx.navigation`、`p63` 是 `NavBackStackEntry`、`p70`/`ez2`/`i42` 混着 Media3 与 Compose 内部实现 —— 这些**不重写**，只引用
 - **`Flexible*Serializer`**：抖音接口会把数字/布尔返回成字符串，解码必须容错（已在 `model/FlexibleJson` 还原）
-- **`SetCookie` 的原算法只取分号最后一段**（等于几乎不生效），这是真实行为，未"修正"
+- **`SetCookie` 取 `;` 切分后的【第一段】**（`o70.m8483U0` = `list.get(0)`）：`ttwid=1%7C...; Path=/; HttpOnly` → `ttwid=1%7C...`。早期重构误读成"取最后一段"，会让服务端下发的 ttwid/msToken/UIFID 永远回写不进 cookie jar，已修正

@@ -78,8 +78,7 @@ public final class FeedApi {
             request.param("globalwid", uniqueId).param("webid", uniqueId);
         }
         return api.callFor(request
-                .userCenterSignChain()
-                .uifidHeader(), FeedResponse.class);
+                .secsdkSignatureOnly(), FeedResponse.class);
     }
 
     /**

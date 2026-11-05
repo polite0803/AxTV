@@ -42,25 +42,65 @@ public final class DouyinApi {
     private final DeviceProfile device;
     private final JsonCodec json;
     private final UserAgentProvider userAgents;
+    /** 是否在请求前自动补设备级匿名身份（ttwid + UIFID_TEMP）。App 装配置 true；单测离线 false。 */
+    private final boolean anonymousIdentityBootstrap;
+
+    /** 用于 identity 确保的对象锁。 */
+    private final Object identityLock = new Object();
+
+    /** 对应 n11.f14568f：身份引导每个进程只尝试一次，失败也不重试，避免每个请求都多打一次。 */
+    private boolean identityAttempted;
 
     /** 默认按 Web 接口分支；设置项切换时由 6 参构造器传入启动快照。 */
     public DouyinApi(HttpEngine http, SignProvider signer, CookieStore cookies,
                      DeviceProfile device, JsonCodec json) {
-        this(http, signer, cookies, device, json, ClientIdentityBranch.WEB);
+        this(http, signer, cookies, device, json, ClientIdentityBranch.WEB, false);
     }
 
     public DouyinApi(HttpEngine http, SignProvider signer, CookieStore cookies,
                      DeviceProfile device, JsonCodec json, ClientIdentityBranch branch) {
+        this(http, signer, cookies, device, json, branch, false);
+    }
+
+    /**
+     * @param anonymousIdentityBootstrap 是否在请求前自动补设备级匿名身份（ttwid + UIFID_TEMP）。
+     *                                   App 装配置 true；单测/离线场景置 false 以免发额外请求。
+     */
+    public DouyinApi(HttpEngine http, SignProvider signer, CookieStore cookies,
+                     DeviceProfile device, JsonCodec json, ClientIdentityBranch branch,
+                     boolean anonymousIdentityBootstrap) {
         this.http = http;
         this.signer = signer;
         this.cookies = cookies;
         this.device = device;
         this.json = json;
         this.userAgents = new UserAgentProvider(branch, device);
+        this.anonymousIdentityBootstrap = anonymousIdentityBootstrap;
     }
 
     public CookieStore cookies() {
         return cookies;
+    }
+
+    /**
+     * 确保匿名访问身份（ttwid + UIFID_TEMP）已就绪；已有则立即返回 true。
+     * 阻塞式，需在非主线程调用；失败返回 false，不影响调用方继续。
+     */
+    public boolean ensureAnonymousIdentity() {
+        if (AnonymousIdentity.hasIdentity(cookies) && AnonymousIdentity.hasUifid(cookies)) {
+            return true;
+        }
+        synchronized (identityLock) {
+            if (AnonymousIdentity.hasIdentity(cookies) && AnonymousIdentity.hasUifid(cookies)) {
+                return true;
+            }
+            // 复刻 n11.f14568f：每个进程只尝试一次，失败也不在每个请求上重试。
+            if (identityAttempted) {
+                return false;
+            }
+            identityAttempted = true;
+            return AnonymousIdentity.ensure(http, cookies);
+        }
     }
 
     public DeviceProfile device() {
@@ -97,6 +137,9 @@ public final class DouyinApi {
 
     /** 公共参数 → 签名 → 组头 → 发送 → Set-Cookie 回写 → 状态码检查。 */
     private ApiResponse execute(ApiRequest request) throws ApiException {
+        if (anonymousIdentityBootstrap) {
+            ensureAnonymousIdentity();
+        }
         LinkedHashMap<String, String> query = new LinkedHashMap<>(request.query());
         Map<String, String> form = request.form();
 
@@ -117,8 +160,11 @@ public final class DouyinApi {
         // ② 签名
         if (request.needsUserCenterSignChain()) {
             applyUserCenterSignChain(query, body, path, userAgent);
+        } else if (request.needsSecsdkSignatureOnly()) {
+            applySecsdkSignature(query);
         } else if (request.signMode() == ApiRequest.SignMode.A_BOGUS) {
-            String abogus = signer.signABogus(path, Texts.joinQuery(query), body, userAgent);
+            String abogus = signer.signABogus(path, Texts.joinQueryEncodedValues(query),
+                    body, userAgent);
             if (!Texts.isBlank(abogus)) {
                 query.put("a_bogus", abogus);
             }
@@ -127,8 +173,9 @@ public final class DouyinApi {
         // ③ 请求头
         Map<String, String> headers = buildHeaders(request, path, query);
 
-        // ④ 发送
-        String url = request.baseUrl() + path + (query.isEmpty() ? "" : "?" + Texts.joinQuery(query));
+        // ④ 发送（URL 参数按 yy0 case 0 逐项 URL 编码；未编码会被判 Sign Invalid）
+        String url = request.baseUrl() + path
+                + (query.isEmpty() ? "" : "?" + Texts.joinQueryEncoded(query));
         if (request.writesSearchDiagnostics()) {
             logSearchDiagnostics(path, query);
         }
@@ -242,12 +289,12 @@ public final class DouyinApi {
     // ------------------------------------------------------------------ 用户中心签名链（m8015G0）
 
     /**
-     * a_bogus + uifid + timestamp(秒) + x-secsdk-web-signature。
+     * a_bogus + uifid + timestamp(秒) + x-secsdk-web-signature（对应 m8015G0）。
      * UIFID / UIFID_TEMP 都缺失时，只写 timestamp 并打 WARN
      * （原文案 "… 将不带 x-secsdk-web-signature"）。
      */
     void applyUserCenterSignChain(Map<String, String> query, String body, String path, String userAgent) {
-        String abogus = signer.signABogus(path, Texts.joinQuery(query), body, userAgent);
+        String abogus = signer.signABogus(path, Texts.joinQueryEncodedValues(query), body, userAgent);
         if (!Texts.isBlank(abogus)) {
             query.put("a_bogus", abogus);
         }
@@ -262,6 +309,24 @@ public final class DouyinApi {
         }
         query.put("uifid", uifid);
         query.put("timestamp", timestamp);
+        query.put("x-secsdk-web-signature", signer.xSecSdkWebSignature(query, uifid, timestamp));
+    }
+
+    /**
+     * 只补 timestamp + x-secsdk-web-signature（对应 n11.m8036b0:2846-2857 的 tab/feed 分支）。
+     *
+     * <p>与原版的差异点必须保持一致：这里<b>不算 a_bogus</b>，且 uifid 只认 cookie["UIFID"]；
+     * 只有 UIFID_TEMP 时不带签名（原实现仅写 timestamp）。UIFID_TEMP 是匿名临时值，
+     * 拿它去签 secsdk 会被服务端拒绝。
+     */
+    void applySecsdkSignature(Map<String, String> query) {
+        String uifid = cookies.cookies().get("UIFID");
+        String timestamp = String.valueOf(System.currentTimeMillis() / 1000L);
+        query.put("timestamp", timestamp);
+        if (Texts.isBlank(uifid)) {
+            return;
+        }
+        query.put("uifid", uifid);
         query.put("x-secsdk-web-signature", signer.xSecSdkWebSignature(query, uifid, timestamp));
     }
 

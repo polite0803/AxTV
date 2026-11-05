@@ -16,9 +16,11 @@ import axtv.model.LiveRoomResponse;
 /**
  * 直播 HTTP 接口。WebSocket 弹幕见 axtv.live。
  *
- * <p>返回类型以原实现的解析协程为准（ez0 byte 1/8/9/10/11）：
- * 推荐流与分区列表是 {@link LiveFeedResponse}，关注直播是 {@link LiveFeedResponseHome}，
- * 进房是 {@link LiveRoomEnterResponse}，按场景取房间信息是 {@link LiveRoomResponse}。
+ * <p>返回类型以原实现的解析协程为准（ez0 的 byte 分支）：
+ * 推荐流 {@code /webcast/feed/} 是 byte 9 → {@link LiveFeedResponseHome}；
+ * 关注直播 {@code /webcast/web/feed/follow/} 是 byte 8 → {@link LiveFeedResponse}；
+ * 分区列表是 byte 10 → {@link LiveFeedResponse}；进房是 byte 11 → {@link LiveRoomEnterResponse}；
+ * 按场景取房间信息是 byte 12 → {@link LiveRoomResponse}。
  */
 public final class LiveApi {
 
@@ -39,7 +41,7 @@ public final class LiveApi {
      * @param maxTime 翻页时间戳；首屏传 0（原版此时额外加 `is_ssr=true`）
      * @param liveId  历史参数，原版无对应 query 键，当前不发送
      */
-    public LiveFeedResponse feed(int count, long maxTime, String liveId) throws ApiException {
+    public LiveFeedResponseHome feed(int count, long maxTime, String liveId) throws ApiException {
         ApiRequest request = ApiRequest.get(DouyinEndpoints.LIVE_FEED)
                 .base(DouyinEndpoints.LIVE_HOST)
                 .params(DouyinEndpoints.LIVE_BASE_PARAMS)
@@ -57,14 +59,14 @@ public final class LiveApi {
         } else {
             request.param("maxtime", String.valueOf(maxTime));
         }
-        return api.callFor(request.commonParams().sign().uifidHeader(), LiveFeedResponse.class);
+        return api.callFor(request.commonParams().sign().uifidHeader(), LiveFeedResponseHome.class);
     }
 
     /** 关注的主播谁在直播。`/webcast/web/feed/follow/` */
-    public LiveFeedResponseHome followFeed(String scene) throws ApiException {
+    public LiveFeedResponse followFeed(String scene) throws ApiException {
         return api.callFor(liveRequest(DouyinEndpoints.LIVE_FOLLOW_FEED)
                 .param("scene", scene)
-                .param("count", "20"), LiveFeedResponseHome.class);
+                .param("count", "20"), LiveFeedResponse.class);
     }
 
     /**

@@ -166,8 +166,8 @@ class WidgetRealDataProvider(context: Context) : WidgetDataProvider {
     private fun fetchLives(): List<WidgetLiveItem> {
         val api = LiveApi(AppRuntime.api ?: return emptyList())
         val response = api.followFeed(LIVE_FOLLOW_SCENE)
-        val items = response.data().orEmpty()
-            .mapNotNull { it.data() }
+        val items = response.data()?.data().orEmpty()
+            .mapNotNull { it?.room() }
             .filter { it.status() == 2 }
             .take(MAX_LIVES)
             .map { room ->

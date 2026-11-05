@@ -516,7 +516,8 @@ private fun LoginButton(
 /**
  * 解析粘贴的 Cookie 串。
  *
- * 与 refactor/api/axtv/api/SetCookie.java:19-36 同一套「按 ";" 切分、首个 '=' 拆 name/value」规则；
+ * 与 refactor/api/axtv/api/SetCookie.java:19-40 同一套「按 ";" 切分、首个 '=' 拆 name/value」规则
+ * （SetCookie 只取第一段，这里对每一段都套用）；
  * 该类是包私有（`final class SetCookie`，非 public），Kotlin 侧（不同包）无法直接调用，
  * 故在此按同一算法逐项复刻，并额外剔除 Path/Domain/Expires 等属性项。
  */

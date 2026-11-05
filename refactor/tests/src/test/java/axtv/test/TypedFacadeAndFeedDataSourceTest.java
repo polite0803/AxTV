@@ -10,6 +10,7 @@ package axtv.test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -39,6 +40,7 @@ import axtv.model.Aweme;
 import axtv.model.CommentListResponse;
 import axtv.model.FeedResponse;
 import axtv.model.LiveFeedResponse;
+import axtv.model.LiveFeedResponseHome;
 import axtv.model.UserProfileResponse;
 import axtv.model.WorkDetailResponse;
 
@@ -76,7 +78,7 @@ class TypedFacadeAndFeedDataSourceTest {
     void tabFeedSendsOriginalBaseAndSpecificParams() throws Exception {
         Harness h = new Harness(FEED_JSON);
         new FeedApi(h.api()).tabFeed(10, 1, 1);
-        String url = h.http.lastUrl;
+        String url = decodedQuery(h.http.lastUrl);
 
         // zy0.m12473a()：26 个桌面基础参数
         for (String base : List.of("device_platform=webapp", "aid=6383", "channel=channel_pc_web",
@@ -110,7 +112,7 @@ class TypedFacadeAndFeedDataSourceTest {
     void tabFeedLoadMoreCarriesVideoPreferAndViewCount() throws Exception {
         Harness h = new Harness(FEED_JSON);
         new FeedApi(h.api()).tabFeed(10, 2, 2, List.of("7300000000000000001", "7300000000000000002"));
-        String url = h.http.lastUrl;
+        String url = decodedQuery(h.http.lastUrl);
 
         assertTrue(url.contains("refresh_index=2"));
         assertTrue(url.contains("view_count=10"), "view_count 应为 (refreshIndex-1)*count");
@@ -125,19 +127,20 @@ class TypedFacadeAndFeedDataSourceTest {
         Harness h = new Harness(FEED_JSON);
         h.cookies.uniqueId = "1234567890";
         new FeedApi(h.api()).tabFeed(10, 1, 1);
-        assertTrue(h.http.lastUrl.contains("globalwid=1234567890"));
-        assertTrue(h.http.lastUrl.contains("webid=1234567890"));
+        String url = decodedQuery(h.http.lastUrl);
+        assertTrue(url.contains("globalwid=1234567890"));
+        assertTrue(url.contains("webid=1234567890"));
 
         Harness anonymous = new Harness(FEED_JSON);
         new FeedApi(anonymous.api()).tabFeed(10, 1, 1);
-        assertFalse(anonymous.http.lastUrl.contains("globalwid="));
+        assertFalse(decodedQuery(anonymous.http.lastUrl).contains("globalwid="));
     }
 
     @Test
     void liveFeedSendsOriginalWebcastParams() throws Exception {
-        Harness h = new Harness("{\"status_code\":0,\"data\":{}}");
+        Harness h = new Harness("{\"status_code\":0,\"data\":[]}");
         new LiveApi(h.api()).feed(10, 0, "");
-        String url = h.http.lastUrl;
+        String url = decodedQuery(h.http.lastUrl);
 
         for (String expected : List.of("need_map=1", "liveid=1", "is_draw=1", "inner_from_drawer=0",
                 "custom_count=10", "action=load_more", "action_type=loadmore",
@@ -146,6 +149,30 @@ class TypedFacadeAndFeedDataSourceTest {
                 "enter_from=web_live", "tz_name=Asia/Shanghai", "msToken=")) {
             assertTrue(url.contains(expected), "webcast/feed 必须带原版参数: " + expected);
         }
+    }
+
+    @Test
+    void liveFeedParsesRealHomeShapeAndFollowUsesLegacyShape() throws Exception {
+        // /webcast/feed/ 真身是 {data:[{rid, data:{room...}}]}（webcast 实际返回，非 {data:{data:[]}}）。
+        Harness feed = new Harness("""
+                {"status_code":0,"data":[{"type":1,"rid":"r1",
+                  "data":{"id_str":"7300","web_rid":"7300","title":"t1","status":2,
+                          "user_count_str":"1.2万"}}]}
+                """);
+        LiveFeedResponseHome home = new LiveApi(feed.api()).feed(10, 0, "");
+        assertEquals(0, home.statusCode());
+        assertTrue(feed.http.lastUrl.contains("/webcast/feed/"));
+        assertEquals("t1", home.data().get(0).data().title());
+        // 原版 LiveFeedDataHome 的 descriptor 只有 web_rid/data，外层 rid 是未知键被丢弃。
+        assertEquals("7300", home.data().get(0).data().webRid());
+
+        // 关注流是旧结构 {data:{data:[{web_rid, room:{...}}]}}，解析器不同。
+        Harness follow = new Harness("""
+                {"status_code":0,"data":{"data":[{"web_rid":"7300","room":{"title":"t2"}}]}}
+                """);
+        LiveFeedResponse legacy = new LiveApi(follow.api()).followFeed("scene");
+        assertTrue(follow.http.lastUrl.contains("/webcast/web/feed/follow/"));
+        assertEquals("t2", legacy.data().data().get(0).room().title());
     }
 
     @Test
@@ -285,12 +312,53 @@ class TypedFacadeAndFeedDataSourceTest {
         assertTrue(awemes.isEmpty(), "status_code==0 且服务端确实无作品时，空列表是合法结果");
     }
 
-    // ---------------------------------------------------------------- UA / 签名取证
+    // ---------------------------------------------------------------- 参数编码 / tab 签名形态
 
+    @Test
+    void queryIsUrlEncodedForAwemePcRecRawData() throws Exception {
+        Harness h = new Harness(FEED_JSON);
+        new FeedApi(h.api()).tabFeed(10, 1, 1);
+        String raw = h.http.lastUrl;
+
+        // 原版 URL 由 yy0 case 0 生成：花括号/引号/逗号都必须转义，否则服务端判 Sign Invalid
+        assertFalse(raw.contains("{\"is_client\""), "URL 里的 JSON 参数必须 URL 编码");
+        assertTrue(raw.contains("aweme_pc_rec_raw_data=%7B%22is_client%22"), "应编码为 %7B%22…");
+        assertTrue(raw.contains("halfMin") || raw.contains("aweme_pc_rec_raw_data"), "参数名本身不编码");
+    }
+
+    @Test
+    void tabFeedDoesNotSendABogusButSignsWithUifidOnlyFromCookie() throws Exception {
+        Harness h = new Harness(FEED_JSON);
+        h.cookies.jar.put("UIFID", "real-uifid");
+        new FeedApi(h.api()).tabFeed(10, 1, 1);
+
+        String url = decodedQuery(h.http.lastUrl);
+        assertFalse(url.contains("a_bogus="), "tab/feed 原版不算 a_bogus");
+        assertNull(h.signer.lastUserAgent, "tab/feed 不触发 a_bogus 签名");
+        assertTrue(url.contains("uifid=real-uifid"), "有 UIFID 时应带 uifid");
+        assertTrue(url.contains("timestamp="), "签名链必须带 timestamp");
+        assertTrue(url.contains("x-secsdk-web-signature="), "有 UIFID 时必须带 secsdk 签名");
+    }
+
+    @Test
+    void tabFeedSkipsSecsdkSignatureWhenOnlyUifidTempExists() throws Exception {
+        Harness h = new Harness(FEED_JSON);
+        h.cookies.jar.put("UIFID_TEMP", "temp-uifid");
+        new FeedApi(h.api()).tabFeed(10, 1, 1);
+
+        String url = decodedQuery(h.http.lastUrl);
+        // UIFID_TEMP 只用于 uifid 请求头/cookie，不参与 secsdk 签名（原 m8036b0:2846-2857）
+        assertFalse(url.contains("x-secsdk-web-signature="), "只有 UIFID_TEMP 时原版不带 secsdk 签名");
+        assertFalse(url.contains("uifid=temp-uifid"), "UIFID_TEMP 不应写进 query 的 uifid");
+        assertTrue(url.contains("timestamp="), "即使不签名也写 timestamp");
+    }
+
+    // ---------------------------------------------------------------- UA / 签名取证
     @Test
     void webBranchUaHeaderAndSignatureAreIdentical() throws Exception {
         Harness h = new Harness(FEED_JSON, ClientIdentityBranch.WEB);
-        new FeedApi(h.api()).tabFeed(10, 1, 1);
+        // tab/feed 原版不算 a_bogus，取一个走 A_BOGUS 的 Web 端点来验证 UA 一致性。
+        new VideoApi(h.api()).related("42", 10, 1);
 
         String headerUa = h.http.lastHeaders.get("user-agent");
         assertTrue(headerUa.startsWith("Mozilla/5.0 (Windows NT 10.0; Win64; x64)"), "Web 接口分支应使用 Chrome UA");
@@ -302,7 +370,7 @@ class TypedFacadeAndFeedDataSourceTest {
     @Test
     void webcastBranchUaHeaderAndSignatureAreIdentical() throws Exception {
         Harness h = new Harness("{\"status_code\":0}", ClientIdentityBranch.WEBCAST);
-        LiveFeedResponse response = new LiveApi(h.api()).feed(10, 0, "");
+        LiveFeedResponseHome response = new LiveApi(h.api()).feed(10, 0, "");
         assertEquals(0, response.statusCode());
 
         String headerUa = h.http.lastHeaders.get("user-agent");
@@ -341,6 +409,13 @@ class TypedFacadeAndFeedDataSourceTest {
     }
 
     // ---------------------------------------------------------------- 测试替身
+
+    /** URL 里的 query 已按原版逐项 URL 编码，断言前先解码回可读形态。 */
+    private static String decodedQuery(String url) {
+        int q = url.indexOf('?');
+        return q < 0 ? url : url.substring(0, q) + '?'
+                + java.net.URLDecoder.decode(url.substring(q + 1), StandardCharsets.UTF_8);
+    }
 
     private static final class Harness {
         final FakeHttpEngine http;

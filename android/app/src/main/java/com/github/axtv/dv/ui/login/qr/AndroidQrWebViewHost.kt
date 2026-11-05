@@ -165,6 +165,27 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
         }
     }
 
+    override fun setInteractive(interactive: Boolean) {
+        callOnMain {
+            val view = webView ?: return@callOnMain
+            view.alpha = if (interactive) 1f else 0f
+            view.isFocusable = interactive
+            view.isClickable = interactive
+            view.importantForAccessibility = if (interactive) {
+                View.IMPORTANT_FOR_ACCESSIBILITY_YES
+            } else {
+                View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            if (interactive) {
+                view.bringToFront()
+                view.requestFocus()
+            } else {
+                view.clearFocus()
+            }
+            Log.i(TAG, "webview interactive=$interactive")
+        }
+    }
+
     override fun isHostAvailable(): Boolean {
         val activity = activityRef.get() ?: return false
         return !destroyed && !activity.isFinishing && !activity.isDestroyed

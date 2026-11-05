@@ -14,7 +14,7 @@
 | `n11.f14561n` 默认请求头（14 条） | — | `DouyinEndpoints.DEFAULT_HEADERS` | 195 | 逐字还原 |
 | `n11.f14562o` 路径→Referer（40 条）+ `m7993X` | ~50 | `DouyinEndpoints.REFERER` + `refererFor` | — | switch 分支按可确证部分还原 |
 | `n11.m7996d` 搜索页 Referer | — | `DouyinEndpoints.searchReferer` | — | 带随机 aid + type |
-| `n11.m8003r0` Set-Cookie 解析 | — | `SetCookie` | 37 | **原算法只取分号分隔的最后一段**，行为照抄 |
+| `n11.m8003r0` Set-Cookie 解析 | — | `SetCookie` | 37 | 按 `;` 切分后取【第一段】（`o70.m8483U0` = `list.get(0)`），以首个 `=` 拆 name/value |
 | `n11.m8000k` bd-tt-error-code 检查 | — | `DouyinApi.call` 内 | — | `bst-tt-error-code` 非 "0" 即抛错 |
 | `n11.m7999i` x-secsdk-web-signature | — | `SignProvider.xSecSdkWebSignature`（默认方法） | 71 | MD5(uifid_ts_A96D…7E4E_参数串) |
 | `n11` 的 8 类解析协程 | — | `JsonCodec`（接口）+ `ModelJsonCodec` | 18 / 304 | 核心层不绑 JSON 库；默认实现按 @JsonKey 反射绑定 record |
@@ -25,6 +25,7 @@
 | `n11` 的异常语义 | — | `ApiException`（10 个工厂） | 111 | network/http/emptyBody/headerError/apiStatus/loginRequired/rateLimited/missingInteractionCredential |
 | `n11` 移动端形态 | — | `DeviceProfile` + `ApiRequest.mobile()` | 76 | `aweme.snssdk.com` + 移动 UA |
 | `n11.m8012E` msToken 引导 | — | `MsTokenBootstrap` | 67 | 见下 |
+| `n11.m8007A` ttwid 申领 + `m8049l` 前置检查 | — | `AnonymousIdentity` | 122 | 匿名访问身份（设备级 ttwid），见 §7 |
 
 ## 2. 端点清单（从 n11 的 map.put 字面量按调用点归组）
 
@@ -105,7 +106,31 @@ timestamp = 秒级
 
 `x-secsdk-web-signature = MD5( uifid + "_" + timestamp + "_A96D855A08C0A9707F8BEF0D9A527E4E_" + 完整参数串 )`
 
-## 5. 待迁移（Android 侧需实现）
+## 5. 匿名访问身份（`n11.m8007A` + `m8049l` → `AnonymousIdentity`）
+
+抖音 Web 的公开接口（首页推荐 `/aweme/v1/web/tab/feed/`、频道、搜索热榜…）**不要求登录**，
+但要求请求携带设备级 `ttwid` cookie。全新安装/未登录时 jar 里没有它，服务端直接回空响应
+（`ApiException.Kind.EMPTY_BODY`），界面就表现为「未登录 → 所有页面都没有数据」。
+
+```
+ensure(engine, cookies):
+  jar["ttwid"] 非空        → 直接返回（不再请求）
+  否则 POST ttwid.bytedance.com/ttwid/union/register/
+      headers: UA=Chrome/147, Accept=application/json, Content-Type=application/json,
+               Origin=https://www.douyin.com, Referer=https://www.douyin.com/
+      body:    {"region":"cn","aid":1768,"needFid":false,"service":"www.ixigua.com",
+                "migrate_info":{"ticket":"","source":"node"},
+                "cbUrlProtocol":"https","union":true}
+      取值:    Set-Cookie 里的 ttwid（第一段） → 响应体 "ttwid":"…" 兜底
+      写入:    cookies.putAll({ttwid: …})
+  失败 → 仅 WARN，返回 null（不抛异常、不阻断业务请求）
+```
+
+`DouyinApi.ensureAnonymousIdentity()` 在 `execute()` 最前面调用（由构造参数
+`anonymousIdentityBootstrap` 控制，App 装配时为 `true`），并用 `identityAttempted`
+复刻 `n11.f14568f` 的「每个进程只尝试一次」语义，失败后不会每个请求都多打一次。
+
+## 6. 待迁移（Android 侧需实现）
 
 | 接口 | Android 侧实现要点 |
 |---|---|
@@ -115,7 +140,7 @@ timestamp = 秒级
 | `JsonCodec` | 核心层已提供 `ModelJsonCodec`：`axtv.panel.Json` 解析 JSON 树 + `@JsonKey`/`FlexibleJson` 反射绑定 `axtv.model` record，零第三方依赖；Android 直接注入即可 |
 | `DeviceProfile` | `Build.VERSION.RELEASE` / `Build.MODEL` / `SDK_INT` |
 
-## 6. 存疑
+## 7. 存疑
 
 1. **15 个端点的参数未逐字核实**（见 §2 表格里的「存疑」）。这些端点的参数在 helper
    （`m7989C` / `m8009B` 的入参拼装、`awemePcRecRawData` 压缩 JSON）里，静态提取没跟到端点。
@@ -126,5 +151,7 @@ timestamp = 秒级
    `ts_sign` / `req_content` / `req_sign` / `timestamp` / `t_trust`），签名是
    `SHA256withECDSA("ticket=<t>&path=<p>&timestamp=<s>")`，**不是 protobuf**。已由
    `TicketGuardHeaderCodec` 零依赖实现；仅 `serverCert` 的 ECDH+HKDF 加密分支未实现（离线无法取证）。
-4. **`SetCookie` 的原算法只取最后一段**（`a=1; Path=/; HttpOnly` → 取 `HttpOnly` → 无效），
-   这是原实现的真实行为，未做"修正"；意味着 App 实际几乎不靠 Set-Cookie 更新 cookie。
+4. **`SetCookie` 取 `;` 切分后的第一段**（`o70.m8483U0` = `list.get(0)`）：
+   `Set-Cookie: ttwid=1%7C...; Path=/; Domain=...; HttpOnly; SameSite=None` → 取 `ttwid=1%7C...`。
+   早期重构误读为"只取最后一段"，会把 `SameSite=None` 当 cookie 写回（并让服务端下发的
+   `ttwid`/`msToken`/`UIFID` 永远进不了 jar），已按原算法修正为第一段。

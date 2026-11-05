@@ -157,11 +157,10 @@ private fun LiveRoom.toCard(index: Int): LiveCardUi = LiveCardUi(
     avatarUrl = owner().bestAvatar().firstUrl(),
     coverUrl = cover().firstUrl(),
     viewerCount = LiveRoomUtils.displayViewerCount(this),
-    isLive = status() == LIVE_STATUS,
+    // 原版直播卡片（he4.m5084b）无条件渲染 "LIVE"：列表只装正在直播的房间，
+    // 且 webcast 列表下发的是精简房间对象（status 恒为 0），不能拿它判开播。
+    isLive = true,
 )
-
-/** 原版 status == 2 表示直播中。 */
-private const val LIVE_STATUS = 2
 
 /**
  * 拉流候选地址：先按原版选流顺序（FULL_HD1 → HD1 → SD2 → SD1 → 键并集）挑一档，

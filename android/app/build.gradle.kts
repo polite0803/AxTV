@@ -101,6 +101,9 @@ kotlin {
 // 故用 sourceCompatibility/targetCompatibility（见上面的 android.compileOptions）。
 tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
+    // D8 会把 record 降级成普通类并重排实例字段（字母序），ModelJsonCodec 只能靠
+    // 规范构造器的【参数名】把参数对齐回字段。没有 -parameters 时参数名会变成 arg0…。
+    options.compilerArgs.add("-parameters")
     exclude(jvmOnlyExcludes)
 }
 

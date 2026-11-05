@@ -30,6 +30,7 @@ public final class ApiRequest {
     private boolean uifidHeader;
     private boolean ticketGuardHeaders;
     private boolean userCenterSignChain;
+    private boolean secsdkSignatureOnly;
     private boolean mobile;
     private boolean rawBytes;
     private boolean checkHeaderErrorCode;
@@ -118,6 +119,15 @@ public final class ApiRequest {
         return this;
     }
 
+    /**
+     * 对应 n11.m8036b0（tab/feed）的就地签名：只加 timestamp + x-secsdk-web-signature，
+     * 不算 a_bogus；uifid 只从 cookie["UIFID"] 取（不回退 UIFID_TEMP，缺失则不带签名）。
+     */
+    public ApiRequest secsdkSignatureOnly() {
+        this.secsdkSignatureOnly = true;
+        return this;
+    }
+
     /** 走 aweme.snssdk.com 的移动端形态（UA / 精简头 / protobuf 响应）。 */
     public ApiRequest mobile() {
         this.mobile = true;
@@ -194,6 +204,10 @@ public final class ApiRequest {
 
     public boolean needsUserCenterSignChain() {
         return userCenterSignChain;
+    }
+
+    public boolean needsSecsdkSignatureOnly() {
+        return secsdkSignatureOnly;
     }
 
     public boolean isMobile() {

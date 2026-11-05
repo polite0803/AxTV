@@ -54,6 +54,9 @@ public interface SignProvider {
      * 其中 join(params) 是"加入 uifid、timestamp 之后"的完整参数串（原实现对参数表做
      * 浅拷贝后补写 uifid / timestamp，再按插入顺序拼接；已存在的 key 位置不变）。
      *
+     * <p>拼接必须逐项做 {@code URLEncoder} 编码（n11:424 的 {@code yy0} case 1）。用未编码
+     * 的原始串会让服务端判为 "Blocked by ArgusSecurityPlugin Sign Invalid"（HTTP 403）。
+     *
      * @param params    当前参数表（可已包含 uifid / timestamp）
      * @param uifid     UIFID
      * @param timestamp 秒级时间戳字符串
@@ -65,7 +68,7 @@ public interface SignProvider {
         StringBuilder sb = new StringBuilder();
         sb.append(uifid).append('_').append(timestamp)
                 .append("_A96D855A08C0A9707F8BEF0D9A527E4E_")
-                .append(Texts.joinQuery(copy));
+                .append(Texts.joinQueryEncoded(copy));
         return Texts.md5Hex(sb.toString());
     }
 }

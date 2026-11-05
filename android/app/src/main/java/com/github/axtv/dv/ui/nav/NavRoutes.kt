@@ -56,6 +56,28 @@ sealed interface NavDestination {
     data object Login : NavDestination
 }
 
+/** 顶栏「统一路由」标签：release 下类名会被混淆，不能用 simpleName。 */
+val NavDestination.debugLabel: String
+    get() = when (this) {
+        NavDestination.Home -> "Home"
+        is NavDestination.Detail -> "Detail"
+        is NavDestination.Player -> "Player"
+        is NavDestination.PlayerAweme -> "PlayerAweme"
+        NavDestination.Search -> "Search"
+        is NavDestination.SearchResults -> "SearchResults"
+        NavDestination.Live -> "Live"
+        is NavDestination.LiveRoom -> "LiveRoom"
+        NavDestination.MixList -> "MixList"
+        is NavDestination.MixDetail -> "MixDetail"
+        is NavDestination.MixPlay -> "MixPlay"
+        NavDestination.Profile -> "Profile"
+        NavDestination.ProfileHistory -> "History"
+        NavDestination.ProfileFavorites -> "Favorites"
+        NavDestination.ProfileLater -> "Later"
+        NavDestination.Settings -> "Settings"
+        NavDestination.Login -> "Login"
+    }
+
 object NavRoutes {
 
     const val HOME = "home"

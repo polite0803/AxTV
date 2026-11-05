@@ -199,51 +199,102 @@ public final class ModelJsonCodec implements JsonCodec {
         if (fields.isEmpty()) {
             throw new IllegalArgumentException("类型没有可绑定字段: " + type.getName());
         }
-
-        Class<?>[] fieldTypes = new Class<?>[fields.size()];
-        Component[] components = new Component[fields.size()];
-        for (int i = 0; i < fields.size(); i++) {
-            Field field = fields.get(i);
-            JsonKey key = field.getAnnotation(JsonKey.class);
-            String primary = key == null || key.value().isEmpty() ? field.getName() : key.value();
-            String[] alternates = key == null ? new String[0] : key.alternates();
-            components[i] = new Component(primary, alternates, field, field.getGenericType());
-            fieldTypes[i] = field.getType();
+        Map<String, Field> byName = new LinkedHashMap<>();
+        for (Field field : fields) {
+            byName.put(field.getName(), field);
         }
 
-        Constructor<?> canonical = findCanonicalConstructor(type, fieldTypes);
-        if (canonical == null) {
-            throw new IllegalArgumentException(
-                    "找不到与字段顺序匹配的构造器: " + type.getName()
-                            + "（record 应为规范构造器，字段顺序须与构造参数一致）");
+        // JVM 上 record 完整：RecordComponent 就是规范构造器的参数顺序。
+        List<String> order = recordComponentNames(type);
+        if (order != null) {
+            Component[] components = new Component[order.size()];
+            Class<?>[] paramTypes = new Class<?>[order.size()];
+            for (int i = 0; i < order.size(); i++) {
+                Field field = byName.get(order.get(i));
+                if (field == null) {
+                    throw new IllegalArgumentException(
+                            "record 分量无同名字段: " + type.getName() + "." + order.get(i));
+                }
+                components[i] = component(field);
+                paramTypes[i] = field.getType();
+            }
+            return shapeOf(type, findConstructor(type, paramTypes), components);
         }
-        canonical.setAccessible(true);
-        return new Shape(canonical, components);
+
+        // Android release：D8 把 record 降级成普通类，实例字段顺序会被重排（字母序），
+        // 只有规范构造器参数仍保持声明顺序。因此按【参数名】对齐，而不是按字段顺序。
+        Map<String, Component> byNameComponents = new LinkedHashMap<>();
+        for (Field field : fields) {
+            byNameComponents.put(field.getName(), component(field));
+        }
+        for (Constructor<?> constructor : type.getDeclaredConstructors()) {
+            java.lang.reflect.Parameter[] params = constructor.getParameters();
+            if (params.length != fields.size()) {
+                continue;
+            }
+            Component[] components = new Component[params.length];
+            boolean matched = true;
+            for (int i = 0; i < params.length; i++) {
+                Component component = byNameComponents.get(params[i].getName());
+                if (component == null || !params[i].getType().equals(component.field.getType())) {
+                    matched = false;
+                    break;
+                }
+                components[i] = component;
+            }
+            if (matched) {
+                return shapeOf(type, constructor, components);
+            }
+        }
+        throw new IllegalArgumentException(
+                "找不到可按参数名对齐的规范构造器: " + type.getName()
+                        + "（record 降级后需保留 MethodParameters，见 proguard-rules.pro 与 -parameters）");
+    }
+
+    private static Shape shapeOf(Class<?> type, Constructor<?> constructor, Component[] components) {
+        if (constructor == null) {
+            throw new IllegalArgumentException("找不到规范构造器: " + type.getName());
+        }
+        constructor.setAccessible(true);
+        return new Shape(constructor, components);
+    }
+
+    private static Component component(Field field) {
+        JsonKey key = field.getAnnotation(JsonKey.class);
+        String primary = key == null || key.value().isEmpty() ? field.getName() : key.value();
+        String[] alternates = key == null ? new String[0] : key.alternates();
+        return new Component(primary, alternates, field, field.getGenericType());
     }
 
     /**
-     * 找规范构造器：参数类型按顺序与实例字段类型逐个相等。
-     * Android 低版本会由 D8 把 record 降级成普通类，因此不使用 {@code Class#isRecord()}
-     * / {@code Class#getRecordComponents()}（API 34 才有运行时支持）。
+     * 取 record 分量的声明顺序；非 record（含 D8 降级后的类）返回 {@code null}。
+     * 反射 API 在低版本 Android 上不存在，因此整体包在 try/catch 里。
      */
-    private static Constructor<?> findCanonicalConstructor(Class<?> type, Class<?>[] fieldTypes) {
-        for (Constructor<?> constructor : type.getDeclaredConstructors()) {
-            Class<?>[] params = constructor.getParameterTypes();
-            if (params.length != fieldTypes.length) {
-                continue;
+    private static List<String> recordComponentNames(Class<?> type) {
+        try {
+            if (!type.isRecord()) {
+                return null;
             }
-            boolean match = true;
-            for (int i = 0; i < params.length; i++) {
-                if (!params[i].equals(fieldTypes[i])) {
-                    match = false;
-                    break;
-                }
+            java.lang.reflect.RecordComponent[] components = type.getRecordComponents();
+            if (components == null || components.length == 0) {
+                return null;
             }
-            if (match) {
-                return constructor;
+            List<String> names = new ArrayList<>(components.length);
+            for (java.lang.reflect.RecordComponent component : components) {
+                names.add(component.getName());
             }
+            return names;
+        } catch (Throwable ignored) {
+            return null;
         }
-        return null;
+    }
+
+    private static Constructor<?> findConstructor(Class<?> type, Class<?>[] paramTypes) {
+        try {
+            return type.getDeclaredConstructor(paramTypes);
+        } catch (NoSuchMethodException e) {
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------ 工具

@@ -77,6 +77,12 @@ public final class QrLoginBridge {
         /** 按文档坐标模拟一次点击（原 ty3：换算成 view 坐标后 dispatchTouchEvent）。 */
         void tap(double x, double y);
 
+        /**
+         * 安全验证（account_flow=verify）时把隐藏 WebView 显示出来并允许交互。
+         * 账号风控要求短信/滑块验证时，页面必须可见才能完成，否则会一直停在「已扫码」。
+         */
+        void setInteractive(boolean interactive);
+
         /** 当前 Activity 是否还在（原 ez3 用 k21 的弱引用判断，取不到就提示「请回到应用界面内再发起登录」）。 */
         boolean isHostAvailable();
     }
@@ -151,6 +157,8 @@ public final class QrLoginBridge {
     public static final int MAX_RESTARTS = 8;
     /** 页面超过这么久既没出新二维码帧、也没再发 check_qrconnect，就重载登录页重新出码。 */
     public static final long QR_STALE_MS = 25_000L;
+    /** 已扫码后等待手机端确认的窗口：页面此时不再刷新二维码，不能按 stale 重载登录页。 */
+    public static final long QR_CONFIRM_TIMEOUT_MS = 120_000L;
 
     private final WebViewHost webView;
     private final Logger log = Logger.getLogger("QrLoginManager");
@@ -280,9 +288,12 @@ public final class QrLoginBridge {
             String lastPoll = null;
             String lastPollStatus = null;
             int staleRestarts = 0;
+            long scannedAt = 0L;
+            boolean verifying = false;
             while (!this.cancelled) {
                 String cookie = readCookie();
                 if (AuthStore.hasSessionId(cookie)) {
+                    this.webView.setInteractive(false);
                     publish(new State(Status.SUCCESS, "登录成功", image, cookie, "", false));
                     return;
                 }
@@ -293,6 +304,7 @@ public final class QrLoginBridge {
                         image = next;
                         frameRaw = snapshot.qrRaw;
                         freshAt = System.currentTimeMillis();
+                        scannedAt = 0L;
                         this.log.log(Level.INFO, "qr frame updated, bytes=" + next.length + ", freshAt=" + freshAt);
                         publish(new State(Status.WAITING_SCAN, "等待扫码", image, "", "", false));
                     }
@@ -310,6 +322,7 @@ public final class QrLoginBridge {
                         image = rotated;
                         freshAt = System.currentTimeMillis();
                         frameRaw = null;
+                        scannedAt = 0L;
                         this.log.log(Level.INFO, "qr rotated from check_qrconnect, bytes="
                                 + rotated.length + ", freshAt=" + freshAt);
                         publish(new State(Status.WAITING_SCAN, "等待扫码", image, "", "", false));
@@ -318,19 +331,36 @@ public final class QrLoginBridge {
                     if (pollStatus != null && !pollStatus.equals(lastPollStatus)) {
                         lastPollStatus = pollStatus;
                         this.log.log(Level.INFO, "poll status=" + pollStatus);
-                        if ("scan".equals(pollStatus) || "scanned".equals(pollStatus)) {
+                        if ("scan".equals(pollStatus) || "scanned".equals(pollStatus)
+                                || "confirmed".equals(pollStatus)) {
+                            if (scannedAt == 0L) {
+                                scannedAt = System.currentTimeMillis();
+                            }
                             publish(new State(Status.SCANNED, "已扫码，请在手机上确认登录", image, "", "", false));
                         }
                     }
+                    // 账号风控会把确认流程转成安全验证（短信/滑块），页面必须可见才能继续，
+                    // 否则会永远停在「已扫码」，超时后还会把验证页重载掉。
+                    if ("verify".equals(pollAccountFlow(snapshot.pollRaw)) && !verifying) {
+                        verifying = true;
+                        this.webView.setInteractive(true);
+                        this.log.log(Level.INFO, "account_flow=verify, show login page for verification");
+                        publish(new State(Status.SCANNED,
+                                "该账号需要安全验证：请在登录页完成验证后等待自动返回", image, "", "", false));
+                    }
                 }
                 long aliveAt = Math.max(freshAt, pollAt);
-                if (System.currentTimeMillis() - aliveAt > QR_STALE_MS) {
+                long now = System.currentTimeMillis();
+                boolean awaitingConfirm = scannedAt > 0L;
+                long staleBase = awaitingConfirm ? Math.max(aliveAt, scannedAt) : aliveAt;
+                long staleLimit = awaitingConfirm ? QR_CONFIRM_TIMEOUT_MS : QR_STALE_MS;
+                if (!verifying && now - staleBase > staleLimit) {
                     if (staleRestarts >= MAX_RESTARTS) {
                         publish(new State(Status.EXPIRED, "二维码长时间未刷新，请重试", image, "", "", false));
                         return;
                     }
                     staleRestarts++;
-                    this.log.log(Level.INFO, "qr stale " + (QR_STALE_MS / 1000) + "s (freshAt=" + freshAt
+                    this.log.log(Level.INFO, "qr stale " + (staleLimit / 1000) + "s (freshAt=" + freshAt
                             + ", pollAt=" + pollAt + ", now=" + System.currentTimeMillis()
                             + "), reload login page (#" + staleRestarts + ")");
                     publish(new State(Status.STARTING, "二维码已失效，正在重新生成", image, "", "", false));
@@ -339,6 +369,9 @@ public final class QrLoginBridge {
                     pollAt = 0L;
                     frameRaw = null;
                     lastPoll = null;
+                    scannedAt = 0L;
+                    verifying = false;
+                    this.webView.setInteractive(false);
                 }
                 sleep(POLL_INTERVAL_MS);
             }
@@ -393,6 +426,24 @@ public final class QrLoginBridge {
             return null;
         }
         int key = poll.indexOf("\"status\"");
+        if (key < 0) {
+            return null;
+        }
+        int colon = poll.indexOf(':', key);
+        int open = colon < 0 ? -1 : poll.indexOf('"', colon + 1);
+        int close = open < 0 ? -1 : poll.indexOf('"', open + 1);
+        if (close < 0) {
+            return null;
+        }
+        return poll.substring(open + 1, close);
+    }
+
+    /** 登录流程类型：{@code account_flow=verify} 表示账号触发了安全验证。 */
+    static String pollAccountFlow(String poll) {
+        if (poll == null) {
+            return null;
+        }
+        int key = poll.indexOf("\"account_flow\"");
         if (key < 0) {
             return null;
         }

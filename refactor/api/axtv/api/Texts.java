@@ -40,7 +40,10 @@ final class Texts {
         return s == null ? "" : s;
     }
 
-    /** 对应 o70.m8488Z0(entries, "&", ..., mapper)：逐项拼成 "k=v"，不跳过空值。 */
+    /**
+     * 对应 o70.m8488Z0(entries, "&", ..., yy0 case 6)：逐项拼成 "k=v"，不编码、不跳过空值。
+     * 仅用于 POST 表单体（原 n11.nz0:112）。
+     */
     static String joinQuery(Map<String, String> params) {
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, String> e : params.entrySet()) {
@@ -48,6 +51,36 @@ final class Texts {
                 sb.append('&');
             }
             sb.append(e.getKey()).append('=').append(nvl(e.getValue()));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 对应 yy0 case 0 / case 1：`URLEncoder.encode(k) + "=" + URLEncoder.encode(v)`。
+     * 用于最终请求 URL（n11.m7997e）与 x-secsdk-web-signature 的待签名串（n11.m7999i:424）。
+     */
+    static String joinQueryEncoded(Map<String, String> params) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            if (sb.length() > 0) {
+                sb.append('&');
+            }
+            sb.append(urlEncode(e.getKey())).append('=').append(urlEncode(nvl(e.getValue())));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 对应 yy0 case 5：key 原样、value 编码，`k=URLEncoder.encode(v)`。
+     * 用于 a_bogus 的 query 入参（n11.m7989C:163）。
+     */
+    static String joinQueryEncodedValues(Map<String, String> params) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> e : params.entrySet()) {
+            if (sb.length() > 0) {
+                sb.append('&');
+            }
+            sb.append(e.getKey()).append('=').append(urlEncode(nvl(e.getValue())));
         }
         return sb.toString();
     }

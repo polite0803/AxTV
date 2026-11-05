@@ -55,6 +55,7 @@ import com.github.axtv.dv.ui.nav.NavRoutes
 import com.github.axtv.dv.ui.nav.PlayerFromAwemeScreen
 import com.github.axtv.dv.ui.nav.PlayerFromFeedScreen
 import com.github.axtv.dv.ui.nav.RouteRequest
+import com.github.axtv.dv.ui.nav.debugLabel
 import com.github.axtv.dv.ui.profile.ProfileScreen
 import com.github.axtv.dv.ui.search.SearchResultsPage
 import com.github.axtv.dv.ui.search.SearchScreen
@@ -305,7 +306,7 @@ private fun TopTabBar(current: NavDestination, onSelect: (TopTab) -> Unit) {
         }
         Spacer(Modifier.weight(1f))
         Text(
-            text = "统一路由 · ${current.javaClass.simpleName}",
+            text = "统一路由 · ${current.debugLabel}",
             color = AxTvColors.TextSecondary,
             style = TextStyle(fontSize = 13.sp),
         )

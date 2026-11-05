@@ -39,7 +39,14 @@ object AppRuntime {
         this.signer = signer
         val settings = Settings(SharedPrefsSettingsStore(application), settingsDevice)
         this.settings = settings
-        this.api = ApiAssembler.create(signer, cookieStore, device, settings.clientIdentityBranch())
+        // 未登录也要能取到公开数据：装配时开启设备级匿名身份（ttwid）引导。
+        this.api = ApiAssembler.create(
+            signer,
+            cookieStore,
+            device,
+            settings.clientIdentityBranch(),
+            anonymousIdentityBootstrap = true,
+        )
     }
 
     fun shutdown() {

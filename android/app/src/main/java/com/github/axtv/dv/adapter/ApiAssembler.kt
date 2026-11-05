@@ -17,7 +17,7 @@ import com.github.axtv.dv.api.OkHttpEngine
 object ApiAssembler {
 
     fun create(signer: AbogusSigner, cookies: CookieStore, device: DeviceProfile): DouyinApi =
-        create(signer, cookies, device, ClientIdentityBranch.WEB)
+        create(signer, cookies, device, ClientIdentityBranch.WEB, true)
 
     /** 启动时快照设置里的客户端身份分支，本次进程内所有请求统一使用。 */
     fun create(
@@ -25,6 +25,8 @@ object ApiAssembler {
         cookies: CookieStore,
         device: DeviceProfile,
         branch: ClientIdentityBranch,
+        /** 是否自动补设备级匿名身份（ttwid）。应用启动时置 true，单测/离线请求请置 false。 */
+        anonymousIdentityBootstrap: Boolean,
     ): DouyinApi =
         DouyinApi(
             OkHttpEngine(),
@@ -33,5 +35,6 @@ object ApiAssembler {
             device,
             ModelJsonCodec(),
             branch,
+            anonymousIdentityBootstrap,
         )
 }
