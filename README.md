@@ -67,4 +67,4 @@ gradlew.bat :app:assembleDebug
 
 ## 许可证
 
-本项目基于 myDV 衍生，按 GNU General Public License v3.0 授权。完整条款见 [LICENSE](LICENSE)，第三方说明见 [NOTICE.md](NOTICE.md)。
+本项目按 GNU General Public License v3.0 授权。完整条款见 [LICENSE](LICENSE)，第三方说明见 [NOTICE.md](NOTICE.md)。
