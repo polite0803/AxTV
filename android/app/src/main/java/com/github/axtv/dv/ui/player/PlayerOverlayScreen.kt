@@ -227,6 +227,12 @@ fun PlayerOverlayScreen(
     var chromeWakeAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val latestMenuOpen by rememberUpdatedState(menuOpen)
 
+    /**
+     * 左右键微调给出的一次性进度条反馈：『播放器进度条』默认关，
+     * 但按左右键时必须看到进度条，控制层隐去后收回。
+     */
+    var seekFeedback by remember { mutableStateOf(false) }
+
     /** 「纯净暂停」关闭时，暂停要把控制层留住；开启时暂停也保持全屏纯净画面。 */
     val keepChromeWhilePaused = !session.isPlaying && !cleanPause
 
@@ -264,7 +270,11 @@ fun PlayerOverlayScreen(
             when {
                 isConfirm -> session.togglePlayPause()
                 isOpenMenu -> menuOpen = true
-                else -> session.handleRemoteKey(keyCode)
+                else -> {
+                    // 微调时把进度条拉出来（『播放器进度条』默认关，seek 是一次性反馈）。
+                    if (isSeek) seekFeedback = true
+                    session.handleRemoteKey(keyCode)
+                }
             }
         }
         wakeChrome()
@@ -293,6 +303,7 @@ fun PlayerOverlayScreen(
         val remaining = chromeWakeAt + CONTROLS_AUTO_HIDE_MS - System.currentTimeMillis()
         delay(remaining.coerceAtLeast(0L))
         chromeVisible = false
+        seekFeedback = false
     }
 
     // 切条目也算一次交互（连播时标题短暂浮现，与原版换条后重置控制层一致）。
@@ -358,7 +369,7 @@ fun PlayerOverlayScreen(
                 PlayerBottomBar(
                     session = session,
                     menuTriggerRequester = menuTriggerRequester,
-                    showProgress = showProgressBar,
+                    showProgress = showProgressBar || seekFeedback,
                     onOpenMenu = { menuOpen = true },
                 )
             }
