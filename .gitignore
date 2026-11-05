@@ -1,0 +1,23 @@
+# 反编译证据与临时产物（版权敏感 / 体积大，不入库）
+/src/
+/.workbuddy/
+/android/.excluded-src/
+/android/.excluded-res/
+
+# 构建与工具缓存
+build/
+.gradle/
+.kotlin/
+captures/
+
+# 本地配置
+local.properties
+.idea/
+.trae/
+
+# 构建产物
+*.apk
+*.aab
+*.apks
+*.iml
+*.hprof

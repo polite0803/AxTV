@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>搜索输入 · AxTV</title>
+<!-- 搜索输入（幕光方案 13.2）。{{KEY}} 由电视端 WebPanelPage 替换：THEME_CSS 色值、PANEL_HEAD 共用样式 -->
+<style>{{THEME_CSS}}</style>
+{{PANEL_HEAD}}
+<style>
+.wrap{max-width:520px;margin:0 auto;padding:8px 16px calc(32px + env(safe-area-inset-bottom,0px))}
+.top{display:flex;align-items:center;gap:10px;height:56px}
+.top .chip{margin-left:auto}
+.intro{display:flex;flex-direction:column;gap:6px;margin-top:16px;padding:0 4px}
+.intro h1{font-size:28px;line-height:36px;font-weight:800}
+.intro p{font-size:14px;line-height:20px}
+.stack{display:flex;flex-direction:column;gap:16px;margin-top:16px}
+/* 输入框是这一页的主角：64 高、20 圆角、字号 18 */
+.qbox{display:flex;align-items:center;gap:12px;height:64px;padding:0 16px;border-radius:20px;background:var(--sc-high);cursor:text}
+.qbox:focus-within{box-shadow:inset 0 0 0 2px var(--primary)}
+.qbox .ic{width:24px;height:24px;color:var(--on-surface-variant)}
+.qbox input{flex:1;min-width:0;border:0;outline:none;background:transparent;font-size:18px;line-height:1.4;font-weight:500;color:var(--on-surface)}
+.echo{display:flex;align-items:center;gap:8px;min-width:0;padding:0 4px;font-size:13px;line-height:18px;font-weight:500;color:var(--on-surface-variant)}
+.echo .ic{width:18px;height:18px}
+.echo b{min-width:0;color:var(--primary);font-weight:700}
+.echo b.empty,.echo.stale b{color:var(--on-surface-variant);font-weight:500}
+.go{width:100%}
+.recent{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.recent h2{font-size:14px;line-height:20px;font-weight:600;padding:0 4px}
+.recent .list{display:flex;gap:8px;flex-wrap:wrap}
+.recent .chip{cursor:pointer;color:var(--on-surface)}
+.recent .chip .ic{color:var(--on-surface-variant)}
+.recent .chip span{overflow:hidden;text-overflow:ellipsis;min-width:0}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></symbol>
+  <symbol id="i-tv" viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></symbol>
+</svg>
+
+<main class="wrap">
+  <header class="top">
+    <div class="brand"><i class="mark"></i><b>AxTV</b></div>
+    <span class="chip sm ter" id="st" role="status"><i class="dot"></i><span id="stText">连接中</span></span>
+  </header>
+  <div class="intro">
+    <h1>搜索输入</h1>
+    <p class="mu">输入的字会实时出现在电视上。</p>
+  </div>
+  <div class="stack">
+    <label class="qbox" for="q"><svg class="ic"><use href="#i-search"/></svg><input id="q" type="text" aria-label="搜索关键词" placeholder="关键词或作品 ID" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" autofocus></label>
+    <p class="echo stale" id="echoRow"><svg class="ic"><use href="#i-tv"/></svg><span>电视上显示：</span><b class="ell" id="echo">—</b></p>
+    <button type="button" class="btn f lg go" id="go"><svg class="ic"><use href="#i-search"/></svg>在电视上搜索</button>
+    <section class="recent" id="recent" hidden>
+      <h2>最近搜索</h2>
+      <div class="list" id="recentList"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+var ws,isComposing=false,everOpen=false,
+    el=document.getElementById('q'),st=document.getElementById('st'),stText=document.getElementById('stText'),
+    echo=document.getElementById('echo'),echoRow=document.getElementById('echoRow'),
+    recent=document.getElementById('recent'),recentList=document.getElementById('recentList');
+
+/* 连接状态 Chip：状态名与颜色和电视扫码卡一致 */
+var STATES={
+  connecting:['ter','连接中'],
+  connected:['sec','已连接'],
+  reconnecting:['','已断开 · 重连中'],
+  error:['err','连接错误']
+};
+function setState(k){
+  st.className='chip sm '+STATES[k][0];
+  stText.textContent=STATES[k][1];
+  echoRow.classList.toggle('stale',k!=='connected');
+}
+
+/* 断线 2 秒后自动重连。连上过之后断开 = 已断开 · 重连中；从没连上过就失败 = 连接错误（仍会重试） */
+function connect(){
+  var host=location.hostname;
+  ws=new WebSocket('ws://'+host+':9980');
+  ws.onopen=function(){everOpen=true;setState('connected')};
+  ws.onmessage=function(e){
+    try{var m=JSON.parse(e.data);if(m.type==='tv_text')showEcho(m.text||'')}catch(_){}
+  };
+  ws.onclose=function(){setState(everOpen?'reconnecting':'error');setTimeout(connect,2000)};
+  ws.onerror=function(){if(!everOpen)setState('error')};
+}
+
+/* 电视回传的搜索框文字：确认同步到了 */
+function showEcho(t){
+  echo.textContent=t||'（空）';
+  echo.classList.toggle('empty',!t);
+}
+
+/* 输入即同步；中文输入法组字期间不发，组字结束再发 */
+el.addEventListener('compositionstart',function(){isComposing=true});
+el.addEventListener('compositionend',function(){isComposing=false;sendInput()});
+el.addEventListener('input',function(){if(!isComposing)sendInput()});
+function sendInput(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'input',text:el.value}))}
+function doSearch(){
+  if(ws&&ws.readyState===1){
+    ws.send(JSON.stringify({type:'search',text:el.value}));
+    remember(el.value);
+  }
+}
+/* 回车搜索；输入法用回车上屏（组字中）时不触发 */
+el.addEventListener('keydown',function(e){
+  if(e.key==='Enter'&&!e.isComposing&&e.keyCode!==229){e.preventDefault();doSearch()}
+});
+document.getElementById('go').addEventListener('click',doSearch);
+
+/* 最近搜索：存在本机浏览器 localStorage，点一下直接发到电视 */
+var RECENT_KEY='axtv.search.recent',RECENT_MAX=8;
+function loadRecent(){
+  try{
+    var a=JSON.parse(localStorage.getItem(RECENT_KEY)||'[]');
+    return Array.isArray(a)?a.filter(function(x){return typeof x==='string'&&x}):[];
+  }catch(e){return []}
+}
+function remember(t){
+  t=t.trim();
+  if(!t)return;
+  var a=loadRecent().filter(function(x){return x!==t});
+  a.unshift(t);
+  try{localStorage.setItem(RECENT_KEY,JSON.stringify(a.slice(0,RECENT_MAX)))}catch(e){}
+  renderRecent();
+}
+function renderRecent(){
+  var a=loadRecent();
+  recentList.textContent='';
+  a.forEach(function(t){
+    var b=document.createElement('button');
+    b.type='button';
+    b.className='chip tap';
+    b.innerHTML='<svg class="ic"><use href="#i-history"/></svg>';
+    var s=document.createElement('span');
+    s.textContent=t;
+    b.appendChild(s);
+    b.addEventListener('click',function(){el.value=t;doSearch()});
+    recentList.appendChild(b);
+  });
+  recent.hidden=!a.length;
+}
+
+renderRecent();
+setState('connecting');
+connect();
+</script>
+</body>
+</html>

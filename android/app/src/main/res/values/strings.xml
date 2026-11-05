@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自有字符串。原 res/values/strings.xml 里 99% 是 appcompat/material/exo/glance 的库字符串
+  （已随库资源移至 android/.excluded-res/），此处只保留 App 自有的 6 条小组件描述。
+-->
+<resources>
+    <string name="widget_continue_description">接着看最近看过的视频</string>
+    <string name="widget_later_description">稍后再看列表里的前几条</string>
+    <string name="widget_live_description">关注的主播里谁在直播</string>
+    <string name="widget_mix_description">从上次看到的那一集接着看</string>
+    <string name="widget_now_description">在桌面上切上一条、下一条</string>
+    <string name="widget_search_description">搜索，顺带看热搜</string>
+</resources>

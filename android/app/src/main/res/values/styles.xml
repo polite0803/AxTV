@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自有主题。父级 Theme.AxTV 原为 AppCompat（Theme.AppCompat.NoActionBar）：
+  背景纯黑、全屏、抖音配色（colorAccent #25f4ee / colorPrimary #fe2c55 / colorPrimaryDark #000000）。
+  本壳工程是纯 Compose（Material3 + TV Material），不引入 AppCompat，
+  故改为无 parent 的基础主题，保留原视觉语义（黑底 + 抖音青/红）。
+-->
+<resources>
+    <style name="Theme.AxTV" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorBackground">@android:color/black</item>
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <!-- 原 AppCompat 的 colorAccent/colorPrimary/colorPrimaryDark 由 Compose Material3
+             主题接管（见 MainActivity 的 MaterialTheme），此处不再声明这些 attr，
+             避免依赖 appcompat（该库未引入）。抖音青/红保留在 Compose 主题里。 -->
+    </style>
+</resources>

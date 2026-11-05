@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:startColor="#ffb67bfb"
+                android:endColor="#ff6431d4"
+                android:angle="315"
+                android:type="linear"
+                android:centerColor="#ff8b4cf1"/>
+        </shape>
+    </item>
+    <item android:drawable="@drawable/tv_banner_content"/>
+</layer-list>

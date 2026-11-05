@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>推送登录信息 · AxTV</title>
+<!-- 登录信息推送（幕光方案 13.1）。{{KEY}} 由电视端 WebPanelPage 替换：THEME_CSS 色值、PANEL_HEAD 共用样式、DEVICE_NAME 电视名称 -->
+<style>{{THEME_CSS}}</style>
+{{PANEL_HEAD}}
+<style>
+/* —— 手机单栏（默认）—— */
+.page{max-width:1200px;margin:0 auto;padding:0 16px 128px}
+.top{display:flex;align-items:center;gap:10px;height:56px;margin-top:8px}
+.top .chip{margin-left:auto;max-width:55%}
+.intro h1{font-size:28px;line-height:36px;font-weight:800;margin-top:16px;padding:0 4px}
+.lede{font-size:14px;line-height:20px;margin-top:6px;padding:0 4px}
+.tv-d,.steps,.d{display:none}
+.form{display:flex;flex-direction:column;gap:16px;margin-top:16px}
+.card{display:flex;flex-direction:column;gap:12px;padding:18px;border-radius:28px;background:var(--sc-low)}
+.card .hd{display:flex;align-items:center;gap:10px}
+.card .hd b{font-size:15px;line-height:20px;font-weight:600}
+.badge{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;
+  background:var(--sc-high);color:var(--on-surface);clip-path:var(--sh-cookie4,none);font-size:14px;font-weight:700}
+.badge.cur{background:var(--primary-container);color:var(--on-primary-container)}
+.hint{font-size:12px;line-height:16px}
+.acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.brk{flex-basis:100%;height:0;margin-top:-8px}
+.chip .ell{min-width:0}
+#ck{min-height:120px}
+#ex{min-height:60px}
+.script{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:16px;background:var(--sc-lowest)}
+.script .sh{display:flex;align-items:center;gap:8px;font-size:12px;line-height:16px;font-weight:500}
+.script .sh .ic{width:18px;height:18px;color:var(--tertiary)}
+.script pre{font-size:12px;line-height:18px;color:var(--on-surface-variant);white-space:pre-wrap;word-break:break-all;
+  max-height:54px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 40%,transparent);mask-image:linear-gradient(#000 40%,transparent)}
+.script pre.open{max-height:320px;overflow:auto;-webkit-mask-image:none;mask-image:none}
+.script .acts .lnk{margin-left:auto;padding:8px 4px;font-size:12px;font-weight:600;color:var(--primary)}
+.manual summary{display:flex;align-items:center;gap:6px;padding:6px 4px;font-size:12px;line-height:16px;font-weight:500;
+  color:var(--on-surface-variant);cursor:pointer;list-style:none;-webkit-user-select:none;user-select:none}
+.manual summary::-webkit-details-marker{display:none}
+.manual summary .ic{width:18px;height:18px;transition:transform .2s cubic-bezier(.2,0,0,1)}
+.manual[open] summary .ic{transform:rotate(180deg)}
+.manual summary .pr{font-weight:600}
+.manual .body{display:flex;flex-direction:column;gap:12px;margin-top:8px}
+.logrow{display:flex;align-items:center;gap:10px;padding:8px;border-radius:12px;color:var(--on-surface)}
+.logrow .ic{color:var(--on-surface-variant)}
+.logrow b{display:block;font-size:14px;line-height:20px;font-weight:500}
+.logrow small{display:block;font-size:11px;line-height:16px;color:var(--on-surface-variant)}
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:10;display:flex;flex-direction:column;gap:10px;
+  padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));background:linear-gradient(to top,var(--surface) 70%,transparent)}
+.bar #ms{align-self:center}
+.bar .row{display:flex;gap:12px}
+.bar .row .f{flex:1}
+.btn .spin{display:none;width:24px;height:24px;background:currentColor;clip-path:var(--sh-softburst,circle(50%));animation:spin 1.2s linear infinite}
+.btn.ld .ic,.btn.ld .t{display:none}
+.btn.ld .spin{display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* 推送成功：SoftBurst 勾 + 推送了哪几项 */
+.done{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;overflow:auto;
+  padding:24px 16px calc(32px + env(safe-area-inset-bottom,0px));background:var(--surface)}
+.done .in{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;max-width:440px;text-align:center}
+.burst{display:grid;place-items:center;width:128px;height:128px;background:var(--primary-container);color:var(--on-primary-container);
+  clip-path:var(--sh-softburst,circle(50%));animation:pop .5s cubic-bezier(.2,0,0,1)}
+.burst .ic{width:56px;height:56px}
+.done h2{font-size:28px;line-height:36px;font-weight:800;margin-top:8px;word-break:break-word}
+.done p{font-size:14px;line-height:20px}
+.done .chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.done .acts{flex-direction:column;align-items:stretch;gap:10px;width:100%;max-width:440px}
+@keyframes pop{from{transform:scale(.4) rotate(-40deg);opacity:0}to{transform:none;opacity:1}}
+
+/* —— 电脑两栏：左侧步骤，右侧表单 —— */
+@media (min-width:900px){
+  .page{display:grid;grid-template-columns:minmax(0,400px) minmax(0,1fr);gap:56px;align-items:start;padding:56px 64px}
+  .intro{position:sticky;top:56px;display:flex;flex-direction:column;gap:20px}
+  .top{height:auto;margin:0}
+  .top .chip,.lede,.m{display:none!important}
+  .intro h1{font-size:45px;line-height:52px;margin-top:8px;padding:0}
+  .tv-d{display:inline-flex;align-self:flex-start;height:36px}
+  .steps{display:flex;flex-direction:column;gap:16px;margin-top:12px;list-style:none}
+  .steps li{display:flex;gap:14px}
+  .steps .badge{width:32px;height:32px}
+  .steps b{display:block;font-size:14px;line-height:20px;font-weight:600}
+  .steps div span{display:block;font-size:12px;line-height:16px;color:var(--on-surface-variant);margin-top:2px}
+  .d{display:inline-flex}
+  #ckInfo{margin-left:auto}
+  .form{margin-top:0}
+  .card{padding:20px}
+  #ck{min-height:96px}
+  .bar{position:static;padding:0;background:none}
+  .bar #ms{align-self:flex-start}
+  .done{justify-content:center}
+  .done .in{flex:none}
+  .done .acts{flex-direction:row;justify-content:center;width:auto;margin-top:32px}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></symbol>
+  <symbol id="i-paste" viewBox="0 0 24 24"><path d="M19 2h-4.18C14.4.84 13.3 0 12 0S9.6.84 9.18 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z"/></symbol>
+  <symbol id="i-delete" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></symbol>
+  <symbol id="i-auto" viewBox="0 0 24 24"><path d="m19 9 1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M16.59 8.59 12 13.17 7.41 8.59 6 10l6 6 6-6z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></symbol>
+  <symbol id="i-ok" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></symbol>
+  <symbol id="i-err" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></symbol>
+</svg>
+
+<div class="page">
+  <header class="intro">
+    <div class="top">
+      <div class="brand"><i class="mark"></i><b>AxTV</b></div>
+      <span class="chip sec sm"><i class="dot"></i><span class="ell">{{DEVICE_NAME}}</span></span>
+    </div>
+    <h1>推送登录信息</h1>
+    <p class="lede mu">粘贴后点推送，电视会立即使用。</p>
+    <span class="chip sec tv-d"><i class="dot"></i><span class="ell">已连接 · {{DEVICE_NAME}}</span></span>
+    <ol class="steps">
+      <li><span class="badge cur num">1</span><div><b>导出 Cookie</b><span>在抖音网页登录后，用 Cookie-Editor 等插件导出，粘贴到右侧。</span></div></li>
+      <li><span class="badge num">2</span><div><b>提取互动凭据（可选）</b><span>F12 打开 Console，运行提取脚本，把结果粘贴到右侧点「一键填充」。不填也能正常浏览。</span></div></li>
+      <li><span class="badge num">3</span><div><b>推送到电视</b><span>电视立即使用新的登录信息。</span></div></li>
+    </ol>
+  </header>
+
+  <form id="f" class="form" novalidate>
+    <section class="card">
+      <div class="hd"><span class="badge cur num m">1</span><b class="f1">Cookie</b><span class="chip sm on">必填</span></div>
+      <p class="hint mu m">在抖音网页登录后，用 Cookie-Editor 等插件导出 Cookie，粘贴到下面。</p>
+      <label class="field"><textarea id="ck" class="mono" aria-label="Cookie" placeholder="在此粘贴 Cookie 字符串：sessionid=…; ttwid=…; passport_csrf_token=…" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
+      <div class="acts">
+        <button type="button" class="btn sm tap" id="pasteBtn" hidden><svg class="ic"><use href="#i-paste"/></svg>粘贴</button>
+        <button type="button" class="btn sm tap" id="clearBtn"><svg class="ic"><use href="#i-delete"/></svg>清空</button>
+        <span class="brk m"></span>
+        <span class="chip sm wrap" id="ckInfo" role="status" hidden></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="hd"><span class="badge num m">2</span><b class="f1">互动安全凭据</b><span class="chip sm">可选</span></div>
+      <p class="hint mu">用于点赞、收藏等互动操作。不填不影响浏览。</p>
+      <div class="script">
+        <div class="sh"><svg class="ic"><use href="#i-code"/></svg><span class="f1">提取脚本（在抖音网页按 F12 → Console 运行）</span></div>
+        <pre id="sc" class="mono"></pre>
+        <div class="acts">
+          <button type="button" class="btn sm t" id="copyBtn"><svg class="ic"><use href="#i-copy"/></svg><span>复制脚本</span></button>
+          <button type="button" class="lnk" id="scMore">展开全部</button>
+        </div>
+      </div>
+      <label class="field"><span class="lbl">脚本运行结果</span><textarea id="ex" class="mono" placeholder="粘贴脚本在 Console 输出的 JSON…" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
+      <div class="acts">
+        <button type="button" class="btn sm t" id="fillBtn"><svg class="ic"><use href="#i-auto"/></svg>一键填充</button>
+        <span class="chip sm wrap" id="xms" role="status" hidden></span>
+      </div>
+      <details class="manual" id="manual">
+        <summary><span>手动填写 security / private key</span><span class="pr" id="manualState"></span><svg class="ic"><use href="#i-expand"/></svg></summary>
+        <div class="body">
+          <label class="field"><span class="lbl">互动安全凭据（security）</span><textarea id="sp" class="mono" placeholder="可选：粘贴 security-sdk / web_protect JSON，自动提取 ticket 和 ts_sign" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
+          <label class="field"><span class="lbl">Private Key</span><textarea id="pk" class="mono" placeholder="可选：粘贴 PEM 或 Base64 私钥" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea></label>
+        </div>
+      </details>
+    </section>
+
+    <a class="logrow tap m" href="/logcat" download="logcat.txt"><svg class="ic"><use href="#i-download"/></svg><span class="f1"><b>导出日志 (logcat)</b><small>电视出问题时发给开发者</small></span></a>
+
+    <div class="bar">
+      <span class="chip sm wrap" id="ms" role="alert" hidden></span>
+      <div class="row">
+        <button type="submit" class="btn f lg" id="sb"><svg class="ic"><use href="#i-send"/></svg><span class="t">推送到电视</span><i class="spin"></i></button>
+        <a class="btn lg tap d" href="/logcat" download="logcat.txt"><svg class="ic"><use href="#i-download"/></svg>导出日志</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div class="done" id="ov" hidden>
+  <div class="in">
+    <span class="burst"><svg class="ic"><use href="#i-check"/></svg></span>
+    <h2>已推送到 {{DEVICE_NAME}}</h2>
+    <p class="mu" id="doneSub"></p>
+    <div class="chips" id="doneItems"></div>
+  </div>
+  <div class="acts">
+    <button type="button" class="btn t lg" id="again"><svg class="ic"><use href="#i-refresh"/></svg>继续推送</button>
+    <a class="btn x lg" href="/logcat" download="logcat.txt"><svg class="ic"><use href="#i-download"/></svg>导出日志</a>
+  </div>
+</div>
+
+<script>
+const EXTRACT_SCRIPT = `void(function(){
+  try{
+    var r={security:'',privateKey:''};
+    var ls=localStorage;
+    var found=false;
+    var sign={},serverCert='';
+    for(var i=0;i<ls.length;i++){
+      var k=ls.key(i);
+      if(k&&k.indexOf('s_sdk_sign_data_key/web_protect')!==-1){
+        try{
+          var v=ls.getItem(k);
+          var d=JSON.parse(v);
+          var inner=typeof d.data==='string'?JSON.parse(d.data):d;
+          if(inner.ticket||inner.ts_sign){sign=inner}
+        }catch(e){}
+      }
+      if(k&&k.indexOf('s_sdk_crypt_sdk')!==-1){
+        try{
+          var v2=ls.getItem(k);
+          var d2=JSON.parse(v2);
+          var inner2=typeof d2.data==='string'?JSON.parse(d2.data):d2;
+          if(inner2.ec_privateKey){r.privateKey=inner2.ec_privateKey;found=true}
+        }catch(e2){}
+      }
+      if(k&&k.indexOf('s_sdk_server_cert_key')!==-1){
+        try{
+          var v3=ls.getItem(k);
+          var d3=JSON.parse(v3||'{}');
+          if(d3.cert){serverCert=d3.cert}
+        }catch(e3){}
+      }
+    }
+    if(sign.ticket||sign.ts_sign){
+      r.security=JSON.stringify({ticket:sign.ticket||'',ts_sign:sign.ts_sign||'',client_cert:sign.client_cert||'',server_cert:serverCert});
+      found=true;
+    }
+    if(!found){alert('未找到互动安全凭据，请确认已登录抖音网页版。\\n如仅需浏览视频，可不填此项。');return}
+    var output=JSON.stringify(r,null,2);
+    console.log(output);
+    prompt('✅ 请复制下方内容，回到推送页面粘贴到「脚本运行结果」输入框：',output);
+  }catch(e){alert('提取失败: '+e.message)}
+}())`;
+
+const $ = id => document.getElementById(id);
+const f=$('f'),ck=$('ck'),sp=$('sp'),pk=$('pk'),ex=$('ex'),sb=$('sb'),ms=$('ms'),xms=$('xms'),ov=$('ov'),
+      ckInfo=$('ckInfo'),sc=$('sc'),copyBtn=$('copyBtn'),scMore=$('scMore'),manual=$('manual'),manualState=$('manualState');
+
+sc.textContent=EXTRACT_SCRIPT;
+
+/** 把 el 渲染成一枚 Chip：kind = sec / ter / err，icon = 内联图标 id，文字走 textContent */
+function chip(el,kind,icon,text){
+  el.classList.remove('sec','ter','err');
+  el.classList.add(kind);
+  el.innerHTML='<svg class="ic"><use href="#'+icon+'"/></svg>';
+  const s=document.createElement('span');
+  s.textContent=text;
+  el.appendChild(s);
+  el.hidden=false;
+}
+/** 状态消息：ok = 成功，er = 出错 */
+function sw(el,m,t){chip(el,t==='ok'?'sec':'err',t==='ok'?'i-ok':'i-err',m)}
+function hd(el){el.hidden=true}
+
+/* Cookie 本地解析：只数 name=value 条数、看有没有 sessionid，不发请求 */
+function updateCookieInfo(){
+  const v=ck.value.trim();
+  if(!v){hd(ckInfo);return}
+  let n=0,sid=false;
+  v.split(/[;\n]/).forEach(part=>{
+    const i=part.indexOf('=');
+    if(i<=0)return;
+    const k=part.slice(0,i).trim();
+    if(!k)return;
+    n++;
+    if(k==='sessionid'||k==='sessionid_ss')sid=true;
+  });
+  if(!n)chip(ckInfo,'ter','i-info','没有识别到 name=value 格式的 Cookie');
+  else if(sid)chip(ckInfo,'sec','i-ok','识别到 '+n+' 项 · 含 sessionid');
+  else chip(ckInfo,'ter','i-info','识别到 '+n+' 项 · 缺 sessionid，可能未登录');
+}
+function updateManual(){
+  const n=(sp.value.trim()?1:0)+(pk.value.trim()?1:0);
+  manualState.textContent=n?'· 已填 '+n+' 项':'';
+}
+ck.addEventListener('input',updateCookieInfo);
+sp.addEventListener('input',updateManual);
+pk.addEventListener('input',updateManual);
+
+/* 粘贴：只有安全上下文（https / localhost）能读剪贴板，局域网 http 下不显示 */
+if(window.isSecureContext&&navigator.clipboard&&navigator.clipboard.readText){
+  const pasteBtn=$('pasteBtn');
+  pasteBtn.hidden=false;
+  pasteBtn.addEventListener('click',()=>{
+    navigator.clipboard.readText().then(t=>{if(t){ck.value=t;updateCookieInfo()}ck.focus()}).catch(()=>ck.focus());
+  });
+}
+$('clearBtn').addEventListener('click',()=>{ck.value='';updateCookieInfo();ck.focus()});
+
+/* 复制脚本：局域网 http 没有 navigator.clipboard，退回 execCommand('copy') */
+function copyText(t){
+  if(window.isSecureContext&&navigator.clipboard&&navigator.clipboard.writeText)return navigator.clipboard.writeText(t);
+  return new Promise((ok,no)=>{
+    const a=document.createElement('textarea');
+    a.value=t;a.setAttribute('readonly','');a.style.cssText='position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(a);a.select();a.setSelectionRange(0,t.length);
+    let r=false;try{r=document.execCommand('copy')}catch(e){}
+    document.body.removeChild(a);
+    r?ok():no();
+  });
+}
+copyBtn.addEventListener('click',()=>{
+  const label=copyBtn.querySelector('span');
+  copyText(EXTRACT_SCRIPT).then(()=>{
+    label.textContent='已复制';setTimeout(()=>{label.textContent='复制脚本'},1500);
+  }).catch(()=>{
+    sc.classList.add('open');scMore.textContent='收起';
+    const range=document.createRange();range.selectNodeContents(sc);
+    const sel=window.getSelection();sel.removeAllRanges();sel.addRange(range);
+    sw(xms,'复制失败，脚本已选中，请手动复制','er');
+  });
+});
+scMore.addEventListener('click',()=>{scMore.textContent=sc.classList.toggle('open')?'收起':'展开全部'});
+
+/* 一键填充：JSON 优先；解析失败按非标准格式识别（security / PEM / Cookie 串） */
+function parseExtract(){
+  const t=ex.value.trim();
+  if(!t){sw(xms,'请先粘贴脚本运行结果','er');ex.focus();return}
+  try{
+    const d=JSON.parse(t);
+    let filled=false;
+    if(d.cookie){ck.value=d.cookie;filled=true}
+    if(d.security){sp.value=d.security;filled=true}
+    if(d.privateKey){pk.value=d.privateKey;filled=true}
+    if(!filled){
+      sw(xms,'JSON 中未找到有效数据，请检查粘贴内容','er');return;
+    }
+    const parts=[];
+    if(d.cookie)parts.push('Cookie');
+    if(d.security||d.privateKey)parts.push('互动安全凭据');
+    ex.value='';
+    sw(xms,'已填充：'+parts.join(' + '),'ok');
+  }catch(e){
+    if(t.indexOf('ticket')!==-1||t.indexOf('s_sdk')!==-1){
+      sp.value=t;sw(xms,'已填充到互动安全凭据（非标准格式，服务端会尝试解析）','ok');
+    }else if(t.indexOf('-----BEGIN')!==-1){
+      pk.value=t;sw(xms,'已填充到 Private Key','ok');
+    }else if(t.indexOf('=')!==-1&&t.indexOf(';')!==-1){
+      ck.value=t;sw(xms,'已填充到 Cookie','ok');
+    }else{
+      sw(xms,'无法识别内容格式，请确认粘贴的是脚本运行结果','er');
+    }
+  }
+  updateCookieInfo();updateManual();
+}
+$('fillBtn').addEventListener('click',parseExtract);
+
+/* 推送：/api/submit 的请求与返回格式不变 */
+f.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const v=ck.value.trim();
+  const s=sp.value.trim();
+  const p=pk.value.trim();
+  if(!v && !s && !p){sw(ms,'请至少填写 Cookie 或互动安全凭据','er');ck.focus();return}
+  sb.classList.add('ld');sb.disabled=true;hd(ms);
+  try{
+    const r=await fetch('/api/submit',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({cookie:v,security_payload:s,private_key:p})});
+    const d=await r.json();
+    if(d.success){showDone(v,s,p)}
+    else{sw(ms,d.message||'提交失败','er')}
+  }catch(e){sw(ms,'网络错误，请确认与电视在同一网络','er')}
+  finally{sb.classList.remove('ld');sb.disabled=false}
+});
+
+/* 成功页：列出这次推送了哪几项 */
+function showDone(v,s,p){
+  const items=$('doneItems');
+  items.textContent='';
+  [[v,'Cookie'],[s,'互动安全凭据'],[p,'Private Key']].forEach(([val,name])=>{
+    if(!val)return;
+    const c=document.createElement('span');
+    c.className='chip';
+    chip(c,'sec','i-ok',name);
+    items.appendChild(c);
+  });
+  $('doneSub').textContent=v?'电视已切换到新的登录信息。':'互动凭据已更新，点赞、收藏等互动可以使用了。';
+  ov.hidden=false;
+  $('again').focus();
+}
+/* 继续推送：清空表单 */
+$('again').addEventListener('click',()=>{
+  ov.hidden=true;
+  ck.value='';sp.value='';pk.value='';ex.value='';
+  hd(ms);hd(xms);updateCookieInfo();updateManual();
+  ck.focus();
+});
+</script>
+</body>
+</html>
