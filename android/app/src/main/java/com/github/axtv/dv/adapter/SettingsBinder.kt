@@ -14,6 +14,7 @@ package com.github.axtv.dv.adapter
 
 import axtv.api.ClientIdentityBranch
 import axtv.settings.Settings
+import com.github.axtv.dv.ui.appearance.AxAppearance
 import kotlin.math.abs
 
 class SettingsBinder(private val settings: Settings) {
@@ -74,6 +75,7 @@ class SettingsBinder(private val settings: Settings) {
             "blocklist" -> settings.setDanmakuBlockEnabled(value)
             else -> Unit
         }
+        syncAppearance(key)
     }
 
     /** 枚举项的显示文案；顺序必须与 Settings 内枚举 values() 一致。 */
@@ -198,6 +200,15 @@ class SettingsBinder(private val settings: Settings) {
             "color_source" ->
                 settings.setColorSource(Settings.ColorSource.values()[index])
         }
+        syncAppearance(key)
+    }
+
+    /**
+     * 外观相关键写入后通知 AxAppearance（version 自增）：
+     * 消费点是 AxTvTheme/AmbientBackdrop，组合期读版本号即订阅，改完立即全站生效。
+     */
+    private fun syncAppearance(key: String) {
+        if (key in APPEARANCE_KEYS) AxAppearance.notifyChanged()
     }
 
     /** 弹幕样式面板滑杆的原始值（夹取范围由 Settings 内部保证）。 */
@@ -257,6 +268,12 @@ class SettingsBinder(private val settings: Settings) {
     }
 
     private companion object {
+        /** 「写入即生效」的外观键；与 ui/appearance/AxAppearance 的读取清单一一对应。 */
+        private val APPEARANCE_KEYS = setOf(
+            "theme_mode", "app_font_scale", "color_style", "color_contrast",
+            "color_transition", "color_source", "ambient_backdrop",
+        )
+
         /** j16 的 rm2：小 0.8 / 中 1.0 / 大 1.2 / 超大 1.5。 */
         private val LIVE_FONT_SCALES = floatArrayOf(0.8f, 1.0f, 1.2f, 1.5f)
         private val LIVE_FONT_LABELS = listOf("小", "中", "大", "超大")

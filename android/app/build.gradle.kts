@@ -132,6 +132,7 @@ dependencies {
 
     implementation(libs.okhttp)
     implementation(libs.coil.compose)
+    implementation(libs.androidx.palette)
     implementation(libs.work.runtime)
     // quickjs-android 暂缓：JitPack 对 com.github.dokar3:quickjs-quickjs-android-wrapper 返回 401
     // （无构建记录）。本轮改为内置 APK 自带的 libquickjs-android-wrapper.so（jniLibs/）

@@ -12,6 +12,7 @@ desugarJdkLibs = "2.1.5"   # 核心库 desugaring：minSdk 24 下提供 java.tim
 coreKtx = "1.17.0"
 lifecycle = "2.9.1"
 activityCompose = "1.13.0"
+palette = "1.0.0"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -33,6 +34,8 @@ media3-session = { group = "androidx.media3", name = "media3-session", version.r
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 tvprovider = { group = "androidx.tvprovider", name = "tvprovider", version = "1.1.0" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+# 画面取色（color_source=CONTENT）用；既有依赖里只有 Coil 负责加载位图，没有能从位图提取主色的库。
+androidx-palette = { group = "androidx.palette", name = "palette-ktx", version.ref = "palette" }
 work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 quickjs-android = { group = "com.github.dokar3", name = "quickjs-quickjs-android-wrapper", version.ref = "quickjs" }
 coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }

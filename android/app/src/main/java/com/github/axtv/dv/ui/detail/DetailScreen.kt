@@ -57,6 +57,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -82,6 +83,8 @@ import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.ui.AxTvColors
+import com.github.axtv.dv.ui.appearance.AmbientBackdrop
+import com.github.axtv.dv.ui.appearance.AxAppearance
 import com.github.axtv.dv.ui.focusRing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -111,6 +114,7 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
     val videoApi = remember(douyinApi) { douyinApi?.let { VideoApi(it) } }
     val interactionApi = remember(douyinApi) { douyinApi?.let { InteractionApi(it) } }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val playRequester = remember { FocusRequester() }
 
     // 相关推荐点击 = 同页切换到该条详情（取证见文件头「相关推荐点击语义」）。
@@ -412,7 +416,17 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
 
     BackHandler(onBack = onBack)
 
+    // 氛围背景 / 画面取色的详情页宿主：当前条目的封面（与首页口径一致）。
+    // version 进 key：切到画面取色（或改其它外观项）后本页也会重取一次。
+    val ambientCoverUrl = (state as? DetailUiState.Ready)
+        ?.let { DetailPageSpec.coverUrl(it.aweme.video()) }
+        .orEmpty()
+    LaunchedEffect(ambientCoverUrl, AxAppearance.version.intValue) {
+        AxAppearance.sampleCoverSeed(context, ambientCoverUrl)
+    }
+
     Box(Modifier.fillMaxSize().background(AxTvColors.Bg)) {
+        AmbientBackdrop(ambientCoverUrl)
         when (val current = state) {
             DetailUiState.Loading -> DetailStateMessage(title = "正在加载详情…")
 

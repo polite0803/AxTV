@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -48,9 +49,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.tv.material3.Text
 import axtv.api.ApiException
 import axtv.model.Aweme
+import axtv.ui.DetailPageSpec
 import axtv.ui.FeedPageSpec
 import axtv.ui.HomeTabsSpec
 import com.github.axtv.dv.ui.AxTvColors
+import com.github.axtv.dv.ui.appearance.AmbientBackdrop
+import com.github.axtv.dv.ui.appearance.AxAppearance
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.nav.NavRoutes
 import kotlinx.coroutines.launch
@@ -69,6 +73,7 @@ fun HomeFeedScreen(
     modifier: Modifier = Modifier,
 ) {
     var activeTab by rememberSaveable { mutableStateOf(HomeTabsSpec.TAB_RECOMMEND) }
+    val context = LocalContext.current
     val listState = rememberLazyListState()
     val requesters = remember { mutableMapOf<Int, FocusRequester>() }
     val retryRequester = remember { FocusRequester() }
@@ -140,11 +145,23 @@ fun HomeFeedScreen(
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 40.dp, vertical = 20.dp),
-    ) {
+    // 氛围背景 / 画面取色的首页宿主：焦点条目的封面 = 「当前封面」。
+    // version 进 key：切到画面取色（或改其它外观项）后无需翻页也会重取一次。
+    val focusCoverUrl = feedItems
+        .getOrNull(rememberedFocusIndex.coerceIn(0, (feedItems.size - 1).coerceAtLeast(0)))
+        ?.let { DetailPageSpec.coverUrl(it.video()) }
+        .orEmpty()
+    LaunchedEffect(focusCoverUrl, AxAppearance.version.intValue) {
+        AxAppearance.sampleCoverSeed(context, focusCoverUrl)
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        AmbientBackdrop(focusCoverUrl)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 40.dp, vertical = 20.dp),
+        ) {
         Text(
             text = "首页信息流",
             color = AxTvColors.TextPrimary,
@@ -284,6 +301,7 @@ fun HomeFeedScreen(
                 }
             }
         }
+    }
     }
 }
 

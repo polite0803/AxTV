@@ -243,51 +243,46 @@ private const val TEXT_UNWIRED = "未接入"
  * 已接线的项不在此列：video_resolution / video_codec / live_video_resolution / player_surface_type /
  * client_identity_branch / playback_completion / playback_clock / player_progress_bar / clean_pause /
  * video_load_timeout / default_home / show_details_on_start / reverse_profile_playlist /
- * disable_double_back_exit 与全部弹幕滑杆。
+ * disable_double_back_exit 与全部弹幕滑杆；外观族 theme_mode / app_font_scale / color_style /
+ * color_contrast / color_transition / color_source / ambient_backdrop 与 camera 行
+ * 由 ui/appearance/AxAppearance 消费（见其文件头接线注释），2026-11 起已全部生效。
  */
 private val UNWIRED_KEYS = setOf(
     // 开关：值能落盘但没有消费点。
-    "ambient_backdrop", "filter_mobile_video", "pip_enabled", "reverse_navigation",
+    "filter_mobile_video", "pip_enabled", "reverse_navigation",
     "featured_auto_play", "tv_launcher_channel",
     // 个人页没有「历史」标签页（历史是独立路由 profile/history），这档无处可去。
     "profile_history_tab",
     "surface_buffer_align", "separate_video_fetch", "video_start_prefetch",
     "mix_playlist_panel", "filter_package",
-    // 枚举：取色链路 / 字号 / 主题 / 音量均衡还没有消费方。
-    "live_danmaku_style", "app_font_scale", "theme_mode",
-    "color_style", "color_contrast", "color_transition",
-    "audio_balance",
+    // 枚举：弹幕样式 / 音量均衡还没有消费方。
+    "live_danmaku_style", "audio_balance",
     // 历史容量：本应用的历史记录是服务端接口（VideoApi.historyRead），没有本地历史库可裁剪。
     "feed_history_capacity",
     // 动作行：没有对应界面或外部链接
     "account_management", "auth_config_actions", "about_telegram", "about_qr_links",
-    "camera", "profile",
+    "profile",
 )
 
-/** 动态单选行里未接入的那两组（整组灰掉，避免只灰表头留下面 4 行可选）。 */
-private val UNWIRED_SELECT_KEYS = setOf("form_factor", "color_source")
+/** 动态单选行里未接入的那一组（整组灰掉，避免只灰表头留下面 4 行可选）。 */
+private val UNWIRED_SELECT_KEYS = setOf("form_factor")
 
 private fun isRowEnabled(
     row: SettingsRow,
     liveDanmakuOn: Boolean,
     anyDanmakuOn: Boolean,
-    colorFromContent: Boolean,
 ): Boolean = when {
     row is ControlRow && row.key in UNWIRED_KEYS -> false
     row is SelectRow && row.binderKey in UNWIRED_SELECT_KEYS -> false
     row.key == "danmaku_layout" -> anyDanmakuOn
     row.key == "live_danmaku_style" -> liveDanmakuOn
     row.key == "danmaku_emoji" -> anyDanmakuOn
-    row !is ControlRow -> true
-    row.key == "color_style" || row.key == "color_contrast" -> colorFromContent
     else -> true
 }
 
-private fun rowHint(key: String, colorFromContent: Boolean): String? = when {
+private fun rowHint(key: String): String? = when {
     key in UNWIRED_KEYS -> TEXT_UNWIRED
     key in READONLY_KEYS -> "只读展示"
-    key == "color_style" || key == "color_contrast" ->
-        if (!colorFromContent) "仅画面取色时生效" else null
     else -> null
 }
 
@@ -370,11 +365,11 @@ fun SettingsScreen(
     // 线 H：检查更新对话框（about_update 行触发；下载/安装全部走 UpdateManager）。
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateDialogWasOpen by remember { mutableStateOf(false) }
+    // 取色 / 预览对话框（camera 行触发）：数据源是 AxAppearance 的运行时取色状态。
+    var showPaletteDialog by remember { mutableStateOf(false) }
 
     val liveDanmakuOn = switchStates[canonicalKey("live_danmaku")] == true
     val anyDanmakuOn = liveDanmakuOn || switchStates["video_danmaku"] == true
-    val colorSourceIndex = dynamicIndexes["color_source"] ?: 0
-    val colorFromContent = colorSourceIndex == 0
 
     val visibleRows = rows.filter { isRowVisible(it, liveDanmakuOn) }
     val firstFocusableKey = visibleRows.firstOrNull { it.isFocusableRow() }?.key
@@ -397,9 +392,9 @@ fun SettingsScreen(
 
     val dynamicCount = rows.count { it is SelectRow }
     val controlCount = rows.count { it !is ThemePreviewRow }
-    // 未接入计数：把三个条件门都置真后仍然禁用的行，就是被 UNWIRED 清单关掉的那些。
+    // 未接入计数：把两个条件门都置真后仍然禁用的行，就是被 UNWIRED 清单关掉的那些。
     val unwiredCount = rows.count {
-        it.isFocusableRow() && !isRowEnabled(it, liveDanmakuOn = true, anyDanmakuOn = true, colorFromContent = true)
+        it.isFocusableRow() && !isRowEnabled(it, liveDanmakuOn = true, anyDanmakuOn = true)
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -430,8 +425,8 @@ fun SettingsScreen(
                 when (row) {
                     is ControlRow -> {
                         val control = row.control
-                        val enabled = isRowEnabled(row, liveDanmakuOn, anyDanmakuOn, colorFromContent)
-                        val hint = rowHint(control.key(), colorFromContent)
+                        val enabled = isRowEnabled(row, liveDanmakuOn, anyDanmakuOn)
+                        val hint = rowHint(control.key())
                         SettingItem(
                             control = control,
                             checked = switchStates[canonicalKey(control.key())] == true,
@@ -471,6 +466,9 @@ fun SettingsScreen(
                                 when (key) {
                                     "about_update" -> showUpdateDialog = true
 
+                                    // 取色 / 预览：弹出配色检查页（种子、推导梯度、来源）。
+                                    "camera" -> showPaletteDialog = true
+
                                     // 弹幕布局：面板 15 行就在同一列的下方，把焦点送过去即是「进入布局设置」。
                                     "danmaku_layout" -> runCatching {
                                         focusRequesters["style_opacity"]?.requestFocus()
@@ -502,8 +500,7 @@ fun SettingsScreen(
                     }
 
                     is SelectRow -> {
-                        val selectEnabled =
-                            isRowEnabled(row, liveDanmakuOn, anyDanmakuOn, colorFromContent)
+                        val selectEnabled = isRowEnabled(row, liveDanmakuOn, anyDanmakuOn)
                         SelectSettingItem(
                             label = row.label,
                             description = row.description
@@ -545,6 +542,9 @@ fun SettingsScreen(
 
         if (showUpdateDialog) {
             UpdateDialog(onDismiss = { showUpdateDialog = false })
+        }
+        if (showPaletteDialog) {
+            PalettePreviewDialog(onDismiss = { showPaletteDialog = false })
         }
     }
 }
