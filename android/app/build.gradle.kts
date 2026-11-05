@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -19,6 +21,21 @@ val jvmOnlyExcludes = listOf(
     "**/panel/JdkPanelServer.java"
 )
 
+// Release 签名凭据：从 android/local.properties 读取（该文件不入库）。
+// 缺失时回退 debug 签名并告警，避免本地构建直接失败。
+val signingProps = Properties().apply {
+    val propsFile = rootProject.file("local.properties")
+    if (propsFile.exists()) {
+        propsFile.inputStream().use { load(it) }
+    }
+}
+val hasReleaseSigning = listOf(
+    "AXTV_STORE_FILE", "AXTV_STORE_PASSWORD", "AXTV_KEY_ALIAS", "AXTV_KEY_PASSWORD"
+).all { !signingProps.getProperty(it).isNullOrBlank() }
+if (!hasReleaseSigning) {
+    logger.warn("警告: local.properties 缺少 AXTV 签名凭据，release 将回退 debug 签名（不可用于发布）")
+}
+
 android {
     namespace = "com.github.axtv.dv"
     compileSdk = 35
@@ -27,8 +44,19 @@ android {
         applicationId = "com.github.axtv.dv"
         minSdk = 23          // 原版 AndroidManifest minSdkVersion=23
         targetSdk = 35       // 原版 37（compileSdk 37 / Android 17 预览），构建用 35 起步
-        versionCode = 43     // 原版 versionCode=43
-        versionName = "2.3.43"
+        versionCode = 1        // AxTV 首发版
+        versionName = "0.0.1"
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(signingProps.getProperty("AXTV_STORE_FILE"))
+                storePassword = signingProps.getProperty("AXTV_STORE_PASSWORD")
+                keyAlias = signingProps.getProperty("AXTV_KEY_ALIAS")
+                keyPassword = signingProps.getProperty("AXTV_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -36,6 +64,11 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
     compileOptions {

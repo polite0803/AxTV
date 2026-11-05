@@ -227,7 +227,7 @@ private fun SettingItem(
         ) {
             Text("版本", color = AxTvColors.TextPrimary)
             Spacer(Modifier.weight(1f))
-            Text("2.3.43（versionCode 43）", color = AxTvColors.TextSecondary)
+            Text("0.0.1（versionCode 1）", color = AxTvColors.TextSecondary)
         }
 
         ControlType.SWITCH_ROW, ControlType.ANIMATED_SWITCH_ROW -> {

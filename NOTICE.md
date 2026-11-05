@@ -1,5 +1,9 @@
 # NOTICE
 
+## 许可证
+
+**本仓库整体以 GNU General Public License v3.0（SPDX: GPL-3.0）分发**，许可证全文见仓库根目录的 [LICENSE](LICENSE)。
+
 ## 上游项目
 
 本仓库（AxTV）是对以下开源项目的**反编译分析与增量重构**，不是从零开始的独立实现：

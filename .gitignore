@@ -15,6 +15,11 @@ local.properties
 .idea/
 .trae/
 
+# 签名与凭据（绝不入库）
+keystore/
+*.jks
+*.keystore
+
 # 构建产物
 *.apk
 *.aab
