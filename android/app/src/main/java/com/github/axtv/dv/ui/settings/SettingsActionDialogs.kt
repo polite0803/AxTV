@@ -9,7 +9,7 @@
  *   删除  Settings.setAccounts + 登录态收口  同文件 :143
  *   保存  Settings.setInteraction          同文件 :263（凭据文本先过 panel 层解析器）
  *   清除  Settings.clearInteraction        同文件 :272
- *   二维码链接形态参考原版：src/app/p000/h30.java:200（项目地址 / Telegram 群组 + 「扫码或按确认键…」）
+ *   二维码链接形态参考原版：src/app/p000/h30.java:200（项目地址卡片 + 「扫码或按确认键…」）
  */
 package com.github.axtv.dv.ui.settings
 
@@ -72,16 +72,6 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import java.io.File
-
-/**
- * 『Telegram 群组』行的唯一待填常量。
- *
- * 仓库里（含反编译原版）没有任何属于 AxTV 的群组地址，原版那张卡用的是上游 myDV 的频道
- * （src/app/p000/h30.java:200 的 https://t.me/mytv_android_channel），不能当成本项目的群组。
- * 填上真实地址后：『Telegram 群组』行可以从 UNWIRED_KEYS 移出、二维码弹层也会多出这一项，
- * 两处都不需要再改别的代码。
- */
-internal const val TELEGRAM_GROUP_URL = ""
 
 /** 二维码弹层的一项（标题 + 地址 + 提示，与原版 gb5 三字段一致）。 */
 internal data class QrLink(

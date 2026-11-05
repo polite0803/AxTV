@@ -174,6 +174,9 @@ private val COLOR_STYLE_LABELS = listOf("按场景", "鲜艳", "柔和", "还原
 private fun buildRows(): List<SettingsRow> {
     val rows = ArrayList<SettingsRow>(112)
     for (control in SettingsPageSpec.MAIN_PAGE) {
+        // 原版规格里保留这一行（SettingsPageSpec.MAIN_PAGE），但仓库没有本项目群组地址，
+        // 按用户要求整行移除；地址来源说明见 src/app/p000/h30.java:200。
+        if (control.key() == "about_telegram") continue
         rows += ControlRow(control)
         when (control.key()) {
             "live_resolution_header" -> rows += liveQualityRows()
@@ -269,14 +272,10 @@ private const val TEXT_UNWIRED = "未接入"
  *   依赖 com.android.providers.tv.permission.WRITE_EPG_DATA
  *   （src/resources/AndroidManifest.xml:42）——该权限由系统 TV Provider 授予，side-load 应用拿不到，
  *   原版自己在 SecurityException 时也直接放弃（g73.java:736-741）。
- * - about_telegram：仓库内不存在任何群组地址，补上常量即可接通
- *   （见 ui/settings/SettingsActionDialogs.kt 的 TELEGRAM_GROUP_URL）。
  */
 private val UNWIRED_KEYS = setOf(
-    // 开关：缺系统授权（WRITE_EPG_DATA 由系统 TV Provider 授予），证据见上面的逐条说明。
+    // 开关：缺系统授权（WRITE_EPG_DATA 由系统 TV Provider 授予），证据见上面的说明。
     "tv_launcher_channel",
-    // 动作行：缺仓库外的输入（群组地址）。
-    "about_telegram",
 )
 
 /** 动态单选行已全部接通；保留这个清单机制是为了以后出现新未接线项时仍能被显式标出。 */
@@ -525,10 +524,6 @@ fun SettingsScreen(
                                         actionDialog = ActionDialog.QR
                                     }
 
-                                    // Telegram 群组：动作已接好，只等 TELEGRAM_GROUP_URL 填上真实地址；
-                                    // 常量仍是空串，所以这一行留在 UNWIRED_KEYS 里（不猜链接）。
-                                    "about_telegram" -> openExternalUrl(context, TELEGRAM_GROUP_URL)
-
                                     else -> Unit
                                 }
                             },
@@ -604,12 +599,8 @@ fun SettingsScreen(
             ActionDialog.QR -> {
                 val panel = PanelRuntime.controller
                 QrLinksDialog(
-                    // Telegram 项只有在 TELEGRAM_GROUP_URL 填了真实地址后才出现（不猜链接）。
                     links = buildList {
                         add(QrLink("项目地址", GITHUB_HOME_URL, "扫码或按确认键访问项目主页"))
-                        if (TELEGRAM_GROUP_URL.isNotBlank()) {
-                            add(QrLink("Telegram 群组", TELEGRAM_GROUP_URL, "扫码或按确认键加入群组"))
-                        }
                         if (panel != null) {
                             add(
                                 QrLink(
@@ -1059,7 +1050,6 @@ private val LABELS = mapOf(
     "auth_config_actions" to "凭据操作",
     "about_update" to "检查更新",
     "about_github" to "GitHub 主页",
-    "about_telegram" to "Telegram 群组",
     "about_qr_links" to "二维码链接",
     "about_version" to "版本",
     "interface_identity_header" to "接口身份",

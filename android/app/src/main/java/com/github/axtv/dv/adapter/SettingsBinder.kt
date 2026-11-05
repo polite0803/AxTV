@@ -260,8 +260,6 @@ class SettingsBinder(private val settings: Settings) {
             if (settings.hasInteraction()) "凭据已就绪 · 保存 / 清除" else "未设置 · 保存 / 清除"
         "about_update" -> "检查更新"
         "about_github" -> "github.com/polite0803/AxTV"
-        // 未接入：仓库内没有 AxTV 的 Telegram 群组地址（见 ui/settings/SettingsActionDialogs.kt 的 TELEGRAM_GROUP_URL）。
-        "about_telegram" -> "待补群组地址"
         "about_qr_links" -> "GitHub · 手机面板二维码"
         "danmaku_layout" -> "透明度 · 区域 · 间距 · 字号 · 速度"
         "quality" -> "直播画质"
