@@ -44,6 +44,7 @@ import androidx.tv.foundation.ExperimentalTvFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.tv.material3.Text
 import axtv.api.UserApi
+import axtv.api.VideoApi
 import axtv.model.Author
 import axtv.model.DataModels
 import axtv.model.UserListResponse
@@ -59,6 +60,8 @@ import com.github.axtv.dv.ui.library.EmptyPane
 import com.github.axtv.dv.ui.library.LOGIN_DETAIL
 import com.github.axtv.dv.ui.library.LOGIN_TITLE
 import com.github.axtv.dv.ui.library.LoadState
+import com.github.axtv.dv.ui.library.rememberWorksPage
+import com.github.axtv.dv.ui.library.userWorksListItems
 import com.github.axtv.dv.ui.library.LoadingPane
 import com.github.axtv.dv.ui.library.StatusPane
 import com.github.axtv.dv.ui.library.UserAvatar
@@ -77,7 +80,14 @@ private enum class ProfileTab(val label: String) {
     WORKS("作品"),
     FOLLOWING("关注"),
     FOLLOWERS("粉丝"),
+
+    /** 历史：复用 HistoryScreen 那条 VideoApi.historyRead 路径（见 rememberWorksPage）。 */
+    HISTORY("历史"),
 }
+
+/** 『个人页默认历史标签』的消费点：开启后进入个人页直接落在「历史」。 */
+private fun initialProfileTab(): ProfileTab =
+    if (AppRuntime.settings?.openOwnProfileOnHistoryTab() == true) ProfileTab.HISTORY else ProfileTab.WORKS
 
 @OptIn(ExperimentalTvFoundationApi::class)
 @Composable
@@ -90,7 +100,15 @@ fun ProfileScreen(
     var attempt by rememberSaveable { mutableStateOf(0) }
     var profileState by remember { mutableStateOf<LoadState<Author>>(LoadState.Loading) }
     var postsState by remember { mutableStateOf<LoadState<UserWorksResponse>>(LoadState.Idle) }
-    var tab by rememberSaveable { mutableStateOf(ProfileTab.WORKS) }
+    var tab by rememberSaveable { mutableStateOf(initialProfileTab()) }
+
+    var historyAttempt by rememberSaveable { mutableStateOf(0) }
+    // 个人页「历史」标签：与 HistoryScreen 同一条接口，只在停在该标签时才请求。
+    val historyState = rememberWorksPage(
+        pageLabel = "历史记录",
+        reloadKey = historyAttempt,
+        enabled = tab == ProfileTab.HISTORY,
+    ) { api -> VideoApi(api).historyRead(0L, PAGE_SIZE, 0) }
 
     var followingAttempt by rememberSaveable { mutableStateOf(0) }
     var followersAttempt by rememberSaveable { mutableStateOf(0) }
@@ -368,6 +386,15 @@ fun ProfileScreen(
                             }
                         }
                     }
+
+                    ProfileTab.HISTORY -> userWorksListItems(
+                        state = historyState,
+                        emptyText = HistoryGroupSpec.LABEL_EMPTY,
+                        onRetry = { historyAttempt += 1 },
+                        // 历史条目点击即起播：走 player/aweme 路由，与 HistoryScreen 的行为一致。
+                        onOpen = { aweme -> onOpenRoute(NavRoutes.playerAweme(aweme.awemeId())) },
+                        onLogin = onLogin,
+                    )
 
                     ProfileTab.FOLLOWERS -> when (val list = followersState) {
                         LoadState.Idle, LoadState.Loading -> item { LoadingPane() }

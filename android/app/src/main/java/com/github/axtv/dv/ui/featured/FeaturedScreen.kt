@@ -59,6 +59,7 @@ import androidx.tv.material3.Text
 import axtv.model.Aweme
 import axtv.ui.ChannelListSpec
 import coil.compose.AsyncImage
+import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.collection.collectionMessage
 import com.github.axtv.dv.ui.focusRing
@@ -154,6 +155,17 @@ fun FeaturedScreen(
         if (start < 0) return@LaunchedEffect
         val end = ChannelListSpec.prefetchEndIndexExclusive(start, channels.size)
         for (i in start until end) loadGroup(channels[i].tagId)
+    }
+
+    // 『精选自动播放』消费点：分区首次拉到内容就直接起播第一条。
+    // 每个分区在本次会议里只允许自动起播一次，否则从播放器返回会被再次踢进去。
+    LaunchedEffect(selected?.tagId, selected?.videos?.size) {
+        if (AppRuntime.settings?.featuredAutoPlay() != true) return@LaunchedEffect
+        val channel = selected ?: return@LaunchedEffect
+        if (channel.videos.isEmpty()) return@LaunchedEffect
+        if (!FeaturedRepository.claimAutoPlay(channel.tagId)) return@LaunchedEffect
+        FeaturedRepository.cache(channel.videos)
+        onOpenPlayer(0)
     }
 
     // 首帧/空态焦点：进入时聚焦当前分区 chip；无 chip 时聚焦空态操作按钮。

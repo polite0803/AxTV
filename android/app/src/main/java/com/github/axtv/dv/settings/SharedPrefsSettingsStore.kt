@@ -11,8 +11,13 @@ import axtv.settings.SettingsStore
 
 class SharedPrefsSettingsStore(context: Context) : SettingsStore {
 
+    companion object {
+        /** 配置文件名（导出/导入同一份数据要用同一个名字，见 adapter/SettingsConfigIO.kt）。 */
+        const val PREFS_NAME = "axtv_settings"
+    }
+
     private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences("axtv_settings", Context.MODE_PRIVATE)
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     /**
      * 注意：核心层（Settings.java）有 8 处传 null 表示「无默认值，缺失时应返回 null 交给 parse 走默认分支」。

@@ -141,6 +141,8 @@ dependencies {
 
     // EPG：TvContractCompat（TvProviderAndroid 适配类）
     implementation(libs.tvprovider)
+    // 本地渲染仓库二维码（ui/settings/SettingsActionDialogs.kt），避免依赖外部在线二维码服务。
+    implementation(libs.zxing.core)
 
     testImplementation("junit:junit:4.13.2")
 }

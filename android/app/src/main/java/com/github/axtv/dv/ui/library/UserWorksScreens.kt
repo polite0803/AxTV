@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.foundation.ExperimentalTvFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.tv.material3.Text
 import axtv.api.ApiException
 import axtv.api.DouyinApi
@@ -140,33 +141,9 @@ private fun UserWorksListScreen(
     onLogin: (() -> Unit)? = null,
 ) {
     var attempt by rememberSaveable { mutableStateOf(0) }
-    var state by remember { mutableStateOf<LoadState<UserWorksResponse>>(LoadState.Loading) }
+    val state = rememberWorksPage(pageLabel = pageLabel, reloadKey = attempt, load = load)
     val scope = rememberCoroutineScope()
     val backFocus = remember { FocusRequester() }
-
-    LaunchedEffect(attempt) {
-        val api = AppRuntime.api
-        if (api == null) {
-            state = LoadState.Failed(false, "服务未就绪", "API 运行时尚未初始化，请重启应用后重试。")
-            return@LaunchedEffect
-        }
-        if (!isLoggedIn()) {
-            state = LoadState.Failed(true, LOGIN_TITLE, "「$pageLabel」需要登录。$LOGIN_DETAIL")
-            return@LaunchedEffect
-        }
-        state = LoadState.Loading
-        val loaded: LoadState<UserWorksResponse> = withContext(Dispatchers.IO) {
-            try {
-                val response = load(api)
-                statusFailure(response.statusCode(), pageLabel) ?: LoadState.Ready(response)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                error.toFailure(pageLabel)
-            }
-        }
-        state = loaded
-    }
 
     LaunchedEffect(Unit) {
         withFrameNanos { }
@@ -207,33 +184,94 @@ private fun UserWorksListScreen(
                 )
             }
         }
+        userWorksListItems(
+            state = state,
+            emptyText = emptyText,
+            onRetry = { attempt += 1 },
+            onOpen = openItem,
+            onLogin = onLogin,
+        )
+    }
+}
 
-        when (val current = state) {
-            LoadState.Idle, LoadState.Loading -> item { LoadingPane() }
-            is LoadState.Failed -> item {
-                StatusPane(failed = current, onAction = { attempt += 1 }, onLogin = onLogin)
+/**
+ * 用户作品分页（历史 / 收藏 / 稍后再看）的加载状态。
+ * 个人页的「历史」标签与 HistoryScreen 走同一个 helper，保证两条入口的失败语义一致。
+ *
+ * @param enabled 关闭时不发请求、返回 Idle —— 个人页只在停在「历史」标签时才拉。
+ */
+@Composable
+internal fun rememberWorksPage(
+    pageLabel: String,
+    reloadKey: Any?,
+    enabled: Boolean = true,
+    load: suspend (DouyinApi) -> UserWorksResponse,
+): LoadState<UserWorksResponse> {
+    var state by remember(reloadKey, enabled) {
+        mutableStateOf<LoadState<UserWorksResponse>>(if (enabled) LoadState.Loading else LoadState.Idle)
+    }
+    LaunchedEffect(reloadKey, enabled) {
+        if (!enabled) {
+            state = LoadState.Idle
+            return@LaunchedEffect
+        }
+        val api = AppRuntime.api
+        if (api == null) {
+            state = LoadState.Failed(false, "服务未就绪", "API 运行时尚未初始化，请重启应用后重试。")
+            return@LaunchedEffect
+        }
+        if (!isLoggedIn()) {
+            state = LoadState.Failed(true, LOGIN_TITLE, "「$pageLabel」需要登录。$LOGIN_DETAIL")
+            return@LaunchedEffect
+        }
+        state = LoadState.Loading
+        state = withContext(Dispatchers.IO) {
+            try {
+                val response = load(api)
+                statusFailure(response.statusCode(), pageLabel) ?: LoadState.Ready(response)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                error.toFailure(pageLabel)
             }
+        }
+    }
+    return state
+}
 
-            is LoadState.Ready -> {
-                val works = current.value.works()
-                if (works.isEmpty()) {
-                    item { EmptyPane(emptyText) }
-                } else {
-                    items(
-                        count = works.size,
-                        key = { index -> "${works[index].awemeId()}#$index" },
-                    ) { index ->
-                        AwemeRow(aweme = works[index], onClick = openItem)
-                    }
+/** 用户作品列表的渲染段（加载 / 失败 / 空态 / 行），供整页与个人页标签复用；须在 LazyListScope 内调用。 */
+internal fun LazyListScope.userWorksListItems(
+    state: LoadState<UserWorksResponse>,
+    emptyText: String,
+    onRetry: () -> Unit,
+    onOpen: (Aweme) -> Unit,
+    onLogin: (() -> Unit)? = null,
+) {
+    when (val current = state) {
+        LoadState.Idle, LoadState.Loading -> item { LoadingPane() }
+        is LoadState.Failed -> item {
+            StatusPane(failed = current, onAction = onRetry, onLogin = onLogin)
+        }
+
+        is LoadState.Ready -> {
+            val works = current.value.works()
+            if (works.isEmpty()) {
+                item { EmptyPane(emptyText) }
+            } else {
+                items(
+                    count = works.size,
+                    key = { index -> "works-${works[index].awemeId()}#$index" },
+                ) { index ->
+                    AwemeRow(aweme = works[index], onClick = onOpen)
                 }
-                if (current.value.hasMore()) {
-                    item {
-                        Text(
-                            text = "仅展示第一页（$PAGE_SIZE 条），更多内容待分页接入。",
-                            color = AxTvColors.TextSecondary,
-                            style = TextStyle(fontSize = 12.sp),
-                        )
-                    }
+            }
+            if (current.value.hasMore()) {
+                item {
+                    Text(
+                        text = "仅展示第一页（$PAGE_SIZE 条），更多内容待分页接入。",
+                        color = AxTvColors.TextSecondary,
+                        style = TextStyle(fontSize = 12.sp),
+                    )
                 }
             }
         }

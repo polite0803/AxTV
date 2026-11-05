@@ -77,8 +77,21 @@ private val MAIN_COUNT = SettingsPageSpec.MAIN_PAGE.size
 private val PANEL_COUNT = SettingsPageSpec.DANMAKU_STYLE_PANEL.size
 private const val THEME_PREVIEW_KEY = "theme_preview"
 
+/** 设置页动作行打开的弹层种类。 */
+private enum class ActionDialog { ACCOUNTS, CREDENTIALS, CONFIG_IO, QR }
+
 /** 「设置页 GitHub 主页」行打开的地址（与 git remote 同源，本仓库唯一对外主页）。 */
 private const val GITHUB_HOME_URL = "https://github.com/polite0803/AxTV"
+
+/** 用系统浏览器打开外链；TV 上没有浏览器时静默失败（不弹 toast，避免误以为成功）。 */
+private fun openExternalUrl(context: android.content.Context, url: String) {
+    if (url.isBlank()) return
+    runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+}
 
 /** 只读展示行：显示登录/凭据状态，本来就没有点击动作。 */
 private val READONLY_KEYS = setOf(
@@ -243,29 +256,32 @@ private const val TEXT_UNWIRED = "未接入"
  * 已接线的项不在此列：video_resolution / video_codec / live_video_resolution / player_surface_type /
  * client_identity_branch / playback_completion / playback_clock / player_progress_bar / clean_pause /
  * video_load_timeout / default_home / show_details_on_start / reverse_profile_playlist /
- * disable_double_back_exit 与全部弹幕滑杆；外观族 theme_mode / app_font_scale / color_style /
- * color_contrast / color_transition / color_source / ambient_backdrop 与 camera 行
- * 由 ui/appearance/AxAppearance 消费（见其文件头接线注释），2026-11 起已全部生效。
+ * disable_double_back_exit 与全部弹幕滑杆。外观族 theme_mode / app_font_scale / color_style /
+ * color_contrast / color_transition / color_source / ambient_backdrop 与 camera 行由
+ * ui/appearance/AxAppearance 消费；播放族 pip_enabled / video_start_prefetch / surface_buffer_align /
+ * audio_balance / live_danmaku_style / mix_playlist_panel / reverse_navigation / separate_video_fetch
+ * 与弹幕包过滤由 ui/player、player/、ui/live 各自消费；账号与配置族 account_management /
+ * auth_config_actions / profile（导出导入）/ feed_history_capacity（本地「已看」环形缓冲）/
+ * profile_history_tab（个人页历史标签）/ about_qr_links（仓库二维码弹层）/ form_factor（屏幕方向）同轮落地。
+ *
+ * 仍留在清单里的行不是"没做"，是缺外部条件，逐条给证据：
+ * - tv_launcher_channel：原版走 TvContract 写 content://android.media.tv/channel
+ *   （src/app/p000/nb5.java:12、g73.java:727）与 preview_program（ob5.java:11、g73.java:749），
+ *   依赖 com.android.providers.tv.permission.WRITE_EPG_DATA
+ *   （src/resources/AndroidManifest.xml:42）——该权限由系统 TV Provider 授予，side-load 应用拿不到，
+ *   原版自己在 SecurityException 时也直接放弃（g73.java:736-741）。
+ * - about_telegram：仓库内不存在任何群组地址，补上常量即可接通
+ *   （见 ui/settings/SettingsActionDialogs.kt 的 TELEGRAM_GROUP_URL）。
  */
 private val UNWIRED_KEYS = setOf(
-    // 开关：值能落盘但没有消费点。
-    "filter_mobile_video", "pip_enabled", "reverse_navigation",
-    "featured_auto_play", "tv_launcher_channel",
-    // 个人页没有「历史」标签页（历史是独立路由 profile/history），这档无处可去。
-    "profile_history_tab",
-    "surface_buffer_align", "separate_video_fetch", "video_start_prefetch",
-    "mix_playlist_panel", "filter_package",
-    // 枚举：弹幕样式 / 音量均衡还没有消费方。
-    "live_danmaku_style", "audio_balance",
-    // 历史容量：本应用的历史记录是服务端接口（VideoApi.historyRead），没有本地历史库可裁剪。
-    "feed_history_capacity",
-    // 动作行：没有对应界面或外部链接
-    "account_management", "auth_config_actions", "about_telegram", "about_qr_links",
-    "profile",
+    // 开关：缺系统授权（WRITE_EPG_DATA 由系统 TV Provider 授予），证据见上面的逐条说明。
+    "tv_launcher_channel",
+    // 动作行：缺仓库外的输入（群组地址）。
+    "about_telegram",
 )
 
-/** 动态单选行里未接入的那一组（整组灰掉，避免只灰表头留下面 4 行可选）。 */
-private val UNWIRED_SELECT_KEYS = setOf("form_factor")
+/** 动态单选行已全部接通；保留这个清单机制是为了以后出现新未接线项时仍能被显式标出。 */
+private val UNWIRED_SELECT_KEYS = emptySet<String>()
 
 private fun isRowEnabled(
     row: SettingsRow,
@@ -367,6 +383,11 @@ fun SettingsScreen(
     var updateDialogWasOpen by remember { mutableStateOf(false) }
     // 取色 / 预览对话框（camera 行触发）：数据源是 AxAppearance 的运行时取色状态。
     var showPaletteDialog by remember { mutableStateOf(false) }
+    // 动作行弹层：账号管理 / 互动凭据 / 配置管理 / 二维码链接。
+    var actionDialog by remember { mutableStateOf<ActionDialog?>(null) }
+    var actionTriggerKey by remember { mutableStateOf<String?>(null) }
+    // readStatus 读的是 SharedPreferences（非快照状态），动作完成后要靠这个版本号重取一次。
+    var statusVersion by remember { mutableStateOf(0) }
 
     val liveDanmakuOn = switchStates[canonicalKey("live_danmaku")] == true
     val anyDanmakuOn = liveDanmakuOn || switchStates["video_danmaku"] == true
@@ -387,6 +408,15 @@ fun SettingsScreen(
         } else if (updateDialogWasOpen) {
             withFrameNanos { }
             runCatching { focusRequesters["about_update"]?.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(actionDialog) {
+        if (actionDialog == null) {
+            val trigger = actionTriggerKey ?: return@LaunchedEffect
+            withFrameNanos { }
+            runCatching { focusRequesters[trigger]?.requestFocus() }
+            actionTriggerKey = null
         }
     }
 
@@ -434,7 +464,9 @@ fun SettingsScreen(
                             enumOptions = binder?.enumLabels(control.key()).orEmpty(),
                             sliderValue = sliderValues[control.key()] ?: 0f,
                             textValue = binder?.readText(control.key()),
-                            statusText = binder?.readStatus(control.key()),
+                            statusText = remember(control.key(), statusVersion, binder) {
+                                binder?.readStatus(control.key())
+                            },
                             enabled = enabled,
                             hint = hint,
                             modifier = Modifier.focusRequester(focusRequesters.getValue(row.key)),
@@ -486,12 +518,40 @@ fun SettingsScreen(
                                     "auth_login_mode" -> onOpenRoute(NavRoutes.LOGIN)
 
                                     // GitHub 主页：交给系统浏览器 / TV 上的浏览器（无接收者时静默失败）。
-                                    "about_github" -> runCatching {
-                                        context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_HOME_URL))
-                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                        )
+                                    "about_github" -> openExternalUrl(context, GITHUB_HOME_URL)
+
+                                    // 账号管理：列出 Settings.accounts()，可切换 / 删除。
+                                    "account_management" -> {
+                                        actionTriggerKey = key
+                                        actionDialog = ActionDialog.ACCOUNTS
                                     }
+
+                                    // 互动凭据：保存（粘贴解析后 setInteraction）/ 清除（clearInteraction）。
+                                    // 状态文案里原本的「推送」没有实现：核心层的推送落在
+                                    // refactor/panel/axtv/panel/CookiePushHandler.java（9978 端口），
+                                    // 它需要 Android 侧的 HttpServerCore 传输实现，而唯一实现
+                                    // JdkPanelServer 用的是 com.sun.net.httpserver，已在
+                                    // android/app/build.gradle.kts:19-23 从 Android 构建里排除。
+                                    "auth_config_actions" -> {
+                                        actionTriggerKey = key
+                                        actionDialog = ActionDialog.CREDENTIALS
+                                    }
+
+                                    // 配置管理：整份设置导出到应用私有目录 / 从该目录导入。
+                                    "profile" -> {
+                                        actionTriggerKey = key
+                                        actionDialog = ActionDialog.CONFIG_IO
+                                    }
+
+                                    // 二维码链接：本地 zxing 渲染仓库地址并可打开。
+                                    "about_qr_links" -> {
+                                        actionTriggerKey = key
+                                        actionDialog = ActionDialog.QR
+                                    }
+
+                                    // Telegram 群组：动作已接好，只等 TELEGRAM_GROUP_URL 填上真实地址；
+                                    // 常量仍是空串，所以这一行留在 UNWIRED_KEYS 里（不猜链接）。
+                                    "about_telegram" -> openExternalUrl(context, TELEGRAM_GROUP_URL)
 
                                     else -> Unit
                                 }
@@ -545,6 +605,41 @@ fun SettingsScreen(
         }
         if (showPaletteDialog) {
             PalettePreviewDialog(onDismiss = { showPaletteDialog = false })
+        }
+
+        val closeActionDialog = {
+            actionDialog = null
+            statusVersion += 1
+        }
+        when (actionDialog) {
+            ActionDialog.ACCOUNTS -> AccountManagementDialog(
+                onChanged = { statusVersion += 1 },
+                onDismiss = closeActionDialog,
+            )
+
+            ActionDialog.CREDENTIALS -> CredentialActionsDialog(
+                onChanged = { statusVersion += 1 },
+                onDismiss = closeActionDialog,
+            )
+
+            ActionDialog.CONFIG_IO -> ConfigIODialog(
+                context = context,
+                onDismiss = closeActionDialog,
+            )
+
+            ActionDialog.QR -> QrLinksDialog(
+                // Telegram 项只有在 TELEGRAM_GROUP_URL 填了真实地址后才出现（不猜链接）。
+                links = buildList {
+                    add(QrLink("项目地址", GITHUB_HOME_URL, "扫码或按确认键访问项目主页"))
+                    if (TELEGRAM_GROUP_URL.isNotBlank()) {
+                        add(QrLink("Telegram 群组", TELEGRAM_GROUP_URL, "扫码或按确认键加入群组"))
+                    }
+                },
+                onOpen = { openExternalUrl(context, it) },
+                onDismiss = closeActionDialog,
+            )
+
+            null -> Unit
         }
     }
 }
@@ -693,7 +788,8 @@ private fun SettingItem(
         ControlType.ACCOUNT_CARD, ControlType.AUTH_STATUS_CARD, ControlType.AUTH_SECURITY_CARD,
         ControlType.QR_LINKS_CARD -> SettingShell(
             modifier = modifier,
-            onClick = {},
+            // 卡片行默认无动作；about_qr_links 由 onAction 接管（其它键落到 when 的 else 不响应）。
+            onClick = { onAction(control.key()) },
             onFocused = onFocused,
         ) {
             Box(

@@ -107,6 +107,15 @@ object FeaturedRepository {
         cachedAwemes = items.toList()
     }
 
+    /**
+     * 『精选自动播放』的闸门：每个分区在本次会议里只允许自动起播一次。
+     *
+     * 播放器返回时 FeaturedScreen 会重新组合，没有这个闸门就会一遍遍把用户踢回播放器。
+     */
+    private val autoPlayedTags = mutableSetOf<String>()
+
+    fun claimAutoPlay(tagId: String): Boolean = autoPlayedTags.add(tagId)
+
     /** 是否为「未配置 Cookie」的空态（ChannelListSpec.featuredPageState 的 hasCookie 入参）。 */
     fun hasCookie(): Boolean =
         AppRuntime.api?.cookies()?.cookieHeader()?.isNotEmpty() == true

@@ -10,6 +10,7 @@ package com.github.axtv.dv.ui.nav
 import axtv.model.Aweme
 import axtv.model.VideoPlayUrlResolver
 import com.github.axtv.dv.adapter.AppRuntime
+import com.github.axtv.dv.adapter.ViewedVideoTracker
 import com.github.axtv.dv.ui.player.PlaylistProvider
 import com.github.axtv.dv.ui.player.VideoPlaylistProvider
 
@@ -90,5 +91,9 @@ fun awemePlaylistProvider(awemes: List<Aweme>, startIndex: Int = 0): PlaylistPro
                 ).orEmpty(),
         )
     }
-    return VideoPlaylistProvider(entries)
+    return VideoPlaylistProvider(entries).also {
+        // 『历史记录容量』的消费点之一：起播即把这条记进本地「已看」环形缓冲。
+        // 这里是所有播放路由（首页 / 精选 / 详情 / 历史 / 合集）的唯一收口，不改 ui/player 内部逻辑。
+        ordered.firstOrNull()?.awemeId()?.let(ViewedVideoTracker::record)
+    }
 }

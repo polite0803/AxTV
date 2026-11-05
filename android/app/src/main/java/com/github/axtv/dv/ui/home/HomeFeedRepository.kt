@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.github.axtv.dv.adapter.AppRuntime
+import com.github.axtv.dv.adapter.ViewedVideoTracker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,11 +40,42 @@ object HomeFeedRepository {
                 ?: return@withContext Result.failure(
                     IllegalStateException("API 尚未装配（AppRuntime.api == null）"),
                 )
-            Result.success(FeedDataSource(FeedApi(api)).loadFeed(cursor))
+            Result.success(dropMobileOnly(dropViewed(FeedDataSource(FeedApi(api)).loadFeed(cursor))))
         } catch (cancel: CancellationException) {
             throw cancel
         } catch (t: Throwable) {
             Result.failure(t)
         }
+    }
+
+    /**
+     * 『历史记录容量』的另一处消费点：按本地「已看」清单去重首页条目。
+     *
+     * 规则照抄原版 src/app/p000/kq5.java:1005-1020：过滤后整页为空就退回未过滤的原页，
+     * 避免出现「看过的都记下来了 → 首页一片空白」。
+     * 容量改的是这份本地清单的保留长度（50 条 vs 1000 条 → 一条已看记录多久后重新出现在首页），
+     * 服务端历史（VideoApi.historyRead）不受影响。
+     */
+    private fun dropViewed(page: List<Aweme>): List<Aweme> {
+        val viewed = ViewedVideoTracker.viewedIds()
+        if (viewed.isEmpty()) return page
+        val kept = page.filterNot { it.awemeId() in viewed }
+        return kept.ifEmpty { page }
+    }
+
+    /**
+     * 『过滤手机视频』的消费点：丢掉竖屏条目（高 > 宽）。
+     *
+     * 判据取接口自带的 video.width / video.height（refactor/model/axtv/model/Video.java 的
+     * `width` / `height` 两个字段），尺寸缺失（0）的条目一律保留——没有尺寸就假装不知道画幅。
+     * 与『已看』过滤同一兜底规则：整页被滤空时退回原页，避免首页一片空白。
+     */
+    private fun dropMobileOnly(page: List<Aweme>): List<Aweme> {
+        if (AppRuntime.settings?.filterMobileVideo() != true) return page
+        val kept = page.filterNot { aweme ->
+            val video = aweme.video()
+            video.width() > 0 && video.height() > video.width()
+        }
+        return kept.ifEmpty { page }
     }
 }

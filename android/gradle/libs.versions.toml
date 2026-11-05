@@ -40,6 +40,8 @@ work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref
 quickjs-android = { group = "com.github.dokar3", name = "quickjs-quickjs-android-wrapper", version.ref = "quickjs" }
 coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugarJdkLibs" }
+# 二维码生成（设置页『二维码链接』行）：纯 Java、Apache-2.0，原版 APK 同样内置 zxing（src/app/p000/r30.java:243 引用 com.google.zxing.qrcode.decoder.ErrorCorrectionLevel）
+zxing-core = { group = "com.google.zxing", name = "core", version = "3.5.3" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

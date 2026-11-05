@@ -52,6 +52,7 @@ import axtv.model.Aweme
 import axtv.ui.DetailPageSpec
 import axtv.ui.FeedPageSpec
 import axtv.ui.HomeTabsSpec
+import com.github.axtv.dv.adapter.ViewedVideoTracker
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.appearance.AmbientBackdrop
 import com.github.axtv.dv.ui.appearance.AxAppearance
@@ -247,6 +248,8 @@ fun HomeFeedScreen(
 
             else -> {
                 val related = feedItems.take(RELATED_LIMIT)
+                // 本地「已看」集合：整页都看过时（原版会退回未过滤列表）用它标出重复条目。
+                val viewedIds = remember(feedItems) { ViewedVideoTracker.viewedIds() }
                 Text(
                     text = FeedPageSpec.TEXT_RELATED,
                     color = AxTvColors.TextPrimary,
@@ -258,7 +261,11 @@ fun HomeFeedScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(count = related.size) { index ->
-                        RelatedCard(item = related[index], onClick = { onOpenPlayer(index) })
+                        RelatedCard(
+                            item = related[index],
+                            viewed = related[index].awemeId() in viewedIds,
+                            onClick = { onOpenPlayer(index) },
+                        )
                     }
                 }
 
@@ -284,6 +291,7 @@ fun HomeFeedScreen(
                         SideEffect { requesters[index] = requester }
                         FeedRow(
                             item = feedItems[index],
+                            viewed = feedItems[index].awemeId() in viewedIds,
                             requester = requester,
                             onFocused = { onFocusIndexChange(index) },
                             onClick = { onOpenPlayer(index) },
@@ -330,6 +338,9 @@ private fun formatCount(value: Long): String = when {
 }
 
 private fun Aweme.cardTitle(): String = desc().ifBlank { FeedPageSpec.TEXT_UNTITLED_VIDEO }
+
+/** 「已看」角标文案：来源是本地环形缓冲（ViewedVideoTracker），不是服务端历史。 */
+private const val TEXT_VIEWED = "已看"
 
 private fun Aweme.cardAuthor(): String =
     author().nickname().takeIf { it.isNotBlank() }?.let { "@$it" } ?: "未知作者"
@@ -416,7 +427,7 @@ private fun HomeTabChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RelatedCard(item: Aweme, onClick: () -> Unit) {
+private fun RelatedCard(item: Aweme, viewed: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
@@ -445,12 +456,14 @@ private fun RelatedCard(item: Aweme, onClick: () -> Unit) {
             color = AxTvColors.TextSecondary,
             style = TextStyle(fontSize = 12.sp),
         )
+        if (viewed) ViewedBadge()
     }
 }
 
 @Composable
 private fun FeedRow(
     item: Aweme,
+    viewed: Boolean,
     requester: FocusRequester,
     onFocused: () -> Unit,
     onClick: () -> Unit,
@@ -493,7 +506,24 @@ private fun FeedRow(
                 color = AxTvColors.TextSecondary,
                 style = TextStyle(fontSize = 12.sp),
             )
+            if (viewed) ViewedBadge()
         }
+    }
+}
+
+/** 已看角标：小胶囊，取自本地 viewed_video_ids 清单。 */
+@Composable
+private fun ViewedBadge() {
+    Box(
+        modifier = Modifier
+            .background(AxTvColors.SurfaceHigh, RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = TEXT_VIEWED,
+            color = AxTvColors.TextSecondary,
+            style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
+        )
     }
 }
 

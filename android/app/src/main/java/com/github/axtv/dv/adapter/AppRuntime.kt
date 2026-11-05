@@ -49,6 +49,19 @@ object AppRuntime {
         )
     }
 
+    /**
+     * 导入配置后重建 Settings 实例：核心层把 accounts_list 缓存在实例字段里
+     * （refactor/settings/axtv/settings/Settings.java:55 accountsCache），
+     * 沿用旧实例会读到导入前的账号表。api / signer 不重建（身份分支只在装配时读一次）。
+     */
+    fun refreshSettings(context: Context) {
+        val application = context.applicationContext
+        settings = Settings(
+            SharedPrefsSettingsStore(application),
+            AndroidDeviceProfile.settingsProfile(application),
+        )
+    }
+
     fun shutdown() {
         signer?.close()
         signer = null

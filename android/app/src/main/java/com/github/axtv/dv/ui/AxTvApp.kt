@@ -7,9 +7,12 @@
  */
 package com.github.axtv.dv.ui
 
+import android.content.pm.ActivityInfo
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,6 +57,7 @@ import com.github.axtv.dv.ui.library.WatchLaterScreen
 import com.github.axtv.dv.ui.live.LiveListScreen
 import com.github.axtv.dv.ui.live.LiveRoomScreen
 import com.github.axtv.dv.ui.login.LoginScreen
+import com.github.axtv.dv.ui.login.qr.findActivity
 import com.github.axtv.dv.ui.nav.NavDestination
 import com.github.axtv.dv.ui.nav.NavRoutes
 import com.github.axtv.dv.ui.nav.PlayerFromAwemeScreen
@@ -67,6 +72,31 @@ import com.github.axtv.dv.ui.search.SearchScreen
 import com.github.axtv.dv.ui.settings.SettingsScreen
 
 private data class TopTab(val label: String, val route: String)
+
+/**
+ * 『UI 形态』的消费点。
+ *
+ * 三件事：向系统请求屏幕方向、决定顶栏是否横向可滚、决定非播放页的内容最大宽度。
+ * AUTO 时按设备配置推导 —— 原版也是把设置值与 smallestScreenWidthDp 放在一起判的
+ *（src/app/p000/qm4.java:1532 读 Configuration.smallestScreenWidthDp）。
+ * 电视大多忽略竖屏请求，选「手机竖屏」在 TV 上表现为「仍是横屏 + 顶栏可滚」，这是平台限制。
+ * 本应用清单里 leanback 不是 required、MainActivity 方向是 fullSensor，所以这一档不是空设置。
+ */
+private fun effectiveFormFactor(context: android.content.Context): Settings.UiFormFactor {
+    val stored = AppRuntime.settings?.formFactor() ?: return Settings.UiFormFactor.TV_LANDSCAPE
+    if (stored != Settings.UiFormFactor.AUTO) return stored
+    val configuration = context.resources.configuration
+    val isTelevision = (configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    return when {
+        isTelevision -> Settings.UiFormFactor.TV_LANDSCAPE
+        configuration.smallestScreenWidthDp < 600 -> Settings.UiFormFactor.PHONE_PORTRAIT
+        else -> Settings.UiFormFactor.TABLET_LANDSCAPE
+    }
+}
+
+/** 平板横屏下正文列的侧边留白（TV 与手机保持原样，播放页不吃这条以保持全屏）。 */
+private val TABLET_SIDE_PADDING = 48.dp
 
 private val TOP_TABS = listOf(
     TopTab("首页", NavRoutes.HOME),
@@ -183,14 +213,41 @@ fun AxTvApp(
         // 『反向导航』只在根节点接管一次 DPAD 上/下；播放页的上下键是「上一条/下一条」
         // （原版语义，见 PlayerSession.handleRemoteKey），所以沉浸页不参与反转。
         val reverseNavigation = AppRuntime.settings?.reverseNavigation() == true && !immersive
+        val shellContext = LocalContext.current
+        val storedFactor = AppRuntime.settings?.formFactor() ?: Settings.UiFormFactor.AUTO
+        val formFactor = effectiveFormFactor(shellContext)
+        // 『UI 形态』→ 屏幕方向：只看用户显式选的那一档。
+        // AUTO 必须保持清单里的 fullSensor，否则在手机上会把「跟随重力」锁死成单一方向（回归）。
+        LaunchedEffect(storedFactor) {
+            val activity = shellContext.findActivity() ?: return@LaunchedEffect
+            runCatching {
+                activity.requestedOrientation = when (storedFactor) {
+                    Settings.UiFormFactor.PHONE_PORTRAIT ->
+                        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+
+                    Settings.UiFormFactor.TABLET_LANDSCAPE,
+                    Settings.UiFormFactor.TV_LANDSCAPE ->
+                        ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+
+                    Settings.UiFormFactor.AUTO ->
+                        ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                }
+            }
+        }
+        val tabletWide = formFactor == Settings.UiFormFactor.TABLET_LANDSCAPE && !immersive
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(AxTvColors.Bg)
-                .reverseDpadUpDown(reverseNavigation),
+                .reverseDpadUpDown(reverseNavigation)
+                .then(if (tabletWide) Modifier.padding(horizontal = TABLET_SIDE_PADDING) else Modifier),
         ) {
             if (!immersive) {
-                TopTabBar(current = destination, onSelect = { navigateTab(it.route) })
+                TopTabBar(
+                    current = destination,
+                    compact = formFactor == Settings.UiFormFactor.PHONE_PORTRAIT,
+                    onSelect = { navigateTab(it.route) },
+                )
             }
             when (val target = destination) {
                 NavDestination.Home -> HomeFeedScreen(
@@ -339,12 +396,21 @@ fun AxTvApp(
 }
 
 @Composable
-private fun TopTabBar(current: NavDestination, onSelect: (TopTab) -> Unit) {
+private fun TopTabBar(current: NavDestination, compact: Boolean, onSelect: (TopTab) -> Unit) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(AxTvColors.Surface)
-            .padding(horizontal = 40.dp, vertical = 12.dp),
+        // 窄屏（手机竖屏）时 7 个页签放不下，改成横向可滚，并收起右下角的路由调试文案。
+        modifier = if (compact) {
+            Modifier
+                .fillMaxWidth()
+                .background(AxTvColors.Surface)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        } else {
+            Modifier
+                .fillMaxWidth()
+                .background(AxTvColors.Surface)
+                .padding(horizontal = 40.dp, vertical = 12.dp)
+        },
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -353,7 +419,7 @@ private fun TopTabBar(current: NavDestination, onSelect: (TopTab) -> Unit) {
             color = AxTvColors.Accent,
             style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold),
         )
-        Spacer(Modifier.width(24.dp))
+        Spacer(Modifier.width(if (compact) 12.dp else 24.dp))
         TOP_TABS.forEach { item ->
             TopTabItem(
                 label = item.label,
@@ -361,12 +427,14 @@ private fun TopTabBar(current: NavDestination, onSelect: (TopTab) -> Unit) {
                 onClick = { onSelect(item) },
             )
         }
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = "统一路由 · ${current.debugLabel}",
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 13.sp),
-        )
+        if (!compact) {
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "统一路由 · ${current.debugLabel}",
+                color = AxTvColors.TextSecondary,
+                style = TextStyle(fontSize = 13.sp),
+            )
+        }
     }
 }
 
