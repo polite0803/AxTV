@@ -33,3 +33,6 @@ replay_pid*.log
 
 # Qoder 会话产物与隔离工作树（禁止入库）
 .qoder/
+
+# 本地构建/验收日志（禁止入库）
+*.log
