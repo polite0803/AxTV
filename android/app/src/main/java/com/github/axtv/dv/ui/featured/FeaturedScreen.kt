@@ -40,9 +40,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -114,11 +118,19 @@ fun FeaturedScreen(
         channels = channels.toMutableList().also {
             it[index] = channel.copy(loading = true, error = null)
         }
-        val updated = FeaturedRepository.loadMore(channel, lastVisibleIndex)
-            .getOrElse { channel.copy(loading = false, error = it.collectionMessage()) }
-        val at = channels.indexOfFirst { it.tagId == tagId }
-        if (at >= 0) {
-            channels = channels.toMutableList().also { it[at] = updated }
+        try {
+            val updated = FeaturedRepository.loadMore(channel, lastVisibleIndex)
+                .getOrElse { channel.copy(loading = false, error = it.collectionMessage()) }
+            val at = channels.indexOfFirst { it.tagId == tagId }
+            if (at >= 0) {
+                channels = channels.toMutableList().also { it[at] = updated }
+            }
+        } finally {
+            // 协程被取消时也要把 loading 复位，否则该分区永远停在“加载中”。
+            val at = channels.indexOfFirst { it.tagId == tagId }
+            if (at >= 0 && channels[at].loading) {
+                channels = channels.toMutableList().also { it[at] = it[at].copy(loading = false) }
+            }
         }
     }
 
@@ -170,8 +182,12 @@ fun FeaturedScreen(
 
     // 首帧/空态焦点：进入时聚焦当前分区 chip；无 chip 时聚焦空态操作按钮。
     var focusGiven by remember { mutableStateOf(false) }
-    val chipRequesters = remember { mutableMapOf<String, FocusRequester>() }
+    // FocusRequester 必须在 remember 内构造（Compose 1.10 起标记为 @RememberInComposition）。
+    val chipRequesters = remember(channels) {
+        channels.associate { it.tagId to FocusRequester() }.toMutableMap()
+    }
     val actionRequester = remember { FocusRequester() }
+    val channelScrollState = rememberScrollState()
     LaunchedEffect(channels.size, channelsLoaded, pageError) {
         if (focusGiven) return@LaunchedEffect
         val target = channels.getOrNull(selectedIndex)?.let { chipRequesters[it.tagId] }
@@ -202,11 +218,11 @@ fun FeaturedScreen(
 
         Spacer(Modifier.height(12.dp))
         Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            modifier = Modifier.horizontalScroll(channelScrollState),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             channels.forEachIndexed { index, channel ->
-                val requester = chipRequesters.getOrPut(channel.tagId) { FocusRequester() }
+                val requester = chipRequesters.getValue(channel.tagId)
                 FeaturedChip(
                     label = channel.name,
                     selected = ChannelListSpec.isTabSelected(index, selectedIndex),
@@ -281,12 +297,19 @@ private fun SectionContent(
         derivedStateOf { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
     }
 
-    LaunchedEffect(channel.tagId, lastVisibleIndex, channel.videos.size) {
-        if (channel.videos.isEmpty() || channel.loading) return@LaunchedEffect
-        if (!ChannelListSpec.shouldRequestLoadMore(lastVisibleIndex, channel.videos.size)) {
-            return@LaunchedEffect
-        }
-        onNeedMore(lastVisibleIndex)
+    // lastVisibleIndex 不能进 key：加载中插入 footer 会改变可见末项索引，key 变化会取消
+    // 正在执行的 onNeedMore，channel.loading 永久卡 true。用 snapshotFlow + 独立 scope
+    // 只负责“发现需要翻页”，请求本身不随索引变化被取消。
+    val latestChannel by rememberUpdatedState(channel)
+    LaunchedEffect(channel.tagId) {
+        snapshotFlow { lastVisibleIndex }
+            .distinctUntilChanged()
+            .collect { index ->
+                val current = latestChannel
+                if (current.videos.isEmpty() || current.loading) return@collect
+                if (!ChannelListSpec.shouldRequestLoadMore(index, current.videos.size)) return@collect
+                scope.launch { onNeedMore(index) }
+            }
     }
 
     when (ChannelListSpec.sectionState(spec)) {

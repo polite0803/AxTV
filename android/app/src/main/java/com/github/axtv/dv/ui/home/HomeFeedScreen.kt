@@ -10,6 +10,7 @@ package com.github.axtv.dv.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,11 +60,22 @@ import com.github.axtv.dv.ui.appearance.AmbientBackdrop
 import com.github.axtv.dv.ui.appearance.AxAppearance
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.nav.NavRoutes
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
 /** 单页最多展示的相关推荐条数（与原有 LazyRow 视觉保持一致）。 */
 private const val RELATED_LIMIT = 5
+
+/** 提前多少条触发自动续页（焦点或滚动到达末尾前 N 条就开始拉下一页）。 */
+private const val AUTO_LOAD_AHEAD = 3
+
+/**
+ * 信息流条目的组合键：必须与 items(key=) 用同一个函数。
+ * 之前 requester 是 remember { FocusRequester() }（无 key），LazyColumn 回收槽位时
+ * 会把某个请求器和另一个条目绑在一起，requestFocus() 于是把焦点甩到很远的地方。
+ */
+private fun feedKey(awemeId: String, index: Int): String = "${awemeId.ifEmpty { "feed" }}#$index"
 
 @OptIn(ExperimentalTvFoundationApi::class)
 @Composable
@@ -76,7 +89,7 @@ fun HomeFeedScreen(
     var activeTab by rememberSaveable { mutableStateOf(HomeTabsSpec.TAB_RECOMMEND) }
     val context = LocalContext.current
     val listState = rememberLazyListState()
-    val requesters = remember { mutableMapOf<Int, FocusRequester>() }
+    val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val retryRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
 
@@ -88,6 +101,12 @@ fun HomeFeedScreen(
     var nextCursor by remember { mutableStateOf(1L) }
     var hasMore by remember { mutableStateOf(true) }
     var focusRestored by remember { mutableStateOf(false) }
+
+    /** 列表变动后清掉已消失条目的焦点请求器：残留条目会让 requestFocus() 甩到远端。 */
+    fun pruneRequesters() {
+        val alive = feedItems.indices.map { feedKey(feedItems[it].awemeId(), it) }.toSet()
+        requesters.keys.retainAll(alive)
+    }
 
     suspend fun loadFirstPage() {
         loading = true
@@ -101,6 +120,7 @@ fun HomeFeedScreen(
                 nextCursor = 1L
                 hasMore = page.isNotEmpty()
                 focusRestored = false
+                pruneRequesters()
             },
             onFailure = { errorMessage = describeFeedError(it) },
         )
@@ -111,21 +131,43 @@ fun HomeFeedScreen(
         if (loading || loadingMore || !hasMore) return
         loadingMore = true
         loadMoreError = null
-        val result = HomeFeedRepository.load(nextCursor)
-        result.fold(
-            onSuccess = { page ->
-                val merged = (feedItems + page).distinctBy { it.awemeId() }
-                feedItems = merged
-                HomeFeedRepository.cache(merged)
-                nextCursor += 1
-                hasMore = page.isNotEmpty()
-            },
-            onFailure = { loadMoreError = describeFeedError(it) },
-        )
-        loadingMore = false
+        try {
+            val result = HomeFeedRepository.load(nextCursor)
+            result.fold(
+                onSuccess = { page ->
+                    val merged = (feedItems + page).distinctBy { it.awemeId() }
+                    feedItems = merged
+                    HomeFeedRepository.cache(merged)
+                    nextCursor += 1
+                    hasMore = page.isNotEmpty()
+                    pruneRequesters()
+                },
+                onFailure = { loadMoreError = describeFeedError(it) },
+            )
+        } finally {
+            loadingMore = false
+        }
     }
 
     LaunchedEffect(Unit) { loadFirstPage() }
+
+    // 电视端没有「上滑」手势，翻页必须自己发生：焦点或滚动逼近列表末尾就请求下一页。
+    // 原来这里是 FeedFooter 里一个「上滑加载更多」按钮，等于要用户先发现它、再按一次才能继续看。
+    val scrolledNearEnd by remember(listState) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            info.totalItemsCount > 0 && lastVisible >= info.totalItemsCount - AUTO_LOAD_AHEAD
+        }
+    }
+    // loadingMore 不能进 key：loadNextPage 自己会把它置 true，key 变化会取消正在执行的请求，
+    // 导致 loadingMore 永久卡在 true（首页再也翻不了页）。这里只保留会改变「是否需要翻页」的输入。
+    LaunchedEffect(rememberedFocusIndex, scrolledNearEnd, feedItems.size, hasMore, loading, loadMoreError) {
+        if (!hasMore || loading || loadingMore || loadMoreError != null) return@LaunchedEffect
+        val focusNearEnd = feedItems.isNotEmpty() &&
+            rememberedFocusIndex >= feedItems.size - AUTO_LOAD_AHEAD
+        if (focusNearEnd || scrolledNearEnd) loadNextPage()
+    }
 
     // 焦点记忆：数据到位后滚到上次条目，下一帧再请求焦点。
     LaunchedEffect(feedItems.size) {
@@ -133,7 +175,7 @@ fun HomeFeedScreen(
             val target = rememberedFocusIndex.coerceIn(0, feedItems.size - 1)
             runCatching { listState.scrollToItem(target) }
             withFrameNanos { }
-            runCatching { requesters[target]?.requestFocus() }
+            runCatching { requesters[feedKey(feedItems[target].awemeId(), target)]?.requestFocus() }
             focusRestored = true
         }
     }
@@ -153,6 +195,9 @@ fun HomeFeedScreen(
         ?.let { DetailPageSpec.coverUrl(it.video()) }
         .orEmpty()
     LaunchedEffect(focusCoverUrl, AxAppearance.version.intValue) {
+        // 开「画面取色」时每次移动焦点都会换一张封面：去抖 250ms，
+        // 连按方向键的过程中不要每张封面都跑一次 Coil 取色 + 全局重着色（重着色会重组整棵树）。
+        delay(250L)
         AxAppearance.sampleCoverSeed(context, focusCoverUrl)
     }
 
@@ -171,31 +216,38 @@ fun HomeFeedScreen(
         Spacer(Modifier.height(14.dp))
 
         // 首页快捷入口：把无内部回调的页面（历史/收藏/稍后再看/登录）接到统一路由。
-        // 「详情」跟随当前焦点条目：信息流点击仍按原行为进入播放，详情页由此单独进入。
-        val focusedDetailRoute = feedItems
-            .getOrNull(rememberedFocusIndex)
-            ?.awemeId()
-            ?.takeIf { it.isNotEmpty() }
-            ?.let { NavRoutes.detail(it) }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // 「详情」跟随当前焦点条目，但入口本身常驻不增删：原来是按焦点有没有才渲染，
+        // 信息流每移一次焦点顶栏就重排一次，「相邻」关系跟着变，表现为按一下焦点跑很远。
+        val focusedAwemeId = feedItems.let { items ->
+            items.getOrNull(rememberedFocusIndex) ?: items.firstOrNull()
+        }?.awemeId()?.takeIf { it.isNotEmpty() }
+        val detailEntry: Pair<String, () -> Unit>? = focusedAwemeId
+            ?.let { id -> "详情" to { onOpenRoute(NavRoutes.detail(id)) } }
+        Row(
+            modifier = Modifier.focusGroup(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             listOfNotNull(
-                focusedDetailRoute?.let { "详情" to it },
-                "搜索" to NavRoutes.SEARCH,
-                "直播" to NavRoutes.LIVE,
-                "合集" to NavRoutes.MIX_LIST,
-                "个人" to NavRoutes.PROFILE,
-                "历史" to NavRoutes.PROFILE_HISTORY,
-                "收藏" to NavRoutes.PROFILE_FAVORITES,
-                "稍后再看" to NavRoutes.PROFILE_LATER,
-                "登录" to NavRoutes.LOGIN,
-                "设置" to NavRoutes.SETTINGS,
-            ).forEach { (label, route) ->
-                HomeTabChip(label = label, selected = false, onClick = { onOpenRoute(route) })
+                detailEntry,
+                "搜索" to { onOpenRoute(NavRoutes.SEARCH) },
+                "直播" to { onOpenRoute(NavRoutes.LIVE) },
+                "合集" to { onOpenRoute(NavRoutes.MIX_LIST) },
+                "个人" to { onOpenRoute(NavRoutes.PROFILE) },
+                "历史" to { onOpenRoute(NavRoutes.PROFILE_HISTORY) },
+                "收藏" to { onOpenRoute(NavRoutes.PROFILE_FAVORITES) },
+                "稍后再看" to { onOpenRoute(NavRoutes.PROFILE_LATER) },
+                "登录" to { onOpenRoute(NavRoutes.LOGIN) },
+                "设置" to { onOpenRoute(NavRoutes.SETTINGS) },
+            ).forEach { (label, action) ->
+                HomeTabChip(label = label, selected = false, onClick = action)
             }
         }
         Spacer(Modifier.height(16.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.focusGroup(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             listOf(
                 HomeTabsSpec.TAB_RECOMMEND,
                 HomeTabsSpec.TAB_FOLLOW,
@@ -250,7 +302,10 @@ fun HomeFeedScreen(
                     style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
                 )
                 LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
+                    // 焦点分组：一行卡片是一个岛，左右键在岛内移动，上下键才离岛。
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusGroup(),
                     contentPadding = PaddingValues(vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -273,16 +328,18 @@ fun HomeFeedScreen(
                     state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .weight(1f)
+                        .focusGroup(),
                     contentPadding = PaddingValues(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(
                         count = feedItems.size,
-                        key = { index -> "${feedItems[index].awemeId().ifEmpty { "feed" }}#$index" },
+                        key = { index -> feedKey(feedItems[index].awemeId(), index) },
                     ) { index ->
-                        val requester = remember { FocusRequester() }
-                        SideEffect { requesters[index] = requester }
+                        val key = feedKey(feedItems[index].awemeId(), index)
+                        val requester = remember(key) { FocusRequester() }
+                        SideEffect { requesters[key] = requester }
                         FeedRow(
                             item = feedItems[index],
                             viewed = feedItems[index].awemeId() in viewedIds,
@@ -559,20 +616,14 @@ private fun FeedFooter(
             }
         }
 
-        hasMore -> Box(
-            modifier = Modifier
-                .onFocusChanged { focused = it.isFocused }
-                .clickable(onClick = onLoadMore)
-                .background(AxTvColors.Surface, RoundedCornerShape(8.dp))
-                .focusRing(focused, RoundedCornerShape(8.dp))
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-        ) {
-            Text(
-                text = FeedPageSpec.TEXT_LOAD_MORE,
-                color = AxTvColors.TextPrimary,
-                style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
-            )
-        }
+        hasMore -> Text(
+            // 原来是这里一个可点击的「上滑加载更多」：电视没有上滑手势，焦点走到末尾还会
+            // 撞上一个要按确认才生效的按钮。翻页现在由上面的 LaunchedEffect 在焦点/滚动
+            // 接近末尾时自动发生，这里只留状态说明。
+            text = "继续下移自动加载（已加载 $loadedCount 条）",
+            color = AxTvColors.TextSecondary,
+            style = TextStyle(fontSize = 13.sp),
+        )
 
         else -> Text(
             text = "已加载全部 $loadedCount 条",

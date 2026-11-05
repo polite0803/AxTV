@@ -27,6 +27,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
@@ -93,7 +95,10 @@ private sealed interface LoginState {
 }
 
 /** 扫码阶段（对应 QrLoginBridge.Status）。 */
-private enum class QrPhase { Idle, Starting, Waiting, Success, Failed }
+private enum class QrPhase { Idle, Starting, Waiting, Verifying, Success, Failed }
+
+/** 短信验证码最长几位：页面输入框普遍 4-8 位，多出来的按键忽略即可。 */
+private const val VERIFY_CODE_MAX_LENGTH = 8
 
 /** 扫码区 UI 状态：二维码 PNG 在 Android 侧解码成 Bitmap 后展示。 */
 private data class QrUiState(
@@ -102,6 +107,8 @@ private data class QrUiState(
     val bitmap: Bitmap? = null,
     /** 界面这一帧二维码的更新时间（毫秒），用于展示「最近刷新 X 秒前」。 */
     val freshAtMs: Long = 0L,
+    /** 验证页上渲染了验证码输入框 → 弹出应用侧数字键盘代填。 */
+    val codeInput: Boolean = false,
 )
 
 /** 扫码链路日志标签（logcat 过滤：adb logcat -s AxTV_QR）。 */
@@ -134,6 +141,9 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
     val qrRequester = remember { FocusRequester() }
     // 二维码显示边长固定 480px（1080p 电视上仍好扫），保证整页 1080p 一屏放下、不滚动。
     val qrSide = with(LocalDensity.current) { 480.toDp() }
+    /** 风控把扫码转成短信验证码时，应用侧数字键盘收集的那串数字。 */
+    var verifyCode by remember { mutableStateOf("") }
+    val keypadVisible = qrState.phase == QrPhase.Verifying && qrState.codeInput
 
     BackHandler { onBack() }
 
@@ -142,6 +152,17 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
         // 初始焦点给「生成二维码」：电视端遥控器可直接 OK 触发；输入框方向键会吞掉焦点，
         // 若把初始焦点放在输入框，用户无法用方向键走到扫码按钮。
         runCatching { qrRequester.requestFocus() }
+    }
+
+    // 验证窗口出现时清空上次的输入；收起时把焦点交还给扫码按钮 —— 浮出的登录页 WebView
+    // 收回去以后 Compose 侧是焦点空洞，不抢一次的话遥控器按键没人接。
+    LaunchedEffect(keypadVisible) {
+        if (keypadVisible) {
+            verifyCode = ""
+        } else {
+            withFrameNanos { }
+            runCatching { qrRequester.requestFocus() }
+        }
     }
 
     // 等待扫码时每秒推进一次时钟，让「最近刷新 X 秒前」跟着走。
@@ -291,6 +312,7 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
                 val phase = when (st.status()) {
                     QrLoginBridge.Status.STARTING -> QrPhase.Starting
                     QrLoginBridge.Status.WAITING_SCAN, QrLoginBridge.Status.SCANNED -> QrPhase.Waiting
+                    QrLoginBridge.Status.VERIFY -> QrPhase.Verifying
                     QrLoginBridge.Status.SUCCESS -> QrPhase.Success
                     QrLoginBridge.Status.EXPIRED, QrLoginBridge.Status.FAILED -> QrPhase.Failed
                     else -> QrPhase.Idle
@@ -298,8 +320,11 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
                 qrState = QrUiState(
                     phase = phase,
                     message = st.message(),
-                    bitmap = bitmap ?: qrState.bitmap.takeIf { phase == QrPhase.Waiting || phase == QrPhase.Failed },
+                    bitmap = bitmap ?: qrState.bitmap.takeIf {
+                        phase == QrPhase.Waiting || phase == QrPhase.Failed || phase == QrPhase.Verifying
+                    },
                     freshAtMs = if (isNewFrame) System.currentTimeMillis() else qrState.freshAtMs,
+                    codeInput = st.codeInput(),
                 )
                 if (st.status() == QrLoginBridge.Status.SUCCESS) {
                     applyCookie(st.cookieHeader(), "扫码登录成功，Cookie 已写入 douyin_auth", fromQr = true)
@@ -318,162 +343,194 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
         state = LoginState.Idle
         cookieInput = ""
         // 要求：登出清空 douyin_auth（cookie_header / user_unique_id / self_user_id 一并清掉）。
-        context.getSharedPreferences("douyin_auth", android.content.Context.MODE_PRIVATE)
-            .edit().clear().apply()
+        // 只删登录相关键：douyin_auth 里还存着 device_id / iid 等设备级匿名身份，
+        // 整体 clear() 会让下次启动换一套设备标识，容易触发风控。
+        val authPrefs = context.getSharedPreferences("douyin_auth", android.content.Context.MODE_PRIVATE)
+        val authEditor = authPrefs.edit()
+        for (key in authPrefs.all.keys) {
+            if (key == "cookie_header" || key == "cookie_string" ||
+                key == "user_unique_id" || key == "self_user_id" ||
+                key.startsWith("interaction_")
+            ) {
+                authEditor.remove(key)
+            }
+        }
+        authEditor.apply()
         savedCookie = ""
-        // 只清登录态：不动 axtv_settings.accounts_list / current_account_id，
-        // 避免登出顺带删掉用户已保存的多账号与 PIN 数据。
-        AppRuntime.settings?.setCookie("")
-        notice = "已退出登录，douyin_auth 已清空"
+        // accounts_list 里也存着各账号的 cookie / privateKey / ticket；登出必须一并清掉，
+        // 否则“已登出”的设备仍可被导出登录态。互动凭据同理。
+        AppRuntime.settings?.let { settings ->
+            settings.setCookie("")
+            settings.clearInteraction()
+            settings.setAccounts(emptyList())
+            settings.setCurrentAccountId("")
+        }
+        notice = "已退出登录，本机登录凭据已清空"
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        // ───────────────── 二维码区块置顶：480px 边长 + 32dp 白边，一屏内固定不滚动 ─────────────────
-        // 32dp = 64px ≈ 4.4 个模块（480px/33 模块 ≈ 14.5px），满足二维码静默区 ≥4 模块的要求。
-        Box(
+    // 整页套一层 Box：验证码键盘要能盖住二维码区。电视整屏只有约 540dp 高，
+    // 把键盘内联排在二维码下面会直接溢出屏幕。
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
             modifier = Modifier
-                .background(Color.White, RoundedCornerShape(12.dp))
-                .padding(32.dp),
+                .fillMaxSize()
+                .padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val bitmap = qrState.bitmap
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "抖音登录二维码",
-                    modifier = Modifier.size(qrSide),
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(qrSide)
-                        .background(AxTvColors.Surface, RoundedCornerShape(8.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "点下方「生成二维码」开始",
-                        color = AxTvColors.TextSecondary,
-                        style = TextStyle(fontSize = 16.sp),
-                    )
-                }
-            }
-        }
-
-        // ───────────────── 状态行：扫码状态 + 帧龄，单行显示 ─────────────────
-        Text(
-            text = buildString {
-                append("扫码状态：")
-                append(qrState.message.ifBlank { "未开始" })
-                if (qrState.bitmap != null) {
-                    append(" · 最近刷新 ")
-                    append(qrAgeSeconds(qrState.freshAtMs, qrClockMs))
-                    append(" 秒前")
-                }
-                (state as? LoginState.Success)?.let { append(" · 已登录：${it.nickname}") }
-                (state as? LoginState.Failure)?.let { append(" · 验证失败：${it.message}") }
-                if (notice.isNotBlank()) append(" · $notice")
-            },
-            color = when {
-                state is LoginState.Failure || qrState.phase == QrPhase.Failed -> AxTvColors.AccentWarm
-                state is LoginState.Success || qrState.phase == QrPhase.Success -> AxTvColors.Accent
-                else -> AxTvColors.TextSecondary
-            },
-            style = TextStyle(fontSize = 15.sp),
-            maxLines = 1,
-        )
-
-        // ───────────────── 扫码操作按钮 ─────────────────
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            LoginButton(
-                label = when (qrState.phase) {
-                    QrPhase.Starting -> "正在生成二维码…"
-                    QrPhase.Idle -> "生成二维码"
-                    else -> "重新生成二维码"
-                },
-                enabled = qrState.phase != QrPhase.Starting,
-                primary = true,
-                modifier = Modifier.focusRequester(qrRequester),
-                onClick = ::startQrLogin,
-            )
-            if (qrState.phase != QrPhase.Idle) {
-                LoginButton(label = "停止扫码", onClick = ::stopQrSession)
-            }
-            LoginButton(
-                label = "退出登录",
-                enabled = state !is LoginState.Verifying && savedCookie.isNotBlank(),
-                onClick = ::logout,
-            )
-        }
-
-        // ───────────────── 手动 token / Cookie 输入区：输入框占满 + 导入按钮，压成一行 ─────────────────
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            var fieldFocused by remember { mutableStateOf(false) }
+            // ───────────────── 二维码区块置顶：480px 边长 + 32dp 白边，一屏内固定不滚动 ─────────────────
+            // 32dp = 64px ≈ 4.4 个模块（480px/33 模块 ≈ 14.5px），满足二维码静默区 ≥4 模块的要求。
             Box(
                 modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp)
-                    .background(AxTvColors.Surface, RoundedCornerShape(10.dp))
-                    .focusRing(fieldFocused, RoundedCornerShape(10.dp))
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .background(Color.White, RoundedCornerShape(12.dp))
+                    .padding(32.dp),
             ) {
-                if (cookieInput.isEmpty()) {
-                    Text(
-                        text = "粘贴 Cookie 请求头（须含 sessionid / sessionid_ss）",
-                        color = AxTvColors.TextSecondary,
-                        style = TextStyle(fontSize = 13.sp),
+                val bitmap = qrState.bitmap
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "抖音登录二维码",
+                        modifier = Modifier.size(qrSide),
                     )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(qrSide)
+                            .background(AxTvColors.Surface, RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "点下方「生成二维码」开始",
+                            color = AxTvColors.TextSecondary,
+                            style = TextStyle(fontSize = 16.sp),
+                        )
+                    }
                 }
-                BasicTextField(
-                    value = cookieInput,
-                    onValueChange = { cookieInput = it },
-                    singleLine = true,
-                    textStyle = TextStyle(color = AxTvColors.TextPrimary, fontSize = 13.sp),
-                    cursorBrush = SolidColor(AxTvColors.Accent),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(fieldRequester)
-                        .onFocusChanged { fieldFocused = it.isFocused || it.hasFocus }
-                        // 输入框会吞掉方向键，UP 时主动把焦点交还给扫码区，避免遥控器被困在输入框。
-                        .onKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyUp && event.key == Key.DirectionUp) {
-                                runCatching { qrRequester.requestFocus() }
-                                true
-                            } else {
-                                false
-                            }
-                        },
+            }
+
+            // ───────────────── 状态行：扫码状态 + 帧龄，单行显示 ─────────────────
+            Text(
+                text = buildString {
+                    append("扫码状态：")
+                    append(qrState.message.ifBlank { "未开始" })
+                    if (qrState.bitmap != null) {
+                        append(" · 最近刷新 ")
+                        append(qrAgeSeconds(qrState.freshAtMs, qrClockMs))
+                        append(" 秒前")
+                    }
+                    (state as? LoginState.Success)?.let { append(" · 已登录：${it.nickname}") }
+                    (state as? LoginState.Failure)?.let { append(" · 验证失败：${it.message}") }
+                    if (notice.isNotBlank()) append(" · $notice")
+                },
+                color = when {
+                    state is LoginState.Failure || qrState.phase == QrPhase.Failed -> AxTvColors.AccentWarm
+                    state is LoginState.Success || qrState.phase == QrPhase.Success -> AxTvColors.Accent
+                    else -> AxTvColors.TextSecondary
+                },
+                style = TextStyle(fontSize = 15.sp),
+                maxLines = 1,
+            )
+
+            // ───────────────── 扫码操作按钮 ─────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                LoginButton(
+                    label = when (qrState.phase) {
+                        QrPhase.Starting -> "正在生成二维码…"
+                        QrPhase.Idle -> "生成二维码"
+                        else -> "重新生成二维码"
+                    },
+                    enabled = qrState.phase != QrPhase.Starting,
+                    primary = true,
+                    modifier = Modifier.focusRequester(qrRequester),
+                    onClick = ::startQrLogin,
+                )
+                if (qrState.phase != QrPhase.Idle) {
+                    LoginButton(label = "停止扫码", onClick = ::stopQrSession)
+                }
+                LoginButton(
+                    label = "退出登录",
+                    enabled = state !is LoginState.Verifying && savedCookie.isNotBlank(),
+                    onClick = ::logout,
                 )
             }
-            LoginButton(
-                label = when (state) {
-                    LoginState.Verifying -> "验证中…"
-                    else -> "导入"
-                },
-                enabled = state !is LoginState.Verifying && cookieInput.isNotBlank(),
-                primary = true,
-                onClick = ::verify,
+
+            // ───────────────── 手动 token / Cookie 输入区：输入框占满 + 导入按钮，压成一行 ─────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                var fieldFocused by remember { mutableStateOf(false) }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .background(AxTvColors.Surface, RoundedCornerShape(10.dp))
+                        .focusRing(fieldFocused, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    if (cookieInput.isEmpty()) {
+                        Text(
+                            text = "粘贴 Cookie 请求头（须含 sessionid / sessionid_ss）",
+                            color = AxTvColors.TextSecondary,
+                            style = TextStyle(fontSize = 13.sp),
+                        )
+                    }
+                    BasicTextField(
+                        value = cookieInput,
+                        onValueChange = { cookieInput = it },
+                        singleLine = true,
+                        textStyle = TextStyle(color = AxTvColors.TextPrimary, fontSize = 13.sp),
+                        cursorBrush = SolidColor(AxTvColors.Accent),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(fieldRequester)
+                            .onFocusChanged { fieldFocused = it.isFocused || it.hasFocus }
+                            // 输入框会吞掉方向键，UP 时主动把焦点交还给扫码区，避免遥控器被困在输入框。
+                            .onKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyUp && event.key == Key.DirectionUp) {
+                                    runCatching { qrRequester.requestFocus() }
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
+                    )
+                }
+                LoginButton(
+                    label = when (state) {
+                        LoginState.Verifying -> "验证中…"
+                        else -> "导入"
+                    },
+                    enabled = state !is LoginState.Verifying && cookieInput.isNotBlank(),
+                    primary = true,
+                    onClick = ::verify,
+                )
+            }
+
+            // ───────────────── 一行说明 ─────────────────
+            Text(
+                text = "说明：优先扫上方二维码；手动 Cookie 仅在扫码不可用时使用。扫码结果会复核登录态，失败如实提示。BACK 返回上一级。",
+                color = AxTvColors.TextSecondary,
+                style = TextStyle(fontSize = 12.sp),
+                maxLines = 1,
             )
         }
 
-        // ───────────────── 一行说明 ─────────────────
-        Text(
-            text = "说明：优先扫上方二维码；手动 Cookie 仅在扫码不可用时使用。扫码结果会复核登录态，失败如实提示。BACK 返回上一级。",
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 12.sp),
-            maxLines = 1,
-        )
+        // 风控要求短信验证码：电视没有输入法，网页里的 input 也敲不进数字，只能应用侧收码。
+        if (keypadVisible) {
+            VerifyCodeKeypad(
+                code = verifyCode,
+                hint = qrState.message,
+                onDigit = { digit -> if (verifyCode.length < VERIFY_CODE_MAX_LENGTH) verifyCode += digit },
+                onDelete = { if (verifyCode.isNotEmpty()) verifyCode = verifyCode.dropLast(1) },
+                onClear = { verifyCode = "" },
+                onSubmit = { qrBridge?.requestCodeSubmission(verifyCode) },
+            )
+        }
     }
 }
 
@@ -561,4 +618,96 @@ private fun describe(error: ApiException): String = when (error.kind()) {
     ApiException.Kind.DECODE -> "接口响应解析失败：${error.message}"
     ApiException.Kind.HEADER_ERROR, ApiException.Kind.API_STATUS -> "接口拒绝请求：${error.message}"
     ApiException.Kind.MISSING_CREDENTIAL -> "缺少互动安全凭据：${error.message}"
+}
+
+/**
+ * 短信验证码数字键盘：风控把扫码转成网页端二次验证、且页面上渲染了验证码输入框时弹出。
+ *
+ * 为什么不在网页里直接让用户输：电视没有输入法，页面 input 敲不进数字。原版同样是应用侧收码
+ *（src/app/p000/in2.java 的数字键盘 + eg1 的注入脚本），收完写回页面 input 再点「验证」——
+ * 注入脚本见 [QrLoginBridge.CODE_FILL_SCRIPT] 与 [QrLoginBridge.CODE_CLICK_SCRIPT]。
+ * 滑块 / 刷脸这类代填不了的验证不走这里，由 [AndroidQrWebViewHost.setInteractive] 把登录页浮出来。
+ */
+@Composable
+private fun VerifyCodeKeypad(
+    code: String,
+    hint: String,
+    onDigit: (Char) -> Unit,
+    onDelete: () -> Unit,
+    onClear: () -> Unit,
+    onSubmit: () -> Unit,
+) {
+    val firstKeyRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { firstKeyRequester.requestFocus() }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.88f))
+            .focusGroup(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .width(460.dp)
+                .background(AxTvColors.SurfaceHigh, RoundedCornerShape(16.dp))
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "该账号需要安全验证",
+                color = AxTvColors.TextPrimary,
+                style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold),
+            )
+            Text(
+                text = hint.ifBlank { "请输入手机上收到的短信验证码" },
+                color = AxTvColors.TextSecondary,
+                style = TextStyle(fontSize = 13.sp),
+                maxLines = 2,
+            )
+            Text(
+                text = if (code.isEmpty()) "验证码：（尚未输入）" else "验证码：$code",
+                color = AxTvColors.Accent,
+                style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold),
+            )
+            listOf("123", "456", "789").forEachIndexed { rowIndex, row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    row.forEachIndexed { index, digit ->
+                        LoginButton(
+                            label = digit.toString(),
+                            modifier = if (rowIndex == 0 && index == 0) {
+                                Modifier.weight(1f).focusRequester(firstKeyRequester)
+                            } else {
+                                Modifier.weight(1f)
+                            },
+                            onClick = { onDigit(digit) },
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                LoginButton(label = "清空", modifier = Modifier.weight(1f), onClick = onClear)
+                LoginButton(
+                    label = "0",
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDigit('0') },
+                )
+                LoginButton(label = "删除", modifier = Modifier.weight(1f), onClick = onDelete)
+            }
+            LoginButton(
+                label = "提交验证码",
+                modifier = Modifier.fillMaxWidth(),
+                enabled = code.isNotEmpty(),
+                primary = true,
+                onClick = onSubmit,
+            )
+            Text(
+                text = "BACK 退出扫码登录（验证码提交后会自动继续等登录态）",
+                color = AxTvColors.TextSecondary,
+                style = TextStyle(fontSize = 12.sp),
+            )
+        }
+    }
 }

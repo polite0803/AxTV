@@ -68,6 +68,7 @@ import axtv.ui.SettingsPageSpec.VideoQualityOption
 import com.github.axtv.dv.BuildConfig
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.adapter.SettingsBinder
+import com.github.axtv.dv.panel.PanelRuntime
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.nav.NavRoutes
@@ -506,11 +507,7 @@ fun SettingsScreen(
                                     }
 
                                     // 互动凭据：保存（粘贴解析后 setInteraction）/ 清除（clearInteraction）。
-                                    // 状态文案里原本的「推送」没有实现：核心层的推送落在
-                                    // refactor/panel/axtv/panel/CookiePushHandler.java（9978 端口），
-                                    // 它需要 Android 侧的 HttpServerCore 传输实现，而唯一实现
-                                    // JdkPanelServer 用的是 com.sun.net.httpserver，已在
-                                    // android/app/build.gradle.kts:19-23 从 Android 构建里排除。
+                                    // 手机推送走 9978 面板，已在 AppRuntime 启动时装配（PanelRuntime）。
                                     "auth_config_actions" -> {
                                         actionTriggerKey = key
                                         actionDialog = ActionDialog.CREDENTIALS
@@ -604,17 +601,38 @@ fun SettingsScreen(
                 onDismiss = closeActionDialog,
             )
 
-            ActionDialog.QR -> QrLinksDialog(
-                // Telegram 项只有在 TELEGRAM_GROUP_URL 填了真实地址后才出现（不猜链接）。
-                links = buildList {
-                    add(QrLink("项目地址", GITHUB_HOME_URL, "扫码或按确认键访问项目主页"))
-                    if (TELEGRAM_GROUP_URL.isNotBlank()) {
-                        add(QrLink("Telegram 群组", TELEGRAM_GROUP_URL, "扫码或按确认键加入群组"))
-                    }
-                },
-                onOpen = { openExternalUrl(context, it) },
-                onDismiss = closeActionDialog,
-            )
+            ActionDialog.QR -> {
+                val panel = PanelRuntime.controller
+                QrLinksDialog(
+                    // Telegram 项只有在 TELEGRAM_GROUP_URL 填了真实地址后才出现（不猜链接）。
+                    links = buildList {
+                        add(QrLink("项目地址", GITHUB_HOME_URL, "扫码或按确认键访问项目主页"))
+                        if (TELEGRAM_GROUP_URL.isNotBlank()) {
+                            add(QrLink("Telegram 群组", TELEGRAM_GROUP_URL, "扫码或按确认键加入群组"))
+                        }
+                        if (panel != null) {
+                            add(
+                                QrLink(
+                                    "手机推送登录信息",
+                                    panel.cookieSubmitUrl(),
+                                    "手机扫码后粘贴 Cookie / 互动凭据",
+                                    openable = false,
+                                ),
+                            )
+                            add(
+                                QrLink(
+                                    "手机搜索输入",
+                                    panel.searchPanelUrl(),
+                                    "手机扫码打开搜索输入页（需与电视同一局域网）",
+                                    openable = false,
+                                ),
+                            )
+                        }
+                    },
+                    onOpen = { openExternalUrl(context, it) },
+                    onDismiss = closeActionDialog,
+                )
+            }
 
             null -> Unit
         }

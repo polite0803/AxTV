@@ -84,7 +84,13 @@ import java.io.File
 internal const val TELEGRAM_GROUP_URL = ""
 
 /** 二维码弹层的一项（标题 + 地址 + 提示，与原版 gb5 三字段一致）。 */
-internal data class QrLink(val title: String, val url: String, val hint: String)
+internal data class QrLink(
+    val title: String,
+    val url: String,
+    val hint: String,
+    /** 电视上没有可直接打开该地址的接收者时设为 false（如局域网面板地址）。 */
+    val openable: Boolean = true,
+)
 
 // ════════════════════════ 二维码链接 ════════════════════════
 
@@ -141,7 +147,9 @@ internal fun QrLinksDialog(
             DialogChip(label = links.first().title, modifier = Modifier.focusRequester(requester), onClick = {})
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            DialogChip(label = "打开链接", primary = true, onClick = { onOpen(activeLink.url) })
+            if (activeLink.openable) {
+                DialogChip(label = "打开链接", primary = true, onClick = { onOpen(activeLink.url) })
+            }
             DialogChip(label = "关闭", onClick = onDismiss)
         }
     }

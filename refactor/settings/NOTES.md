@@ -8,7 +8,7 @@
 | 原类 | 原行数 | 新类 | 新行数 | 说明 |
 |---|---|---|---|---|
 | `fl4.java` | 1138 | `Settings` | 1548 | 全部配置项的读写 + 取值夹取 + 旧键迁移 + 账号列表 + 互动凭据 |
-| `fl4` 键名字面量（散落） | — | `SettingsKeys` | 115 | **71 个键**集中成常量（见 §2） |
+| `fl4` 键名字面量（散落） | — | `SettingsKeys` | 115 | **69 个生效键**集中成常量（另有 2 个 SP 名、1 个预留键，见 §2） |
 | `fl4.m4215x` / `m4216y`（org.json） | — | `SettingsJson` | 274 | 账号数组 / 弹幕屏蔽词的 JSON 编解码 |
 | `fl4.f6240a`（SharedPreferences） | — | `SettingsStore`（接口） + `MapSettingsStore`（测试用） | 48 + 119 | 核心层不依赖 Android |
 | `lf5.java` | — | `UpdateManager` | 526 | 检查更新 → 下载 → 校验 → 安装 |
@@ -16,7 +16,7 @@
 | `ff5.java` | — | `ReleaseJson` | 213 | GitHub Releases 响应解析（tag_name / assets[].digest …） |
 | `MyApplication` 的异常处理器 | — | `CrashHandler` | 120 | 报告格式与 500ms 自杀延迟原样保留 |
 
-## 2. 配置键全表（71 个，键名字面量与原 APK 一致）
+## 2. 配置键全表（69 个生效键，键名字面量与原 APK 一致；`LAST_ANNOUNCEMENT_ID` 为预留未用）
 
 ### 存储容器
 | key | 常量 |

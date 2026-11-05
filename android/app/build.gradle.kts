@@ -30,12 +30,33 @@ val signingProps = Properties().apply {
         propsFile.inputStream().use { load(it) }
     }
 }
+fun signingValue(key: String): String? =
+    signingProps.getProperty(key)?.takeIf { it.isNotBlank() }
+        ?: System.getenv(key)?.takeIf { it.isNotBlank() }
+
 val hasReleaseSigning = listOf(
     "AXTV_STORE_FILE", "AXTV_STORE_PASSWORD", "AXTV_KEY_ALIAS", "AXTV_KEY_PASSWORD"
-).all { !signingProps.getProperty(it).isNullOrBlank() }
+).all { signingValue(it) != null }
 if (!hasReleaseSigning) {
-    logger.warn("警告: local.properties 缺少 AXTV 签名凭据，release 将回退 debug 签名（不可用于发布）")
+    logger.warn("警告: 缺少 AXTV 签名凭据（local.properties 或同名环境变量），release 产物将被拒绝构建")
 }
+
+// 绝不让 release 产物悄悄回退到 debug 签名：显式 release 任务在配置期失败，
+// assemble / build 这类聚合任务则在 release 任务真正执行前失败。
+val releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+if (releaseTaskRequested && !hasReleaseSigning) {
+    throw GradleException("缺少 AXTV 发布签名凭据，拒绝构建 release 产物。请配置 local.properties 或同名环境变量。")
+}
+tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" || it.name == "installRelease" }
+    .configureEach {
+        doFirst {
+            if (!hasReleaseSigning) {
+                throw GradleException("缺少 AXTV 发布签名凭据，拒绝构建 release 产物。")
+            }
+        }
+    }
 
 android {
     namespace = "com.github.axtv.dv"
@@ -43,7 +64,9 @@ android {
 
     defaultConfig {
         applicationId = "com.github.axtv.dv"
-        minSdk = 24          // 原版 23；因 WorkManager 2.12.0 的 manifest minSdk=24 抬到 24（放弃 API 23 设备）
+        // 原版 23。API 24/25 上 D8 降级 record 后无法按参数名绑定（getParameters 需 API 26），
+        // 会导致所有接口数据解码失败，故抬到 26（Android 8.0）。见 ModelJsonCodec。
+        minSdk = 26
         targetSdk = 36       // 原版 37（compileSdk 37 / Android 17 预览），档 2 构建用 36
         versionCode = 3        // 0.0.3: 精选频道页接线 + 未登录可用
         versionName = "0.0.3"
@@ -52,10 +75,10 @@ android {
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
-                storeFile = file(signingProps.getProperty("AXTV_STORE_FILE"))
-                storePassword = signingProps.getProperty("AXTV_STORE_PASSWORD")
-                keyAlias = signingProps.getProperty("AXTV_KEY_ALIAS")
-                keyPassword = signingProps.getProperty("AXTV_KEY_PASSWORD")
+                storeFile = file(signingValue("AXTV_STORE_FILE")!!)
+                storePassword = signingValue("AXTV_STORE_PASSWORD")
+                keyAlias = signingValue("AXTV_KEY_ALIAS")
+                keyPassword = signingValue("AXTV_KEY_PASSWORD")
             }
         }
     }
@@ -65,21 +88,23 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = if (hasReleaseSigning) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            // 无凭据时为 null（产出未签名包），不会伪装成 debug 签名。
+            signingConfig = signingConfigs.findByName("release")
         }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        // minSdk 23 保持，Java 8+ API 由 desugaring 在运行期提供：
+        // Java 8+ API 由 desugaring 在运行期提供：
         // java.time、java.util.stream、List.of/Map.of/Set.of、String.isBlank 等（见官方 desugared_apis 清单）。
         isCoreLibraryDesugaringEnabled = true
     }
     buildFeatures { compose = true; buildConfig = true }
+
+    lint {
+        lintConfig = file("lint.xml")
+        abortOnError = true
+    }
 
     sourceSets {
         getByName("main") {
@@ -109,7 +134,7 @@ tasks.withType<JavaCompile>().configureEach {
 
 dependencies {
     // 核心库 desugaring：把 java.time / java.util.stream / List.of·Map.of·Set.of / String.isBlank 等
-    // Java 8+ API 反向移植到 minSdk 23 的运行时。java.nio.file 与 InputStream.readAllBytes 不在其覆盖范围，
+    // Java 8+ API 反向移植到 minSdk 26 的运行时。java.nio.file 与 InputStream.readAllBytes 不在其覆盖范围，
     // 已在 CrashHandler / MyApplication / UpdateManager / LiveFrameCodec 内改用 java.io 实现。
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 

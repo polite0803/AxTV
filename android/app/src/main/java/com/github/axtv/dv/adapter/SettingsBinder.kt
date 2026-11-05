@@ -254,16 +254,15 @@ class SettingsBinder(private val settings: Settings) {
             "$count 个账号 · 当前 $current"
         }
         "auth_login_mode" -> "扫码 / Cookie"
-        // 「推送」已从状态文案去掉：核心层有 CookiePushHandler（9978 端口，refactor/panel/axtv/panel/
-        // CookiePushHandler.java:36-47），但它要的 Android 侧 HttpServerCore 传输实现还不存在
-        //（唯一实现 JdkPanelServer 依赖 com.sun.net.httpserver，已在 android/app/build.gradle.kts:19-23 排除）。
+        // 手机推送地址在「二维码链接」对话框里（带 PanelAuth 令牌）；真正的推送在手机侧完成。
+        // 核心层 CookiePushHandler（9978 端口）已由 AndroidPanelServer 接通。
         "auth_config_actions" ->
             if (settings.hasInteraction()) "凭据已就绪 · 保存 / 清除" else "未设置 · 保存 / 清除"
         "about_update" -> "检查更新"
         "about_github" -> "github.com/polite0803/AxTV"
         // 未接入：仓库内没有 AxTV 的 Telegram 群组地址（见 ui/settings/SettingsActionDialogs.kt 的 TELEGRAM_GROUP_URL）。
         "about_telegram" -> "待补群组地址"
-        "about_qr_links" -> "GitHub 二维码 · Telegram 待补链接"
+        "about_qr_links" -> "GitHub · 手机面板二维码"
         "danmaku_layout" -> "透明度 · 区域 · 间距 · 字号 · 速度"
         "quality" -> "直播画质"
         "camera" -> "取色 / 预览"

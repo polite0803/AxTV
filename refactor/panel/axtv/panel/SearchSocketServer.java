@@ -45,14 +45,19 @@ public final class SearchSocketServer implements AutoCloseable {
     /** 关闭码 1001 = going away（原实现对每个连接调 {@code close(1001, reason)}）。 */
     public static final int CLOSE_GOING_AWAY = 1001;
 
-    /** 单帧上限，防止畸形帧打爆内存。 */
+    /** 单帧/单条消息上限，防止畸形帧打爆内存。 */
     private static final int MAX_FRAME_BYTES = 1024 * 1024;
     private static final int MAX_HEADER_BYTES = 16 * 1024;
+    /** 并发连接上限，避免被慢连接/畸形连接耗尽线程。 */
+    private static final int MAX_CLIENTS = 16;
+    /** 握手阶段超时（毫秒）；握手完成后恢复为无限等待。 */
+    private static final int HANDSHAKE_TIMEOUT_MS = 15_000;
 
     private static final String WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
     private final PanelState state;
     private final java.util.function.Consumer<String> messageSink;
+    private final PanelAuth auth;
     private final Logger log = Logger.getLogger("SearchInputServer");
 
     private final Set<Client> clients = ConcurrentHashMap.newKeySet();
@@ -66,9 +71,11 @@ public final class SearchSocketServer implements AutoCloseable {
      * @param state       状态/消息通道
      * @param messageSink 上行消息消费方，通常是 {@link SearchInputHandler#onPhoneMessage(String)}
      */
-    public SearchSocketServer(PanelState state, java.util.function.Consumer<String> messageSink) {
+    public SearchSocketServer(PanelState state, java.util.function.Consumer<String> messageSink,
+                              PanelAuth auth) {
         this.state = state;
         this.messageSink = messageSink;
+        this.auth = auth;
     }
 
     public int port() {
@@ -177,10 +184,17 @@ public final class SearchSocketServer implements AutoCloseable {
         Client client = null;
         try {
             client = new Client(String.valueOf(this.clientIds.incrementAndGet()), socket);
+            if (this.clients.size() >= MAX_CLIENTS) {
+                client.sendHttpError(503, "Too Many Connections");
+                return;
+            }
+            socket.setSoTimeout(HANDSHAKE_TIMEOUT_MS);
             if (!handshake(client)) {
                 client.sendHttpError(400, "Bad Request");
                 return;
             }
+            // 握手完成后允许长时间空闲（页面保持长连接）。
+            socket.setSoTimeout(0);
             if (!this.running) {
                 client.close(CLOSE_GOING_AWAY, "");
                 return;
@@ -233,6 +247,16 @@ public final class SearchSocketServer implements AutoCloseable {
         if (!header.startsWith("GET ")) {
             return false;
         }
+        // 令牌校验：?token=… 或 X-AxTV-Token 头。
+        String requestLine = header.split("\r\n", 2)[0];
+        int pathStart = "GET ".length();
+        int pathEnd = requestLine.lastIndexOf(" HTTP/");
+        String target = pathEnd > pathStart ? requestLine.substring(pathStart, pathEnd) : requestLine;
+        int q = target.indexOf('?');
+        String query = q >= 0 ? target.substring(q + 1) : null;
+        if (!this.auth.allows(query, headerField(header, PanelAuth.HEADER))) {
+            return false;
+        }
         String key = headerField(header, "sec-websocket-key");
         if (key == null || key.isBlank()) {
             return false;
@@ -281,6 +305,8 @@ public final class SearchSocketServer implements AutoCloseable {
             return this.socket.getInetAddress() == null ? "?" : this.socket.getInetAddress().getHostAddress();
         }
 
+        // 用 new String(byte[], Charset) 而非 ByteArrayOutputStream.toString(Charset)：
+        // 后者需 API 39，desugaring 不覆盖，低版本真机抛 NoSuchMethodError。
         /** 读到空行为止的请求头（不含最后一个空行之后的内容）。 */
         String readHttpHead(int maxBytes) throws IOException {
             ByteArrayOutputStream head = new ByteArrayOutputStream(512);
@@ -288,7 +314,7 @@ public final class SearchSocketServer implements AutoCloseable {
             while (head.size() < maxBytes) {
                 int b = this.in.read();
                 if (b < 0) {
-                    return head.size() == 0 ? null : head.toString(StandardCharsets.UTF_8);
+                    return head.size() == 0 ? null : new String(head.toByteArray(), StandardCharsets.UTF_8);
                 }
                 head.write(b);
                 matched = switch (matched) {
@@ -298,11 +324,11 @@ public final class SearchSocketServer implements AutoCloseable {
                     default -> b == '\n' ? 4 : 0;
                 };
                 if (matched == 4) {
-                    String text = head.toString(StandardCharsets.UTF_8);
+                    String text = new String(head.toByteArray(), StandardCharsets.UTF_8);
                     return text.substring(0, text.length() - 4);
                 }
             }
-            return head.toString(StandardCharsets.UTF_8);
+            return new String(head.toByteArray(), StandardCharsets.UTF_8);
         }
 
         void readLoop(java.util.function.Consumer<String> onText) throws IOException {
@@ -326,11 +352,16 @@ public final class SearchSocketServer implements AutoCloseable {
                 } else if (length == 127) {
                     length = readUnsigned(8);
                 }
-                if (length > MAX_FRAME_BYTES) {
+                if (length < 0 || length > MAX_FRAME_BYTES) {
                     close(1009, "frame too big");
                     return;
                 }
-                byte[] mask = masked ? readFully(4) : null;
+                // RFC 6455：客户端 → 服务端必须掩码；未掩码视为协议错误。
+                if (!masked) {
+                    close(1002, "unmasked frame");
+                    return;
+                }
+                byte[] mask = readFully(4);
                 byte[] payload = readFully((int) length);
                 if (masked) {
                     for (int i = 0; i < payload.length; i++) {
@@ -356,6 +387,14 @@ public final class SearchSocketServer implements AutoCloseable {
                         }
                     }
                     case 0x0 -> {
+                        if (fragmentOpcode == -1) {
+                            close(1002, "unexpected continuation");
+                            return;
+                        }
+                        if ((long) fragments.size() + payload.length > MAX_FRAME_BYTES) {
+                            close(1009, "message too big");
+                            return;
+                        }
                         fragments.write(payload);
                         if (fin) {
                             onText.accept(new String(fragments.toByteArray(), StandardCharsets.UTF_8));

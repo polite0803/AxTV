@@ -21,6 +21,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -36,6 +37,7 @@ import axtv.panel.QrLoginBridge
 import org.json.JSONObject
 import java.io.IOException
 import java.lang.ref.WeakReference
+import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
@@ -175,11 +177,20 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
         }
     }
 
+    /**
+     * 把隐藏 WebView 变成可操作的验证页（或收回去）。
+     *
+     * 浮出时必须同时开 focusableInTouchMode：Android 只在 touch mode 关闭时才让方向键在网页
+     * 元素之间移焦点，电视上根本没有触摸，不显式退出 touch mode 就永远聚焦不进去。
+     * 收回时不能只把 alpha 置 0：bringToFront 已经把它挪到 decor 末尾，不送回索引 0 的话，
+     * 一层 alpha=0 的透明 WebView 压在最上面，会把 Compose 的点击全吃掉。
+     */
     override fun setInteractive(interactive: Boolean) {
         callOnMain {
             val view = webView ?: return@callOnMain
             view.alpha = if (interactive) 1f else 0f
             view.isFocusable = interactive
+            view.isFocusableInTouchMode = interactive
             view.isClickable = interactive
             view.importantForAccessibility = if (interactive) {
                 View.IMPORTANT_FOR_ACCESSIBILITY_YES
@@ -191,6 +202,15 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
                 view.requestFocus()
             } else {
                 view.clearFocus()
+                (view.parent as? ViewGroup)?.let { parent ->
+                    // 已在索引 0 时不要 remove/add：重复挂载会重置页面 JS 计时器与验证态。
+                    if (parent.indexOfChild(view) != 0) {
+                        runCatching {
+                            parent.removeView(view)
+                            parent.addView(view, 0)
+                        }.onFailure { Log.w(TAG, "restore webview stacking failed", it) }
+                    }
+                }
             }
             Log.i(TAG, "webview interactive=$interactive")
         }
@@ -213,7 +233,10 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
             databaseEnabled = true
             loadsImagesAutomatically = true
             mediaPlaybackRequiresUserGesture = false
-            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            // 登录页只应走 HTTPS；不允许降级加载 HTTP 子资源。
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            allowFileAccess = false
+            allowContentAccess = false
             userAgentString = desktopUserAgent(view)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 // 与 od2.m8562e 一致：允许第三方 Cookie（passport 域名下发 sessionid）
@@ -256,8 +279,14 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
             }
 
             override fun shouldOverrideUrlLoading(webView: WebView, url: String?): Boolean {
-                // 站内跳转放行；非 http(s) 的外链（intent://、snssdk:// 等）拦掉，避免 WebView 报错页。
-                return url != null && !url.startsWith("http")
+                // 只允许抖音/字节域名内的 HTTPS 跳转；外链、http 降级与自定义 scheme 一律拦掉。
+                if (url == null) return true
+                val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return true
+                if (!uri.scheme.equals("https", ignoreCase = true)) return true
+                val host = uri.host.orEmpty().lowercase(Locale.ROOT)
+                val allowed = host == "douyin.com" || host.endsWith(".douyin.com") ||
+                    host == "bytedance.com" || host.endsWith(".bytedance.com")
+                return !allowed
             }
         }
         runCatching {

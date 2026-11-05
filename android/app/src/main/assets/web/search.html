@@ -82,7 +82,8 @@ function setState(k){
 /* 断线 2 秒后自动重连。连上过之后断开 = 已断开 · 重连中；从没连上过就失败 = 连接错误（仍会重试） */
 function connect(){
   var host=location.hostname;
-  ws=new WebSocket('ws://'+host+':9980');
+  /* 页面地址自带 ?token=…，WebSocket 握手原样带上。 */
+  ws=new WebSocket('ws://'+host+':9980'+location.search);
   ws.onopen=function(){everOpen=true;setState('connected')};
   ws.onmessage=function(e){
     try{var m=JSON.parse(e.data);if(m.type==='tv_text')showEcho(m.text||'')}catch(_){}

@@ -11,6 +11,7 @@ import axtv.api.DouyinApi
 import axtv.settings.Settings
 import axtv.sign.AbogusSigner
 import com.github.axtv.dv.api.SharedPrefsCookieStore
+import com.github.axtv.dv.panel.PanelRuntime
 import com.github.axtv.dv.settings.SharedPrefsSettingsStore
 import com.github.axtv.dv.sign.AndroidAssets
 import com.github.axtv.dv.sign.AndroidSignLog
@@ -47,6 +48,8 @@ object AppRuntime {
             settings.clientIdentityBranch(),
             anonymousIdentityBootstrap = true,
         )
+        // 局域网面板（9978/9979/9980）依赖 settings 与 douyin_auth，放在最后启动。
+        PanelRuntime.install(application)
     }
 
     /**
@@ -63,6 +66,7 @@ object AppRuntime {
     }
 
     fun shutdown() {
+        PanelRuntime.shutdown()
         signer?.close()
         signer = null
         settings = null

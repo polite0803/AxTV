@@ -5,7 +5,7 @@
  *       + src/app/p000/qj0.java m9586h / wg0（面板地址拼装）
  * 原职责: 两台面板服务器的装配与生命周期（谁先起、失败怎么记、停的时候清什么）
  * 重构说明: 从 ViewModel / Compose 副作用里抽出来，纯 JDK，可单独跑。
- *           与原实现一致：Cookie 服务随应用启动；搜索服务由「搜索输入」开关触发。
+ *           启动时 Cookie 推送与搜索输入一起启动；全部请求需 PanelAuth 令牌。
  */
 package axtv.panel;
 
@@ -26,6 +26,8 @@ public final class PanelController implements AutoCloseable {
     private final AuthStore authStore;
     private final ThemeRenderer renderer;
     private final DeviceAddressResolver.DeviceIdentity identity;
+    private final PanelAuth auth;
+    private final PanelServer.TransportFactory transportFactory;
 
     private final CookiePushHandler cookieHandler;
     private final SearchInputHandler searchHandler;
@@ -38,22 +40,33 @@ public final class PanelController implements AutoCloseable {
     private final Logger log = Logger.getLogger("CookieServer");
     private final Logger searchLog = Logger.getLogger("SearchInputServer");
 
+    /**
+     * @param auth             访问令牌；所有 HTTP/WS 请求都要携带（手机通过电视展示的地址接入）
+     * @param transportFactory Android 侧传入原生 ServerSocket 实现；JVM 侧传 null 走 JDK HTTP
+     */
     public PanelController(PanelState state,
                            AuthStore authStore,
                            ThemeRenderer.AssetSource assets,
                            ThemeRenderer.ThemeColors colors,
                            DeviceAddressResolver.DeviceIdentity identity,
-                           LogcatExportHandler.LogcatSource logcatSource) {
+                           LogcatExportHandler.LogcatSource logcatSource,
+                           PanelAuth auth,
+                           PanelServer.TransportFactory transportFactory) {
+        if (auth == null) {
+            throw new IllegalArgumentException("面板令牌不能为空");
+        }
         this.state = state;
         this.authStore = authStore;
         this.identity = identity;
+        this.auth = auth;
+        this.transportFactory = transportFactory;
         this.renderer = new ThemeRenderer(assets, colors);
         this.logcatHandler = new LogcatExportHandler(logcatSource);
         this.cookieHandler = new CookiePushHandler(this.renderer, authStore, state,
-                () -> DeviceAddressResolver.deviceName(identity), this.logcatHandler);
-        this.searchHandler = new SearchInputHandler(this.renderer, state);
+                () -> DeviceAddressResolver.deviceName(identity), this.logcatHandler, auth);
+        this.searchHandler = new SearchInputHandler(this.renderer, state, auth);
         this.cookieServer = new PanelServer("CookieServer", CookiePushHandler.PORT,
-                this.cookieHandler.routes(), false);
+                this.cookieHandler.routes(), false, 8, transportFactory);
     }
 
     public PanelState state() {
@@ -68,15 +81,17 @@ public final class PanelController implements AutoCloseable {
         return this.authStore;
     }
 
-    /** 手机端要打开的 Cookie 推送地址（原 qj0.m9586h）。 */
+    /** 手机端要打开的 Cookie 推送地址（原 qj0.m9586h），已带访问令牌。 */
     public String cookieSubmitUrl() {
-        return DeviceAddressResolver.url(DeviceAddressResolver.localAddress(), CookiePushHandler.PORT,
-                CookiePushHandler.PATH_SUBMIT);
+        return this.auth.appendTo(DeviceAddressResolver.url(
+                DeviceAddressResolver.localAddress(), CookiePushHandler.PORT,
+                CookiePushHandler.PATH_SUBMIT));
     }
 
-    /** 手机端要打开的搜索输入地址（原 wg0 拼装，不带路径）。 */
+    /** 手机端要打开的搜索输入地址（原 wg0 拼装），已带访问令牌。 */
     public String searchPanelUrl() {
-        return DeviceAddressResolver.url(DeviceAddressResolver.localAddress(), SearchInputHandler.PORT, "");
+        return this.auth.appendTo(DeviceAddressResolver.url(
+                DeviceAddressResolver.localAddress(), SearchInputHandler.PORT, ""));
     }
 
     /** Cookie 服务启动；失败只记日志，不影响应用其它功能。 */
@@ -111,11 +126,12 @@ public final class PanelController implements AutoCloseable {
         }
         try {
             PanelServer pageServer = new PanelServer("SearchInputServer", SearchInputHandler.PORT,
-                    this.searchHandler.routes(), true);
+                    this.searchHandler.routes(), true, 8, this.transportFactory);
             pageServer.start();
             this.searchPageServer = pageServer;
 
-            SearchSocketServer socketServer = new SearchSocketServer(this.state, this.searchHandler::onPhoneMessage);
+            SearchSocketServer socketServer = new SearchSocketServer(
+                    this.state, this.searchHandler::onPhoneMessage, this.auth);
             socketServer.start();
             this.searchSocketServer = socketServer;
 
@@ -168,9 +184,10 @@ public final class PanelController implements AutoCloseable {
         }
     }
 
-    /** 应用启动：Cookie 服务常驻。 */
+    /** 应用启动：Cookie 推送与搜索输入都启动（两者都要求令牌）。 */
     public void startAll() {
         startCookieServer();
+        startSearchServer();
     }
 
     /** 应用退出：两台都停。 */

@@ -13,6 +13,7 @@ package com.github.axtv.dv.ui.collection
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +56,9 @@ import kotlinx.coroutines.launch
 
 /** 每行集数（TV 横屏，5 列可保证 1080p 下单元可读）。 */
 private const val EPISODE_COLUMNS = 5
+
+/** 提前多少项触发自动续页（滚到末尾前 N 项就开始拉下一批剧集）。 */
+private const val AUTO_LOAD_AHEAD = 3
 
 private sealed interface DetailUiState {
     data object Loading : DetailUiState
@@ -178,6 +183,19 @@ private fun DetailContent(
     val resumeEpisode = detail.currentEpisode.takeIf { it in 1..episodes.size } ?: 0
     val targetEpisode = episodes.getOrNull(if (resumeEpisode > 0) resumeEpisode - 1 else 0)
 
+    // 电视端没有上滑手势：滚到接近末尾就自动续页，不再需要先发现并按下「加载更多剧集」按钮。
+    val scrolledNearEnd by remember(listState) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            info.totalItemsCount > 0 && lastVisible >= info.totalItemsCount - AUTO_LOAD_AHEAD
+        }
+    }
+    LaunchedEffect(scrolledNearEnd, detail.hasMore, loadingMore, moreError) {
+        // 失败后不再自动重试，留「重试」按钮给用户决定。
+        if (scrolledNearEnd && detail.hasMore && !loadingMore && moreError == null) onLoadMore()
+    }
+
     // 进入时定位到上次播放的集：先滚到对应行，下一帧再请焦点（lazy 行未组合时 requester 尚未注册）。
     LaunchedEffect(detail.canonicalId, targetEpisode?.awemeId) {
         val target = targetEpisode ?: return@LaunchedEffect
@@ -209,7 +227,8 @@ private fun DetailContent(
 
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize().background(AxTvColors.Bg),
+        // 焦点分组：方向键先在列表内移动，不往顶栏跳。
+        modifier = Modifier.fillMaxSize().background(AxTvColors.Bg).focusGroup(),
         contentPadding = PaddingValues(horizontal = 40.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -325,7 +344,7 @@ private fun DetailContent(
         } else {
             items(count = rows.size, key = { "episode-row-$it" }) { rowIndex ->
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().focusGroup(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     rows[rowIndex].forEach { episode ->
@@ -334,7 +353,8 @@ private fun DetailContent(
                             isCurrent = episode.number == resumeEpisode,
                             isWatched = resumeEpisode > 0 && episode.number < resumeEpisode,
                             modifier = Modifier.weight(1f),
-                            focusRequester = remember { FocusRequester() }
+                            // 带 key：追加剧集后行内槽位复用不会把请求器绑到别的集上。
+                            focusRequester = remember(episode.awemeId) { FocusRequester() }
                                 .also { requesters[episode.awemeId] = it },
                             onPlay = { onPlay(episode) },
                         )
@@ -370,10 +390,11 @@ private fun DetailContent(
                             CollectionPill(label = "重试", accent = true, onClick = onLoadMore)
                         }
 
-                        else -> CollectionPill(
-                            label = "加载更多剧集（已加载 ${episodes.size} 集）",
-                            accent = false,
-                            onClick = onLoadMore,
+                        else -> Text(
+                            // 续页由上面的 LaunchedEffect 在滚到末尾前自动发生；原先是可点按钮。
+                            text = "继续下移自动加载（已加载 ${episodes.size} 集）",
+                            color = AxTvColors.TextSecondary,
+                            style = TextStyle(fontSize = 13.sp),
                         )
                     }
                 }

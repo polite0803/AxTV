@@ -15,6 +15,7 @@ package com.github.axtv.dv.adapter
 
 import android.content.Context
 import android.os.Environment
+import axtv.settings.SettingsKeys
 import com.github.axtv.dv.settings.SharedPrefsSettingsStore
 import org.json.JSONObject
 import java.io.File
@@ -27,6 +28,21 @@ object SettingsConfigIO {
     private const val FILE_PREFIX = "axtv-settings-"
     private const val FILE_SUFFIX = ".json"
     private const val FORMAT_VERSION = 1
+
+    /**
+     * 凭据类键：导出时剔除、导入时忽略。
+     * 账号表里含 cookie / privateKey / ticket，明文写外部目录等于把登录态拱手送人。
+     */
+    private val SENSITIVE_KEYS = setOf(
+        SettingsKeys.COOKIE_STRING,
+        SettingsKeys.ACCOUNTS_LIST,
+        SettingsKeys.CURRENT_ACCOUNT_ID,
+        SettingsKeys.INTERACTION_SECURITY_PAYLOAD,
+        SettingsKeys.INTERACTION_TICKET,
+        SettingsKeys.INTERACTION_TS_SIGN,
+        SettingsKeys.INTERACTION_PRIVATE_KEY,
+        SettingsKeys.INTERACTION_SERVER_CERT,
+    )
 
     /** 导出/导入可用的落点（优先应用私有外部目录，无外部存储时退回 filesDir）。 */
     fun targetDir(context: Context): File =
@@ -46,6 +62,7 @@ object SettingsConfigIO {
             .getSharedPreferences(SharedPrefsSettingsStore.PREFS_NAME, Context.MODE_PRIVATE)
         val values = JSONObject()
         prefs.all.forEach { (key, value) ->
+            if (key in SENSITIVE_KEYS) return@forEach
             values.put(key, JSONObject().apply {
                 when (value) {
                     is Boolean -> { put("t", "b"); put("v", value) }
@@ -81,6 +98,7 @@ object SettingsConfigIO {
             .edit()
         var applied = 0
         for (key in values.keys()) {
+            if (key in SENSITIVE_KEYS) continue
             val entry = values.getJSONObject(key)
             when (entry.optString("t")) {
                 "b" -> editor.putBoolean(key, entry.optBoolean("v"))

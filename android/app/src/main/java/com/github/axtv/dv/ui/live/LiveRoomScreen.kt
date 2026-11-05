@@ -21,6 +21,8 @@
  *
  * 边界：只读调用 Media3Engine / LiveApi，不修改 player 与核心层。
  */
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.github.axtv.dv.ui.live
 
 import android.content.Context

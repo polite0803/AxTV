@@ -164,9 +164,18 @@ public final class LiveWebSocketClient {
                 sb.append('&');
             }
             first = false;
-            sb.append(e.getKey()).append('=').append(java.net.URLEncoder.encode(e.getValue() == null ? "" : e.getValue(), java.nio.charset.StandardCharsets.UTF_8));
+            sb.append(e.getKey()).append('=').append(urlEncodeUtf8(e.getValue()));
         }
         return sb.toString();
+    }
+
+    /** URLEncoder.encode(String, Charset) 需 API 33；minSdk 24 只能用字符串名字形式。 */
+    private static String urlEncodeUtf8(String value) {
+        try {
+            return java.net.URLEncoder.encode(value == null ? "" : value, "UTF-8");
+        } catch (java.io.UnsupportedEncodingException e) {
+            return value == null ? "" : value;
+        }
     }
 
     // ------------------------------------------------------------------ 心跳

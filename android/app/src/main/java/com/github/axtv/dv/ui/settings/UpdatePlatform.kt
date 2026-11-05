@@ -16,6 +16,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.Signature
 import android.net.Uri
+import android.os.Build
 import androidx.core.content.FileProvider
 import axtv.settings.ReleaseJson
 import axtv.settings.UpdateManager
@@ -41,29 +42,59 @@ internal fun createUpdateManager(context: Context, listener: UpdateManager.Liste
     )
 }
 
-/** 本机 versionName + 签名指纹（与服务端 Release 的包签名比对）。 */
+/** 本机 versionName / 包名 / 签名指纹（与服务端 Release 的包签名比对）。 */
 private class AndroidAppInfo(private val context: Context) : UpdateManager.AppInfo {
 
     override fun versionName(): String = runCatching {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
     }.getOrDefault("")
 
-    @Suppress("DEPRECATION")
-    override fun signerSha256(): String? = try {
-        val info = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNATURES)
-        signatureFingerprint(info.signatures)
+    override fun packageName(): String = context.packageName
+
+    override fun signerSha256(): String? =
+        signatureFingerprint(signaturesOf(context, null))
+}
+
+/** 下载完成后读更新包自身签名与包名（UpdateManager.verify 会与本机比对）。 */
+private class AndroidApkInspector(private val context: Context) : UpdateManager.ApkInspector {
+
+    override fun signerSha256(apk: File): String? =
+        signatureFingerprint(signaturesOf(context, apk))
+
+    override fun packageName(apk: File): String? = try {
+        context.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)?.packageName
     } catch (e: Exception) {
         null
     }
 }
 
-/** 下载完成后读更新包自身签名（UpdateManager.verify 会与本机签名比对）。 */
-private class AndroidApkInspector(private val context: Context) : UpdateManager.ApkInspector {
-
-    @Suppress("DEPRECATION")
-    override fun signerSha256(apk: File): String? = try {
-        val info = context.packageManager.getPackageArchiveInfo(apk.absolutePath, PackageManager.GET_SIGNATURES)
-        signatureFingerprint(info?.signatures)
+/**
+ * 读签名证书：API 28+ 走 GET_SIGNING_CERTIFICATES（兼容 v2/v3 签名包），
+ * 旧系统回退已废弃的 GET_SIGNATURES。
+ */
+private fun signaturesOf(context: Context, apk: File?): Array<Signature>? {
+    val pm = context.packageManager
+    return try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val flags = PackageManager.GET_SIGNING_CERTIFICATES
+            val info = if (apk == null) {
+                pm.getPackageInfo(context.packageName, flags)
+            } else {
+                pm.getPackageArchiveInfo(apk.absolutePath, flags)
+            }
+            info?.signingInfo?.apkContentsSigners
+        } else {
+            @Suppress("DEPRECATION")
+            val flags = PackageManager.GET_SIGNATURES
+            @Suppress("DEPRECATION")
+            val info = if (apk == null) {
+                pm.getPackageInfo(context.packageName, flags)
+            } else {
+                pm.getPackageArchiveInfo(apk.absolutePath, flags)
+            }
+            @Suppress("DEPRECATION")
+            info?.signatures
+        }
     } catch (e: Exception) {
         null
     }

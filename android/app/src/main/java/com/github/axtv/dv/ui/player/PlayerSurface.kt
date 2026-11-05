@@ -16,6 +16,8 @@
  * 打开时缓冲区按解码尺寸固定（宽度 64 对齐，核心层 VideoScaleMatrix.alignedSurfaceWidth），
  * 关闭时回到跟随布局；TextureView 没有 SurfaceHolder，原版同样只处理 SurfaceView。
  */
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.github.axtv.dv.ui.player
 
 import android.graphics.Color as AndroidColor

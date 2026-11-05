@@ -86,7 +86,7 @@ public final class PanelRoutes {
         public Response withCors() {
             return withHeader("Access-Control-Allow-Origin", "*")
                     .withHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-                    .withHeader("Access-Control-Allow-Headers", "Content-Type");
+                    .withHeader("Access-Control-Allow-Headers", "Content-Type, " + PanelAuth.HEADER);
         }
 
         public String bodyAsString() {
@@ -109,6 +109,7 @@ public final class PanelRoutes {
 
     public static final int SC_OK = 200;
     public static final int SC_BAD_REQUEST = 400;
+    public static final int SC_UNAUTHORIZED = 401;
     public static final int SC_NOT_FOUND = 404;
     public static final int SC_INTERNAL_ERROR = 500;
 
@@ -129,6 +130,40 @@ public final class PanelRoutes {
         List<Route> merged = new java.util.ArrayList<>(this.routes);
         merged.addAll(List.of(more));
         return new PanelRoutes(merged, this.fallback);
+    }
+
+    /**
+     * 给所有路由包一层令牌校验。OPTIONS 预检放行（浏览器预检不会带自定义头），
+     * 其余请求（含兜底 404）缺少/错误的令牌一律 401。
+     */
+    public PanelRoutes requireAuth(PanelAuth auth) {
+        if (auth == null) {
+            return this;
+        }
+        List<Route> guarded = new java.util.ArrayList<>(this.routes.size());
+        for (Route route : this.routes) {
+            if (METHOD_OPTIONS.equals(route.method())) {
+                guarded.add(route);
+                continue;
+            }
+            guarded.add(new Route(route.method(), route.path(), request -> {
+                if (!auth.allows(request)) {
+                    return unauthorized();
+                }
+                return route.handler().handle(request);
+            }));
+        }
+        Handler guardedFallback = request -> {
+            if (!auth.allows(request)) {
+                return unauthorized();
+            }
+            return this.fallback.handle(request);
+        };
+        return new PanelRoutes(guarded, guardedFallback);
+    }
+
+    private static Response unauthorized() {
+        return Response.text(SC_UNAUTHORIZED, TEXT_PLAIN, "unauthorized");
     }
 
     /**

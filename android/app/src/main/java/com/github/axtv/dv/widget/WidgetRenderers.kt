@@ -546,7 +546,12 @@ internal object WidgetRenderers {
     private fun routeIntent(context: Context, route: String): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
             .putExtra(WidgetRoutes.EXTRA_ROUTE, route)
-            .addFlags(WidgetRoutes.INTENT_FLAGS)
+            // 与原版 872415232 等价：NEW_TASK | SINGLE_TOP | CLEAR_TOP
+            .addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP,
+            )
         return PendingIntent.getActivity(
             context,
             route.hashCode(),

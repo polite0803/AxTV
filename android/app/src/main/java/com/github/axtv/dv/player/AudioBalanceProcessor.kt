@@ -17,6 +17,8 @@
  * 原版在功率统计前对每个声道做一遍 ps2 双级预滤波（src/app/p000/ps2.java，纯 DSP 状态机），
  * 本实现直接用时域均方功率；其余常数、公式、平滑与限幅顺序逐条照抄 rs2.queueInput。
  */
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.github.axtv.dv.player
 
 import android.content.Context

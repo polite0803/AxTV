@@ -16,6 +16,8 @@
  */
 package com.github.axtv.dv.tv
 
+import android.annotation.SuppressLint
+
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
@@ -32,6 +34,9 @@ import androidx.tvprovider.media.tv.TvContractCompat.PreviewPrograms
 import axtv.tv.TvProvider
 import java.io.File
 
+// ProgramColumns 的列名常量被 androidx.tvprovider 标记为库内可见，但 TvContractCompat
+// 的官方用法就是组装这些列名；这里只做只读列映射，故整体豁免 RestrictedApi。
+@SuppressLint("RestrictedApi")
 class TvProviderAndroid(private val context: Context) : TvProvider {
 
     private val resolver get() = context.contentResolver

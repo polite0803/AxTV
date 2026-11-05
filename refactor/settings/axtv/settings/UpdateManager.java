@@ -68,9 +68,12 @@ public final class UpdateManager {
     public static final String MSG_DOWNLOAD_DONE = "下载完成";
     public static final String MSG_EMPTY_FILE = "文件为空";
     public static final String MSG_DIGEST_FAILED = "校验失败: 无法计算文件摘要";
+    public static final String MSG_DIGEST_MISSING = "更新包缺少 SHA-256 摘要，已中止安装";
     public static final String MSG_DIGEST_MISMATCH = "校验失败: SHA-256 不匹配";
     public static final String MSG_SIGNATURE_MISMATCH = "更新包签名与本机应用不一致";
-    public static final String MSG_SIGNATURE_UNREADABLE = "无法读取更新包签名，跳过安装前校验";
+    public static final String MSG_SIGNATURE_UNREADABLE = "无法读取更新包签名，已中止安装";
+    public static final String MSG_PACKAGE_MISMATCH = "更新包包名与本机应用不一致，已中止安装";
+    public static final String MSG_INSECURE_URL = "更新地址不是 HTTPS，已中止";
     public static final String MSG_INSTALLED = "更新包已安装";
     public static final String MSG_INSTALL_FAILED = "安装失败";
 
@@ -166,6 +169,10 @@ public final class UpdateManager {
     /** 逐个镜像试，返回第一个成功响应体；全部失败返回 null。 */
     private ReleaseJsonBody fetchLatestRelease() {
         for (String url : UpdateMirror.candidates(mirrors.forCheck(), RELEASE_API)) {
+            if (!isHttps(url)) {
+                LOG.warning("跳过非 HTTPS 更新地址: " + url);
+                continue;
+            }
             try {
                 HttpFetcher.TextResponse response =
                         http.getText(url, "application/vnd.github.v3+json", 10);
@@ -215,6 +222,10 @@ public final class UpdateManager {
 
     /** 镜像回退下载；成功返回文件路径，失败返回 null 并已通过 listener 报告原因。 */
     private File download(ReleaseInfo info) {
+        if (info.downloadUrl() == null || info.downloadUrl().isBlank()) {
+            listener.onStatus(Status.DOWNLOAD_FAILED, MSG_NO_APK);
+            return null;
+        }
         File dir = new File(filesDir, UPDATE_DIR);
         File target = new File(dir, APK_FILE_NAME);
         try {
@@ -230,6 +241,10 @@ public final class UpdateManager {
         List<String> prefixes = mirrors.forDownload();
         String lastError = null;
         for (String url : UpdateMirror.candidates(prefixes, info.downloadUrl())) {
+            if (!isHttps(url)) {
+                lastError = MSG_INSECURE_URL;
+                continue;
+            }
             listener.onProgress(0.0f);
             try {
                 deleteIfExists(target);
@@ -290,29 +305,42 @@ public final class UpdateManager {
 
     /** SHA-256 + 签名校验，返回错误文案或 null（原 {@code nu1} 475-485 行 + {@code lf5.m7418h}）。 */
     private String verify(File apk, ReleaseInfo info) {
+        // 摘要与签名都必须校验通过；任何一项读不到都中止，不能“读不到就放行”。
         String expected = info.sha256();
-        if (expected != null) {
-            String actual = sha256Hex(apk);
-            if (actual == null) {
-                return MSG_DIGEST_FAILED;
-            }
-            if (!actual.equalsIgnoreCase(expected)) {
-                return MSG_DIGEST_MISMATCH;
-            }
+        if (expected == null || expected.isBlank()) {
+            return MSG_DIGEST_MISSING;
         }
+        String actual = sha256Hex(apk);
+        if (actual == null) {
+            return MSG_DIGEST_FAILED;
+        }
+        if (!actual.equalsIgnoreCase(expected)) {
+            return MSG_DIGEST_MISMATCH;
+        }
+
         String localSigner = info.signerSha256() != null ? info.signerSha256() : appInfo.signerSha256();
         if (localSigner == null || localSigner.isEmpty()) {
-            return null;
+            return MSG_SIGNATURE_UNREADABLE;
         }
         String apkSigner = apkInspector.signerSha256(apk);
         if (apkSigner == null) {
-            LOG.warning(MSG_SIGNATURE_UNREADABLE);
-            return null;
+            return MSG_SIGNATURE_UNREADABLE;
         }
         if (!apkSigner.equalsIgnoreCase(localSigner)) {
             return MSG_SIGNATURE_MISMATCH;
         }
+
+        String localPackage = appInfo.packageName();
+        String apkPackage = apkInspector.packageName(apk);
+        if (localPackage == null || localPackage.isBlank()
+                || apkPackage == null || !apkPackage.equals(localPackage)) {
+            return MSG_PACKAGE_MISMATCH;
+        }
         return null;
+    }
+
+    private static boolean isHttps(String url) {
+        return url != null && url.regionMatches(true, 0, "https://", 0, 8);
     }
 
     /** 文件 SHA-256 小写十六进制（原 {@code lf5.m7415e}）。 */
@@ -503,12 +531,18 @@ public final class UpdateManager {
 
         /** 本机签名指纹：证书公钥 SHA-256 小写十六进制，多个签名用 "," 连接；取不到返回 null。 */
         String signerSha256();
+
+        /** 本机包名，用于拒绝安装包名不一致的更新包。 */
+        String packageName();
     }
 
     /** APK 签名读取（原 {@code lf5.m7418h} 里 {@code getPackageArchiveInfo} 那一段）。 */
     public interface ApkInspector {
         /** 返回 APK 的签名指纹，读不到返回 null。 */
         String signerSha256(File apk);
+
+        /** 返回 APK 的包名，读不到返回 null。 */
+        String packageName(File apk);
     }
 
     /** 安装（原 {@code gf5} 的两种落地方式）。 */

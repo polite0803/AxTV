@@ -43,7 +43,7 @@
 
 ## 已确认的事实（可直接引用，无需再验证）
 
-- 包名 `com.github.axtv.dv`，版本 2.3.43 (versionCode 43)，minSdk 23 / targetSdk 37，Android TV 应用
+- 包名 `com.github.axtv.dv`，版本 0.0.3 (versionCode 3)，minSdk 26 / targetSdk 36，Android TV 应用
 - 应用自有代码 ≈ `src/app/p000/*`（6077 个类，R8 扁平化）+ `src/app/com/github/mytv/dv/*`（187 个类，含 model/widget）
 - 第三方库保持原包名：`androidx.*` `okhttp3.*` `coil3.*` `kotlinx.*` `com.whl.quickjs.*` `com.materialkolor.*`
   —— 这些**不在重构范围内**

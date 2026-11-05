@@ -5,5 +5,5 @@
 
 allprojects {
     group = "com.github.axtv"
-    version = "2.3.43"
+    version = "0.0.3"
 }

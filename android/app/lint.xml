@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!--
+      ModelJsonCodec 在 Android 8.0 以下会捕获 NoSuchMethodError 并转为可读的“解包失败”，
+      属于已保护的 API 26 反射调用；lint 看不到 try/catch，故只对该文件关闭 NewApi。
+      API 24/25 的可用性问题另行处理（minSdk 策略），不靠这条 lint 豁免。
+    -->
+    <issue id="NewApi">
+        <ignore path="**/refactor/api/axtv/api/ModelJsonCodec.java" />
+    </issue>
+</lint>

@@ -42,6 +42,14 @@ public final class PanelServer implements AutoCloseable {
     private final int workerThreads;
     /** 传输层；null = 用 JDK com.sun.net.httpserver（Android 侧必须传入原生实现）。 */
     private final HttpServerCore transport;
+    /** 传输层工厂；与 {@link #transport} 二选一，null 时走 JDK 反射实现。 */
+    private final TransportFactory transportFactory;
+
+    /** 传输层工厂：让 Android 侧按 Options 创建自己的 ServerSocket 实现。 */
+    @FunctionalInterface
+    public interface TransportFactory {
+        HttpServerCore create(HttpServerCore.Options options);
+    }
 
     private final Logger log;
     private final Object lock = new Object();
@@ -53,7 +61,7 @@ public final class PanelServer implements AutoCloseable {
     }
 
     public PanelServer(String tag, int port, PanelRoutes routes, boolean daemon, int workerThreads) {
-        this(tag, port, routes, daemon, workerThreads, null);
+        this(tag, port, routes, daemon, workerThreads, (HttpServerCore) null);
     }
 
     /**
@@ -62,12 +70,27 @@ public final class PanelServer implements AutoCloseable {
      */
     public PanelServer(String tag, int port, PanelRoutes routes, boolean daemon, int workerThreads,
                        HttpServerCore transport) {
+        this(tag, port, routes, daemon, workerThreads, transport, null);
+    }
+
+    /**
+     * @param transportFactory 传输层工厂；Android 侧传入 {@code AndroidPanelServer::new}。
+     *                         与 {@code transport} 二选一，都为 null 时走 JDK 反射实现。
+     */
+    public PanelServer(String tag, int port, PanelRoutes routes, boolean daemon, int workerThreads,
+                       TransportFactory transportFactory) {
+        this(tag, port, routes, daemon, workerThreads, null, transportFactory);
+    }
+
+    private PanelServer(String tag, int port, PanelRoutes routes, boolean daemon, int workerThreads,
+                        HttpServerCore transport, TransportFactory transportFactory) {
         this.tag = tag;
         this.port = port;
         this.routes = routes;
         this.daemon = daemon;
         this.workerThreads = Math.max(1, workerThreads);
         this.transport = transport;
+        this.transportFactory = transportFactory;
         this.log = Logger.getLogger(tag);
     }
 
@@ -103,9 +126,14 @@ public final class PanelServer implements AutoCloseable {
             try {
                 HttpServerCore.Options opts = new HttpServerCore.Options(
                         this.tag, this.port, this.routes, this.daemon, this.workerThreads);
-                HttpServerCore created = this.transport != null
-                        ? this.transport
-                        : createJdkTransport(opts, this.log);
+                HttpServerCore created;
+                if (this.transport != null) {
+                    created = this.transport;
+                } else if (this.transportFactory != null) {
+                    created = this.transportFactory.create(opts);
+                } else {
+                    created = createJdkTransport(opts, this.log);
+                }
                 created.start();
                 this.executor = pool;
                 this.server = created;

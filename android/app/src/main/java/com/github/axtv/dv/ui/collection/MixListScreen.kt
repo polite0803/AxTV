@@ -14,6 +14,7 @@ package com.github.axtv.dv.ui.collection
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -71,6 +73,9 @@ private sealed interface ListUiState {
         val moreError: String? = null,
     ) : ListUiState
 }
+
+/** 提前多少项触发自动续页（滚到末尾前 N 项就开始拉下一页）。 */
+private const val AUTO_LOAD_AHEAD = 3
 
 @OptIn(ExperimentalTvFoundationApi::class)
 @Composable
@@ -160,6 +165,19 @@ fun MixListScreen(
     val state = if (tab == ListTab.MIX) mixState else seriesState
     val firstItemId = (state as? ListUiState.Loaded)?.items?.firstOrNull()?.let { "${tab.name}:${it.id}" }
 
+    // 电视端没有上滑手势：滚到接近末尾就自动续页，不再需要先发现并按下「加载更多」按钮。
+    val scrolledNearEnd by remember(listState) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            info.totalItemsCount > 0 && lastVisible >= info.totalItemsCount - AUTO_LOAD_AHEAD
+        }
+    }
+    LaunchedEffect(scrolledNearEnd, state, tab) {
+        val loaded = state as? ListUiState.Loaded ?: return@LaunchedEffect
+        if (scrolledNearEnd) loadMore(loaded, tab)
+    }
+
     // 列表首项落焦：仅在切页签或首屏数据到达时请求，加载更多不抢焦点。
     LaunchedEffect(tab, firstItemId) {
         val id = firstItemId ?: return@LaunchedEffect
@@ -182,7 +200,8 @@ fun MixListScreen(
 
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize().background(AxTvColors.Bg),
+        // 焦点分组：方向键先在列表内移动，不往顶栏 / 页签跳。
+        modifier = Modifier.fillMaxSize().background(AxTvColors.Bg).focusGroup(),
         contentPadding = PaddingValues(horizontal = 40.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -304,7 +323,8 @@ fun MixListScreen(
                         val focusKey = "${tab.name}:${summary.id}"
                         SummaryRow(
                             summary = summary,
-                            focusRequester = remember { FocusRequester() }
+                            // 带 key 的 remember：列表追加后槽位复用不会把请求器绑到别的条目上。
+                            focusRequester = remember(focusKey) { FocusRequester() }
                                 .also { requesters[focusKey] = it },
                             onClick = { onOpenMix(summary.id) },
                         )
@@ -338,10 +358,12 @@ fun MixListScreen(
                                     )
                                 }
 
-                                else -> ListTabChip(
-                                    label = "加载更多（已显示 ${current.items.size} 个）",
-                                    selected = false,
-                                    onClick = { loadMore(current, tab) },
+                                else -> Text(
+                                    // 翻页由上面的 LaunchedEffect 在滚到末尾前自动发生；
+                                    // 原先是「加载更多（已显示 N 个）」按钮，电视上等于要用户自己发现再按一次。
+                                    text = "继续下移自动加载（已显示 ${current.items.size} 个）",
+                                    color = AxTvColors.TextSecondary,
+                                    style = TextStyle(fontSize = 13.sp),
                                 )
                             }
                         }

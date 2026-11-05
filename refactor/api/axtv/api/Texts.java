@@ -113,10 +113,12 @@ final class Texts {
     }
 
     static String urlEncode(String s) {
+        // 只用字符串名字形式：URLEncoder.encode(String, Charset) 是 API 33，minSdk 24 上
+        // 走进这个分支会直接 NoSuchMethodError（UTF-8 是 Android 必带字符集，异常分支到不了）。
         try {
-            return URLEncoder.encode(s, "UTF-8");
-        } catch (Exception e) {
-            return URLEncoder.encode(nvl(s), StandardCharsets.UTF_8);
+            return URLEncoder.encode(nvl(s), "UTF-8");
+        } catch (java.io.UnsupportedEncodingException e) {
+            return nvl(s);
         }
     }
 

@@ -11,6 +11,8 @@
  * 本文件只做 Android 侧的 CacheStore：SimpleCache + OkHttp 数据源都在 Media3Resources 里，
  * 与播放用的缓存是同一份，所以预载下来的 2 MiB 下一条起播时能直接命中。
  */
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.github.axtv.dv.player
 
 import android.content.Context
@@ -59,7 +61,7 @@ object VideoPreload {
             val dataSource = CacheDataSource.Factory()
                 .setCache(Media3Resources.cache(appContext))
                 .setUpstreamDataSourceFactory(Media3Resources.plainFactory())
-                .setFlags(PlayerConfig.CACHE_FLAGS)
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
                 .createDataSourceForDownloading()
             val writer = CacheWriter(
                 dataSource,

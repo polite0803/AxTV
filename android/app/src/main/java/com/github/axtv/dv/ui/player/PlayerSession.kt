@@ -390,6 +390,8 @@ class PlayerSession(
             return
         }
         released = true
+        // 清掉预取/延时任务，避免回调在会话释放后还持有旧 provider。
+        handler.removeCallbacksAndMessages(null)
         PipCoordinator.unregister(this)
         // 离开播放页不再需要预载，取消在跑的那一条，避免后台继续拉流。
         VideoPreload.cancelPending()

@@ -1,5 +1,8 @@
 # AxTV UI 栈迁移 · 第一步（基线 + 三样板）
 
+> **历史记录**：本文是迁移第一步的存档，其中的 compileSdk / minSdk / 版本号已被后续调整覆盖。
+> 当前基线以 `android/app/build.gradle.kts` 为准（compileSdk 36 / minSdk 26 / versionName 0.0.3）。
+
 ## 1. 结论
 
 - **原版栈**：手机版 Jetpack Compose（`ui/foundation/runtime 1.12.1`、`material3 1.5.0-alpha25`）＋ **自绘 TV 焦点**；APK 内**没有** `androidx.tv` / `androidx.leanback`。结论：**不是 tv-material**，因此迁移是「翻译」而非「还原」——列表焦点定位、焦点盒、按键语义都要在 TV 组件上重新对齐。
@@ -42,7 +45,7 @@
 - 环境：JAVA_HOME=JDK 17；SDK `C:\Users\polit\AppData\Local\Android\Sdk`（platform 35 存在）；Gradle wrapper 8.14；依赖从 Google Maven 正常拉取（tv-foundation alpha11 首次下载）。
 - APK：`android/app/build/outputs/apk/debug/app-debug.apk`，**16.71 MB**（17,518,770 字节）。
 - 修复：`refactor/settings/axtv/settings/CrashHandler.java:94` 的 `Files.writeString`（Java 11 API，Android 35 android.jar 无）改为 `FileOutputStream + report.getBytes(UTF_8)`，截断/编码语义一致；仅改此 1 处，未动其它核心文件。
-- 已知同类隐患（只列不改）：`UpdateManager.java` 大量使用 `java.nio.file`（API 26+）、`CrashHandler` 仍用 `Files.createDirectories`/`Path`、`LiveFrameCodec.java:215` 用 `InputStream.readAllBytes`（Java 9 / API 33）；minSdk 23 下需真机验证或后续统一降级。
+- 同类隐患已在后续提交中处理：`UpdateManager` / `CrashHandler` 改用 `java.io`，`LiveFrameCodec` 手写累积替代 `readAllBytes`；minSdk 已抬到 26。
 
 
 ## 6. 后续推进顺序（按 99 条覆盖矩阵）

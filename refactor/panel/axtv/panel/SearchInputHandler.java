@@ -23,10 +23,12 @@ public final class SearchInputHandler {
 
     private final ThemeRenderer renderer;
     private final PanelState state;
+    private final PanelAuth auth;
 
-    public SearchInputHandler(ThemeRenderer renderer, PanelState state) {
+    public SearchInputHandler(ThemeRenderer renderer, PanelState state, PanelAuth auth) {
         this.renderer = renderer;
         this.state = state;
+        this.auth = auth;
     }
 
     /**
@@ -40,7 +42,8 @@ public final class SearchInputHandler {
         return new PanelRoutes(java.util.List.of(
                 new PanelRoutes.Route(PanelRoutes.ANY_METHOD, PATH_ROOT, page),
                 new PanelRoutes.Route(PanelRoutes.ANY_METHOD, PATH_SEARCH, page)),
-                request -> PanelRoutes.Response.text(PanelRoutes.SC_NOT_FOUND, PanelRoutes.TEXT_PLAIN, "404"));
+                request -> PanelRoutes.Response.text(PanelRoutes.SC_NOT_FOUND, PanelRoutes.TEXT_PLAIN, "404"))
+                .requireAuth(this.auth);
     }
 
     /** WebSocket 上行消息入口：解析 type/text 后分发给 UI（原 wc4.m11491o）。 */

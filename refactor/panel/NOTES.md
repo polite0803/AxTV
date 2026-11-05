@@ -1,13 +1,13 @@
 # 手机 ↔ 电视 局域网面板服务（Cookie 推送 / 搜索输入 / 扫码登录）
 
-AxTV 2.3.43 的「电视端起 HTTP/WebSocket 服务，手机浏览器访问」特色功能。核心层纯 JDK 17，
+AxTV 0.0.3 的「电视端起 HTTP/WebSocket 服务，手机浏览器访问」特色功能。核心层纯 JDK 17，
 不依赖 Android SDK / OkHttp / Java-WebSocket / kotlinx。原模块分散在 15 个 R8 混淆类里，
 其中 3 个类还承担着与 Compose 页面、WebView 的耦合，本模块把它们拆成「协议/服务」与「平台接口」两层。
 
 ## 一句话结论
 
 - 两条 HTTP 链路：**9978**（Cookie 推送，随应用常驻）、**9979**（搜索输入页面，开关触发）；一条 WebSocket：**9980**（搜索输入通道）。
-- 全部为明文 HTTP、**零鉴权**、CORS 全开、不校验来源 IP/Origin，且能在同一局域网内被任意网页 CSRF 推送登录态 —— 见「安全风险」。
+- HTTP 仍为明文；**已补 `PanelAuth` 令牌**：HTTP 与 WebSocket 都要求 `?token=…` 或 `X-AxTV-Token`（OPTIONS 预检除外），手机通过电视设置页展示的带令牌二维码接入。CORS 仍为 `*`，但没有令牌无法完成实际请求。详见「安全风险」。
 - 3 个 jadx 未能反编译的方法（扫码轮询核心）按可见常量与状态重建，标为「存疑」。
 
 ## 类映射表
@@ -163,7 +163,12 @@ CSS 变量 31 个，顺序见 `ThemeRenderer.CSS_VARIABLES`；取值为 `#` + �
 
 除上述 6 条，路由、状态码、字段名、消息类型、超时、重试上限、日志文案均按原样保留。
 
-## 待迁移（Android 侧需实现）
+## Android 侧接入（已实现）
+
+`android/app/src/main/java/com/github/axtv/dv/panel/PanelRuntime.kt` 已装配：
+`AndroidPanelServer`（传输层）、`AndroidAuthStore`（douyin_auth + axtv_settings 同步）、
+`AndroidPanelAssets`（assets/web）、`AndroidDeviceIdentity`、`ProcessLogcat`；令牌由 `PanelAuth.random()`
+生成并拼进设置页「二维码链接」里的两个地址。`AppRuntime.install` 在 settings/api 就绪后启动。
 
 | 接口 | 应有实现 | 要点 |
 |---|---|---|
@@ -182,7 +187,8 @@ CSS 变量 31 个，顺序见 `ThemeRenderer.CSS_VARIABLES`；取值为 `#` + �
 
 1. **扫码登录核心三步未反编译**：`ez3.m3955b(od2, long)`（轮询二维码，356 指令）、`m3957d`（1144 指令）、`m3960i`（2900 指令）均为 `JadxOverflowException` / `Method dump skipped`。
    本实现据可见证据重建：`60000`/`20000` 两次超时、`15000` 的 JS 求值超时、`5000` 的 Cookie 刷新超时、最多 8 次过期重开、日志 `qr expired, restarting login (#n)`、状态串 `正在打开抖音登录页` / `等待扫码` / `二维码已过期，正在重新生成` / `抖音二维码生成超时，请重试` / `请回到应用界面内再发起登录`。
-   **未确认**：轮询间隔（本实现 1 s）、登录成功判定（本实现用 `document.cookie` 含 `sessionid`）、`SCANNED`（已扫码未确认）如何进入、`nickname` 从哪取（`check_qrconnect` 的 `data.nickname`？本实现留空）、`codeInput` 何时为 true。
+   **未确认**：轮询间隔（本实现 1 s）、登录成功判定（本实现用 `document.cookie` 含 `sessionid`）、`SCANNED`（已扫码未确认）如何进入、`nickname` 从哪取（`check_qrconnect` 的 `data.nickname`？本实现留空）。
+   **已回填（2026-11-06，取自 `ez3.smali:7717` / `eg1.smali:1587,1808` 的常量）**：`codeInput` 由页面 DOM 判定 —— 屏幕上真正渲染（`elementFromPoint` 命中自身）且 placeholder 含「验证码」的 input 存在即为 true；同一探针还给回 `verify`（`#uc-second-verify` 或正文含「身份验证」）、`open`、`scanned`、`expired`。风控命中后原版把隐藏 WebView 浮出来（`py3` case 2）并弹自己的数字键盘（`in2`），验证码经原生 value setter 写回 input 再点最近的「验证/登录/确认」按钮；这三步本实现已照做（`QrLoginBridge.SNAPSHOT_SCRIPT` / `CODE_FILL_SCRIPT` / `CODE_CLICK_SCRIPT`、`LoginScreen.VerifyCodeKeypad`）。
 2. **`/api/submit` 未校验 Content-Type**：原实现不看请求头，任何 body 都当 JSON 解析；本实现保持。
 3. **Cookie 服务是否也随「退出登录」重启**：`hu2` 只在构造与 `onStop` 里动它，未见重启点；本实现同样只由 `PanelController` 显式启停。
 4. **`qj0` 的 `f18029h` 流去向**：`C1710ur` 被 emit 到一个 5 容量的 channel 后由谁消费，反编译中未见明确订阅点（推测是登录态刷新）；本实现用 `PanelState.authPushed` 交给 UI 层，语义等价。
@@ -191,19 +197,19 @@ CSS 变量 31 个，顺序见 `ThemeRenderer.CSS_VARIABLES`；取值为 `#` + �
 
 ## 安全风险清单（按严重度）
 
-| 级别 | 问题 | 细节 | 建议 |
+| 级别 | 问题 | 细节 | 状态 |
 |---|---|---|---|
-| **高** | 零鉴权 + CORS `*` | `POST /api/submit` 无 token、无来源校验；`Access-Control-Allow-Origin: *` 且允许 `Content-Type`，任意网页（含手机浏览器里开着的第三方站点）都能 `fetch('http://192.168.x.x:9978/api/submit')` 把**攻击者的** Cookie 推给电视，造成账号被顶替/会话劫持 | 加一次性配对码（页面展示、POST 校验）、限制 `Origin`、或改为短时 token |
-| **高** | 明文传输敏感凭据 | Cookie（含 `sessionid`）与**私钥**走 HTTP 明文，同网段可被 ARP/DNS 投毒嗅探 | 至少 TLS 自签 + 首次信任，或改走局域网加密通道 |
-| **高** | 明文落盘 | `douyin_auth` 里 `cookie_string`、`interaction_private_key` 明文；`adb backup`/root 可直接读 | 用 `EncryptedSharedPreferences` 或 Keystore 包裹 |
-| **中** | WebSocket 不校验 `Origin`、无鉴权 | 任意网页可连 `ws://ip:9980` 读走 `tv_text`（可能含用户正在输入的关键词），也能把电视搜索框改成任意内容 | 校验 Origin=同源页面 + 握手带一次性 token |
-| **中** | 无来源 IP 限制 | 同一局域网（含访客 Wi-Fi、热点）任何人可访问 9978/9979/9980 | 绑定到指定网卡/白名单网段 |
-| **中** | `/logcat` 泄露 | 导出最近 1 万行日志，可能含 Cookie、接口 URL、设备信息 | 加鉴权或仅在 debug 构建开放 |
-| **中** | 无速率/并发限制 | 可无限次 POST 触发 prefs 写入与 UI 通知；WS 可无限重连 | 令牌桶 + 连接数上限 |
-| **中** | 请求体无上限（原实现） | `byte[contentLength]` 直接分配 → OOM | 本实现已加 4 MiB 上限 |
-| **低** | `device_name` 直接进 HTML | 已做 HTML 转义（`&quot; &lt; &gt; &amp; &#39;`），无 XSS | 保持 |
-| **低** | 二维码 base64 未校验大小 | 超大 `qrcode` 字段会解出巨大 byte[] | 解码前限制长度（建议 ≤ 256 KB） |
-| **低** | 端口固定且暴露在 0.0.0.0 | 与「避免 p2p0」的地址选择逻辑不一致（服务监听所有网卡） | 如需收紧，绑到选中网卡的地址 |
+| **高** | 零鉴权 + CORS `*` | 任意网页可 `fetch('http://192.168.x.x:9978/api/submit')` 推送登录态 | **已修复**：所有 HTTP 路由（OPTIONS 除外）要求 `PanelAuth` 令牌 |
+| **高** | 明文传输敏感凭据 | Cookie 与私钥走 HTTP 明文，同网段可嗅探 | **未修复**（面板需局域网 HTTP；如要收紧需 TLS 自签或加密通道） |
+| **高** | 明文落盘 | `douyin_auth` 里的 Cookie / 私钥明文；`adb backup` 可读 | **部分修复**：`allowBackup=false`；配置导出剔除凭据键；登出清空账号表。Keystore 加密未做 |
+| **中** | WebSocket 不校验 `Origin`、无鉴权 | 任意网页可连 9980 读 `tv_text` / 注入搜索词 | **已修复**：握手要求令牌 + 连接数上限 + 握手超时 + 未掩码帧拒绝 + 分片总额上限 |
+| **中** | 无来源 IP 限制 | 同一局域网任何人可访问 9978/9979/9980 | 未修复（需绑定网卡/白名单；令牌已挡住无令牌访问） |
+| **中** | `/logcat` 泄露 | 可导出最近 1 万行日志 | **已修复**：路由要求令牌 |
+| **中** | 无速率/并发限制 | 可无限 POST / WS 重连 | **部分修复**：WS 连接上限 16；HTTP 无速率限制 |
+| **中** | 请求体无上限（原实现） | `byte[contentLength]` 直接分配 → OOM | 已加 4 MiB 上限 |
+| **低** | `device_name` 直接进 HTML | 已做 HTML 转义，无 XSS | 保持 |
+| **低** | 二维码 base64 未校验大小 | 超大 `qrcode` 字段会解出巨大 byte[] | 未修复（建议 ≤ 256 KB） |
+| **低** | 端口固定且暴露在 0.0.0.0 | 服务监听所有网卡 | 未修复（令牌已挡住无令牌访问） |
 
 ## 验证
 

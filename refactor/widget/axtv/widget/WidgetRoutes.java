@@ -82,7 +82,8 @@ public final class WidgetRoutes {
                 out.write(HEX[c & 0xF]);
             }
         }
-        return out.toString(StandardCharsets.UTF_8);
+        // toString(Charset) 需 API 39，desugaring 不覆盖：见 sign/Assets.readText 同款规避。
+        return new String(out.toByteArray(), StandardCharsets.UTF_8);
     }
 
     private static final byte[] HEX = "0123456789ABCDEF".getBytes(StandardCharsets.US_ASCII);

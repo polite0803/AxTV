@@ -130,6 +130,7 @@ object PipCoordinator : PipController.PipHost {
     }
 
     /** 三个小窗动作：广播 PendingIntent，由 PipActionReceiver 接回会话。 */
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun PipController.Action.toRemoteAction(activity: Activity): RemoteAction {
         val iconId = when (iconName) {
             "pip_pause" -> android.R.drawable.ic_media_pause

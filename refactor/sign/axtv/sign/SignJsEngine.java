@@ -12,7 +12,6 @@ package axtv.sign;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -60,6 +59,8 @@ public final class SignJsEngine implements AutoCloseable {
 
     /** 日志截断：no4.java:105 {@code jx4.m6886f0(16, string)}（msStub 只打前 16 位）。 */
     private static final int MS_STUB_PREVIEW = 16;
+    /** 签名返回值含 -/= 时的最大重试次数；原实现是 while(true)，异常响应会永久自旋。 */
+    private static final int MAX_LIVE_SIGN_RETRIES = 16;
 
     private final Assets assets;
     private final JsRuntime.Factory runtimeFactory;
@@ -118,6 +119,10 @@ public final class SignJsEngine implements AutoCloseable {
                 return signature;
             }
             retries++; // q30:329
+            if (retries >= MAX_LIVE_SIGN_RETRIES) {
+                throw new IllegalStateException(
+                        "Failed to generate Douyin live signature after " + retries + " retries");
+            }
         }
     }
 
@@ -206,7 +211,14 @@ public final class SignJsEngine implements AutoCloseable {
     /** 小写十六进制 MD5（no4.java:88-104 的格式化循环）。 */
     static String md5Hex(String text) throws NoSuchAlgorithmException {
         MessageDigest digest = MessageDigest.getInstance("MD5"); // no4:88
-        return HexFormat.of().formatHex(digest.digest(text.getBytes(StandardCharsets.UTF_8)));
+        // 手写格式化循环：java.util.HexFormat 是 API 34，minSdk 24 的电视上不存在。
+        // 与 HexFormat.of().formatHex 输出一致（小写、无分隔）。
+        byte[] bytes = digest.digest(text.getBytes(StandardCharsets.UTF_8));
+        StringBuilder hex = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            hex.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+        }
+        return hex.toString();
     }
 
     @Override

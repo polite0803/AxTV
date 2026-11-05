@@ -228,7 +228,17 @@ public final class ModelJsonCodec implements JsonCodec {
             byNameComponents.put(field.getName(), component(field));
         }
         for (Constructor<?> constructor : type.getDeclaredConstructors()) {
-            java.lang.reflect.Parameter[] params = constructor.getParameters();
+            java.lang.reflect.Parameter[] params;
+            try {
+                params = constructor.getParameters();
+            } catch (Throwable t) {
+                // Executable.getParameters() 是 API 26 才有的反射方法（Android 7.x 上直接
+                // NoSuchMethodError）。这里不做「退回按字段顺序绑定」的降级：D8 降级后字段是
+                // 字母序，按它绑定会悄悄解错数据。宁可把崩溃换成能读懂的失败原因。
+                throw new IllegalArgumentException(
+                        "解包失败：" + type.getName() + " 需要按构造器参数名绑定，而本机反射没有 "
+                                + "Executable.getParameters()（需 Android 8.0 / API 26 及以上）", t);
+            }
             if (params.length != fields.size()) {
                 continue;
             }

@@ -8,10 +8,16 @@
  * 数据源由调用方通过 PlaylistProvider 注入，本页不直接访问 API。
  *
  * 全屏：无按键 4 秒后顶部标题与底部按钮一起隐去（应用顶栏在播放页不渲染，见 AxTvApp）。
- * 方向键与确认键始终由画面层接收（不让底部按钮抢焦点，否则控制层一隐藏焦点就落空）：
- * 上下换视频、左右 ±10s 微调、确认播放/暂停、菜单键开播放面板，任意按键唤醒控制层，
- * BACK 第一次只唤醒控制层。语义出处 refactor/app/p000/on5.java 的 r13 tap map
- * （21/22 → seek、19/20 → 换条）与 PlayerSession.handleRemoteKey。
+ *
+ * 两套按键语义，由「焦点在哪一层」决定（chromeFocus）：
+ * - 焦点在画面层（默认）：上/下 = 上一条/下一条，左/右 = ±10s 微调（长按连发），
+ *   确认 = 播放/暂停，MENU/INFO = 播放菜单面板；这一层拦下的键 KeyDown 与 KeyUp 都吃掉，
+ *   漏一个 KeyUp 就会让 Compose 默认焦点搜索替我们挪焦点（表现为"按一下就跑很远"）。
+ * - 焦点在控制栏：方向键走正常焦点导航、确认键激活按钮，底部菜单因此可达。
+ * 进入控制栏 = 长按下键；BACK 在控制栏内按一次把焦点交回画面层（不退出播放页）。
+ * 换条判定放在 KeyUp：按下时长只有松手时才知道，短按换条、长按进控制栏，两者不会同时发生。
+ * 语义出处 src/app/p000/on5.java 的 r13 tap map（21/22 → seek、19/20 → 换条）
+ * 与 PlayerSession.handleRemoteKey。
  */
 package com.github.axtv.dv.ui.player
 
@@ -19,6 +25,7 @@ import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -90,6 +97,9 @@ private const val CONTROLS_AUTO_HIDE_MS = 4_000L
 /** 播放时钟取时间隔（整点 / 半点模式最多滞后一分钟）。 */
 private const val CLOCK_TICK_MS = 15_000L
 
+/** 「长按下键」阈值：达到即把焦点交给控制栏，短按才是上一条/下一条。 */
+private const val LONG_PRESS_MS = 400L
+
 @Composable
 fun PlayerOverlayScreen(
     modifier: Modifier = Modifier,
@@ -130,6 +140,10 @@ fun PlayerOverlayScreen(
     val showProgressBar = remember(settings) { settings?.playerProgressBar() ?: false }
     val clockMode = remember(settings) { settings?.playbackClock() ?: Settings.PlaybackClock.NEVER }
     val clockText = rememberPlayerClock(clockMode)
+
+    // 弹幕总开关：设置项 video_danmaku_enabled 的播放页读写口（浮层『弹幕』按钮与面板里的开关都写它）。
+    var danmakuOn by rememberSaveable { mutableStateOf(settings?.videoDanmakuEnabled() ?: true) }
+    val activeDanmakuConfig = danmakuConfig.copy(enabled = danmakuOn)
 
     // 设置项 mix_playlist_panel 的消费点：关闭时连入口都不出现（而不是点了没反应）。
     val visibleMixEpisodes = if (settings?.mixPlaylistPanelEnabled() == true) mixEpisodes else emptyList()
@@ -190,7 +204,7 @@ fun PlayerOverlayScreen(
     }
     val latestDanmakuLoader = rememberUpdatedState(activeDanmakuLoader)
     var loadedDanmakuComments by remember { mutableStateOf(emptyList<DanmakuComment>()) }
-    LaunchedEffect(currentItemId, session.durationMs, activeDanmakuLoader != null) {
+    LaunchedEffect(currentItemId, session.durationMs, activeDanmakuLoader != null, danmakuOn) {
         val loader = latestDanmakuLoader.value
         // 切条目 / 时长变化时先清空旧时间轴，避免上一条评论落在新视频的时间轴上。
         loadedDanmakuComments = emptyList()
@@ -198,7 +212,7 @@ fun PlayerOverlayScreen(
             return@LaunchedEffect
         }
         // 弹幕总开关关闭时不发起评论请求（渲染层也会清屏，见 DanmakuEngine）。
-        if (!danmakuConfig.enabled) {
+        if (!activeDanmakuConfig.enabled) {
             return@LaunchedEffect
         }
         loadedDanmakuComments = try {
@@ -231,10 +245,13 @@ fun PlayerOverlayScreen(
 
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     var mixPanelOpen by rememberSaveable { mutableStateOf(false) }
-    val menuTriggerRequester = remember { FocusRequester() }
+    /** 焦点归属：false = 画面层（播放语义按键），true = 控制栏（方向键走焦点导航）。 */
+    var chromeFocus by rememberSaveable { mutableStateOf(false) }
+    val bottomBarFocusRequester = remember { FocusRequester() }
     val firstMenuItemRequester = remember { FocusRequester() }
     val surfaceFocusRequester = remember { FocusRequester() }
     val firstEpisodeRequester = remember { FocusRequester() }
+    val errorRetryRequester = remember { FocusRequester() }
 
     /**
      * 控制层（顶部标题 + 底部按钮）显隐：无按键 [CONTROLS_AUTO_HIDE_MS] 后隐藏，
@@ -261,23 +278,39 @@ fun PlayerOverlayScreen(
         chromeWakeAt = System.currentTimeMillis()
     }
 
+    /** 长按下键：把焦点交给控制栏。控制栏必须先出现在屏幕上才有地方落焦。 */
+    fun enterChromeFocus() {
+        wakeChrome()
+        chromeFocus = true
+    }
+
+    /** 弹幕开关：写设置项 video_danmaku_enabled，浮层与面板共用同一个状态源。 */
+    fun toggleDanmaku() {
+        val next = !danmakuOn
+        danmakuOn = next
+        settings?.setVideoDanmakuEnabled(next)
+    }
+
     /**
-     * 遥控器键分发（画面层始终持有焦点，对应原版 r13 的 tap map 绑在播放器节点上）。
+     * 画面层按键分发（仅在焦点位于画面层时生效；焦点进了控制栏就整层让位）。
      *
      * - 左/右 → ±[PlayerSession.SEEK_STEP_MS] 微调，长按连发（原版 ro5 即连发语义）；
-     * - 上/下 → 上一条 / 下一条，只认首次按下（连发会一路跳过 N 条）；
-     * - 确认 → 播放/暂停；菜单键 → 打开播放菜单；
+     * - 上/下 → 短按（松手时判定）上一条 / 下一条；长按 → 把焦点交给控制栏；
+     * - 确认 → 播放/暂停；菜单键 / INFO → 打开播放菜单；
      * - 其余键不认，交回系统（BACK 由 BackHandler 处理）。
      *
-     * 控制层只是"看得见的一层"，不参与焦点导航：底部按钮保留指针点击，方向键不会被它们吃掉。
-     * 菜单面板打开时整层让位，面板内部自己走焦点导航。
-     * 每条按键都会唤醒控制层（标准 TV 播放器语义）。
+     * 命中的键 KeyDown 与 KeyUp 一律吃掉：只吃 KeyDown 的话 KeyUp 会落到 Compose
+     * 默认焦点搜索上，表现为"按一下焦点自己跑走"。控制层显隐不改变焦点归属，
+     * 唤醒控制层只是让它可见，方向键仍然走播放语义。
      */
     fun dispatchPlayerKey(event: KeyEvent): Boolean {
-        if (latestMenuOpen || latestMixPanelOpen) return false
-        if (event.type != KeyEventType.KeyDown) return false
+        // 错误卡片出现时把按键交回默认焦点系统，否则方向键/确认键会被播放语义吃掉，
+        // 遥控器永远进不到“重试/下一个”。
+        if (session.error != null) return false
+        if (latestMenuOpen || latestMixPanelOpen || chromeFocus) return false
         // 用 nativeKeyEvent.keyCode：Compose 的 Key 对 TV 方向键解析不出稳定的 keycode（实测拿到 Unknown/0）。
-        val keyCode = event.nativeKeyEvent.keyCode
+        val native = event.nativeKeyEvent
+        val keyCode = native.keyCode
         val isSwitch = keyCode == AndroidKeyEvent.KEYCODE_DPAD_UP || keyCode == AndroidKeyEvent.KEYCODE_DPAD_DOWN
         val isSeek = keyCode == AndroidKeyEvent.KEYCODE_DPAD_LEFT || keyCode == AndroidKeyEvent.KEYCODE_DPAD_RIGHT
         val isConfirm = keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
@@ -285,9 +318,11 @@ fun PlayerOverlayScreen(
             keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER
         val isOpenMenu = keyCode == AndroidKeyEvent.KEYCODE_MENU || keyCode == AndroidKeyEvent.KEYCODE_INFO
         if (!isSwitch && !isSeek && !isConfirm && !isOpenMenu) return false
-        val suppressedByRepeat = isSwitch && event.nativeKeyEvent.repeatCount > 0
-        if (!suppressedByRepeat) {
-            when {
+
+        when (event.type) {
+            KeyEventType.KeyDown -> when {
+                // 换条要等松手才能分清短按/长按，这里只负责"长按已成形"的即时反馈。
+                isSwitch -> if (native.eventTime - native.downTime >= LONG_PRESS_MS) enterChromeFocus()
                 isConfirm -> session.togglePlayPause()
                 isOpenMenu -> menuOpen = true
                 else -> {
@@ -296,33 +331,48 @@ fun PlayerOverlayScreen(
                     session.handleRemoteKey(keyCode)
                 }
             }
+
+            KeyEventType.KeyUp -> if (isSwitch && native.eventTime - native.downTime < LONG_PRESS_MS) {
+                session.handleRemoteKey(keyCode)
+            }
         }
         wakeChrome()
         return true
     }
 
-    // 画面层持有焦点：进入播放页先抢一次，面板关闭后收回来（否则按键会落进焦点空洞）。
-    LaunchedEffect(menuOpen, mixPanelOpen) {
+    // 焦点归属变化时真正落焦：面板 > 控制栏 > 画面层（否则按键会落进焦点空洞）。
+    LaunchedEffect(menuOpen, mixPanelOpen, chromeFocus) {
         withFrameNanos { }
         runCatching {
             when {
                 menuOpen -> firstMenuItemRequester.requestFocus()
                 mixPanelOpen -> firstEpisodeRequester.requestFocus()
+                chromeFocus -> bottomBarFocusRequester.requestFocus()
                 else -> surfaceFocusRequester.requestFocus()
             }
         }
     }
 
+    // 播放失败时焦点交给“重试”，保证遥控器可达。
+    LaunchedEffect(session.error) {
+        if (session.error != null) {
+            withFrameNanos { }
+            runCatching { errorRetryRequester.requestFocus() }
+        }
+    }
+
     // 自动隐藏倒计时：每次按键（chromeWakeAt）与播放态变化都会重启。
+    // 焦点在控制栏时不收起 —— 收起来焦点就掉进空洞，这正是底部菜单不可达的老问题。
     LaunchedEffect(
         chromeVisible,
         chromeWakeAt,
         menuOpen,
         mixPanelOpen,
+        chromeFocus,
         keepChromeWhilePaused,
         session.error,
     ) {
-        if (!chromeVisible || menuOpen || mixPanelOpen || session.error != null || keepChromeWhilePaused) {
+        if (!chromeVisible || menuOpen || mixPanelOpen || chromeFocus || session.error != null || keepChromeWhilePaused) {
             return@LaunchedEffect
         }
         val remaining = chromeWakeAt + CONTROLS_AUTO_HIDE_MS - System.currentTimeMillis()
@@ -334,10 +384,18 @@ fun PlayerOverlayScreen(
     // 切条目也算一次交互（连播时标题短暂浮现，与原版换条后重置控制层一致）。
     LaunchedEffect(session.playlistIndex) { wakeChrome() }
 
-    // 控制层隐藏时 BACK 先唤出控制层，再按一次才退出播放页。
-    BackHandler(enabled = !chromeVisible && !menuOpen && !mixPanelOpen) { wakeChrome() }
-    // 分集面板打开时 BACK 只收面板。
-    BackHandler(enabled = mixPanelOpen) { mixPanelOpen = false }
+    // BACK 逐级退出：面板 → 控制栏焦点 → 唤醒隐藏的控制层 → 交回导航栈退出播放页。
+    BackHandler(enabled = menuOpen || mixPanelOpen || chromeFocus || !chromeVisible) {
+        when {
+            menuOpen -> menuOpen = false
+            mixPanelOpen -> mixPanelOpen = false
+            chromeFocus -> {
+                chromeFocus = false
+                wakeChrome()
+            }
+            else -> wakeChrome()
+        }
+    }
 
     // 画中画：小窗里只保留画面，浮层/弹幕/面板全部让位（PIP 态由 PipCoordinator 写回，见 MainActivity）。
     val inPip = PipCoordinator.inPipMode
@@ -346,8 +404,12 @@ fun PlayerOverlayScreen(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
-            .focusRequester(surfaceFocusRequester)
-            .focusable()
+            .then(
+                // 焦点交给控制栏或面板时，这一层不再参与焦点：它是个占满全屏的矩形，
+                // 留在焦点树里会让「相邻」距离计算退化，方向键从按钮出发容易被它抢走。
+                if (chromeFocus || menuOpen || mixPanelOpen) Modifier
+                else Modifier.focusRequester(surfaceFocusRequester).focusable()
+            )
             .onPreviewKeyEvent { event -> dispatchPlayerKey(event) },
     ) {
         PlayerSurface(
@@ -362,7 +424,7 @@ fun PlayerOverlayScreen(
             DanmakuOverlayHost(
                 source = session.danmakuSource,
                 comments = overlayDanmakuComments,
-                config = danmakuConfig,
+                config = activeDanmakuConfig,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -377,6 +439,7 @@ fun PlayerOverlayScreen(
                 when {
                     session.error != null -> PlayerErrorCard(
                         error = session.error!!,
+                        retryRequester = errorRetryRequester,
                         onRetry = session::retry,
                         onNext = { session.playNext() },
                     )
@@ -401,9 +464,12 @@ fun PlayerOverlayScreen(
             if (chromeVisible && !inPip) {
                 PlayerBottomBar(
                     session = session,
-                    menuTriggerRequester = menuTriggerRequester,
+                    bottomBarFocusRequester = bottomBarFocusRequester,
+                    chromeFocused = chromeFocus,
                     showProgress = showProgressBar || seekFeedback,
                     episodeCount = visibleMixEpisodes.size,
+                    danmakuOn = danmakuOn,
+                    onToggleDanmaku = ::toggleDanmaku,
                     onOpenMenu = { menuOpen = true },
                     onOpenEpisodes = { mixPanelOpen = true },
                 )
@@ -433,6 +499,8 @@ fun PlayerOverlayScreen(
                 onQualitySelected = session::selectQuality,
                 speed = session.speed,
                 onSpeedSelected = session::applySpeed,
+                danmakuOn = danmakuOn,
+                onDanmakuToggle = ::toggleDanmaku,
                 onClose = { menuOpen = false },
             )
         }
@@ -515,6 +583,7 @@ private fun PlayerHint(text: String) {
 @Composable
 private fun PlayerErrorCard(
     error: PlaybackError,
+    retryRequester: FocusRequester,
     onRetry: () -> Unit,
     onNext: () -> Unit,
 ) {
@@ -535,7 +604,7 @@ private fun PlayerErrorCard(
             style = TextStyle(fontSize = 14.sp),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OverlayAction(label = "重试", onClick = onRetry)
+            OverlayAction(label = "重试", modifier = Modifier.focusRequester(retryRequester), onClick = onRetry)
             OverlayAction(label = "下一个", onClick = onNext)
         }
     }
@@ -544,9 +613,12 @@ private fun PlayerErrorCard(
 @Composable
 private fun PlayerBottomBar(
     session: PlayerSession,
-    menuTriggerRequester: FocusRequester,
+    bottomBarFocusRequester: FocusRequester,
+    chromeFocused: Boolean,
     showProgress: Boolean,
     episodeCount: Int,
+    danmakuOn: Boolean,
+    onToggleDanmaku: () -> Unit,
     onOpenMenu: () -> Unit,
     onOpenEpisodes: () -> Unit,
 ) {
@@ -579,21 +651,36 @@ private fun PlayerBottomBar(
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.focusGroup(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             OverlayAction(
                 label = if (session.playingIntent) "暂停" else "播放",
-                modifier = Modifier.focusRequester(menuTriggerRequester),
+                modifier = Modifier.focusRequester(bottomBarFocusRequester),
                 onClick = session::togglePlayPause,
             )
             OverlayAction(label = PlayerMenuSpec.TEXT_MENU_TITLE, onClick = onOpenMenu)
-            OverlayAction(label = PlayerMenuSpec.LABEL_DANMAKU, onClick = {})
-            OverlayAction(label = PlayerMenuSpec.LABEL_QUALITY, onClick = onOpenMenu)
-            OverlayAction(label = PlayerMenuSpec.LABEL_SPEED, onClick = onOpenMenu)
+            // 画质/倍速不在这里重复一遍：它们都在「播放菜单」面板里，多两个焦点落点只会更乱。
+            OverlayAction(
+                label = "${PlayerMenuSpec.LABEL_DANMAKU}·${if (danmakuOn) "开" else "关"}",
+                onClick = onToggleDanmaku,
+            )
             // 合集播放列表面板入口（设置项 mix_playlist_panel + 当前条目属于合集时才出现）。
             if (episodeCount > 0) {
                 OverlayAction(label = "合集（$episodeCount 集）", onClick = onOpenEpisodes)
             }
         }
+        // 焦点在哪一层必须写在界面上：否则用户只知道"按了没反应"，不知道要长按。
+        Text(
+            text = if (chromeFocused) {
+                "控制栏操作中：方向键选择，确认键执行，BACK 返回画面"
+            } else {
+                "上/下换条，左/右微调，长按↓ 进入下方控制栏"
+            },
+            color = AxTvColors.TextSecondary,
+            style = TextStyle(fontSize = 12.sp),
+        )
     }
 }
 
@@ -629,13 +716,14 @@ private fun PlayerMenuPanel(
     onQualitySelected: (Int) -> Unit,
     speed: Float,
     onSpeedSelected: (Float) -> Unit,
+    danmakuOn: Boolean,
+    onDanmakuToggle: () -> Unit,
     onClose: () -> Unit,
 ) {
-    var danmakuOn by rememberSaveable { mutableStateOf(true) }
-
     Column(
         modifier = modifier
             .width(360.dp)
+            .focusGroup()
             .background(AxTvColors.SurfaceHigh, RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -680,10 +768,12 @@ private fun PlayerMenuPanel(
         MenuRow(
             label = PlayerMenuSpec.LABEL_DANMAKU,
             value = if (danmakuOn) "开启" else "关闭",
-            onClick = { danmakuOn = !danmakuOn },
+            onClick = onDanmakuToggle,
         )
-        MenuRow(label = PlayerMenuSpec.LABEL_BLOCK_WORDS, value = "0 条", onClick = {})
-        MenuRow(label = PlayerMenuSpec.LABEL_FULL_DESCRIPTION, value = "", onClick = {})
+        // 原版菜单里还有「屏蔽词」「完整简介」两行（PlayerMenuSpec.LABEL_BLOCK_WORDS /
+        // LABEL_FULL_DESCRIPTION）。两者都没有后端可接（屏蔽词只在弹幕过滤器里读设置，
+        // 本应用没有编辑入口；完整简介要跳详情页但面板拿不到 awemeId），
+        // 面板现在焦点可达了，留着只会按了没反应，先不渲染。
         MenuRow(label = PlayerMenuSpec.LABEL_BACK, value = "", onClick = onClose)
 
         Text(
@@ -713,6 +803,7 @@ private fun MixEpisodePanel(
     Column(
         modifier = modifier
             .width(400.dp)
+            .focusGroup()
             .background(AxTvColors.SurfaceHigh, RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),

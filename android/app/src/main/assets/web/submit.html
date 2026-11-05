@@ -192,6 +192,15 @@
 </div>
 
 <script>
+/* 面板令牌由电视端生成并拼在页面地址上；POST /api/submit 与 /logcat 都必须带上。 */
+const PANEL_TOKEN = new URLSearchParams(location.search).get('token') || '';
+const TOKEN_QUERY = PANEL_TOKEN ? ('?token=' + encodeURIComponent(PANEL_TOKEN)) : '';
+document.addEventListener('DOMContentLoaded', function () {
+  var links = document.querySelectorAll('a[href="/logcat"]');
+  for (var i = 0; i < links.length; i++) {
+    links[i].href = '/logcat' + TOKEN_QUERY;
+  }
+});
 const EXTRACT_SCRIPT = `void(function(){
   try{
     var r={security:'',privateKey:''};
@@ -357,7 +366,7 @@ f.addEventListener('submit',async e=>{
   if(!v && !s && !p){sw(ms,'请至少填写 Cookie 或互动安全凭据','er');ck.focus();return}
   sb.classList.add('ld');sb.disabled=true;hd(ms);
   try{
-    const r=await fetch('/api/submit',{method:'POST',
+    const r=await fetch('/api/submit'+TOKEN_QUERY,{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({cookie:v,security_payload:s,private_key:p})});
     const d=await r.json();

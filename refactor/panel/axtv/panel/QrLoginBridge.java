@@ -15,6 +15,7 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 扫码登录桥。
@@ -32,9 +33,15 @@ public final class QrLoginBridge {
     /** 登录页（原 {@code od2} 里 loadUrl 的目标）。 */
     public static final String LOGIN_URL = "https://creator.douyin.com/";
 
-    /** 扫码状态（原 {@code uy3}，枚举顺序一致）。 */
+    /** 扫码状态（原 {@code uy3}，前 7 个枚举顺序一致）。 */
     public enum Status {
-        IDLE, STARTING, WAITING_SCAN, SCANNED, EXPIRED, SUCCESS, FAILED
+        IDLE, STARTING, WAITING_SCAN, SCANNED, EXPIRED, SUCCESS, FAILED,
+        /**
+         * 风控要求二次身份验证（短信 / 滑块 / 刷脸）。原版没有独立枚举位，
+         * 是直接把隐藏 WebView 浮出来（{@code py3} case 2）；本应用需要一个能驱动
+         * 「验证码数字键盘 / 登录页浮出」两种 UI 的显式状态，故追加在末尾。
+         */
+        VERIFY
     }
 
     /**
@@ -78,8 +85,9 @@ public final class QrLoginBridge {
         void tap(double x, double y);
 
         /**
-         * 安全验证（account_flow=verify）时把隐藏 WebView 显示出来并允许交互。
-         * 账号风控要求短信/滑块验证时，页面必须可见才能完成，否则会一直停在「已扫码」。
+         * 二次验证时把隐藏 WebView 显示出来并允许交互（false 时收回）。
+         * 风控要求滑块 / 刷脸这类无法代填的验证时，页面必须可见才能继续，否则会一直停在「已扫码」；
+         * 只是短信验证码时保持隐藏，由应用侧数字键盘代填（{@link #requestCodeSubmission}）。
          */
         void setInteractive(boolean interactive);
 
@@ -144,11 +152,149 @@ public final class QrLoginBridge {
             })()
             """;
 
-    /** 读快照脚本（原 ez3.m3961j 里的 JS，逐字保留）。 */
-    public static final String SNAPSHOT_SCRIPT =
-            "\n(function(){\n  try {\n    return JSON.stringify({\n      qr: window.__dyQr || null,\n"
-                    + "      poll: window.__dyPoll || null,\n      pollAt: window.__dyPollAt || 0\n"
-                    + "    });\n  } catch (e) { return JSON.stringify({error:String(e)}); }\n})()\n";
+    /**
+     * 读快照脚本：钩子抓到的二维码/轮询响应，外加页面 DOM 探针。
+     *
+     * <p>DOM 探针逐字来自原版 {@code ez3}（smali 常量；jadx 因方法溢出没能还原出宿主方法）。
+     * 扫码后风控可能把确认流程转成网页端二次身份验证（短信 / 滑块 / 刷脸），而这件事
+     * 在 {@code check_qrconnect} 的响应里没有任何字段——本类此前读的 {@code account_flow}
+     * 在整份 APK 里都不存在，是猜的——只能从 DOM 判：
+     * <ul>
+     *   <li>{@code verify}：出现 {@code #uc-second-verify} 或正文含「身份验证」；</li>
+     *   <li>{@code codeInput}：屏幕上真的渲染了一个 placeholder 含「验证码」的输入框
+     *       （隐藏 tab 里的 input 也有非零 rect，必须用 elementFromPoint 验一次），
+     *       命中即可以由应用侧数字键盘代填。</li>
+     * </ul>
+     */
+    public static final String SNAPSHOT_SCRIPT = """
+            (function(){
+              try {
+                var modal = document.querySelector('.douyin_login_new_class');
+                var text = modal ? (modal.textContent || '') : '';
+                var open = false;
+                if (modal) {
+                  var cs = getComputedStyle(modal);
+                  var mr = modal.getBoundingClientRect();
+                  open = cs.display !== 'none' && cs.visibility !== 'hidden' && mr.width > 0 && mr.height > 0;
+                }
+                var bodyText = document.body ? (document.body.textContent || '') : '';
+                var codeInput = false;
+                try {
+                  var ins = document.querySelectorAll('input');
+                  for (var ci = 0; ci < ins.length; ci++) {
+                    var cit = ins[ci];
+                    if ((cit.getAttribute('placeholder') || '').indexOf('验证码') < 0) continue;
+                    var cr = cit.getBoundingClientRect();
+                    if (cr.width < 20 || cr.height < 12) continue;
+                    var ccs = getComputedStyle(cit);
+                    if (ccs.display === 'none' || ccs.visibility === 'hidden' || ccs.opacity === '0') continue;
+                    var chit = document.elementFromPoint(cr.x + cr.width / 2, cr.y + cr.height / 2);
+                    if (chit && (chit === cit || cit.contains(chit))) { codeInput = true; break; }
+                  }
+                } catch (e9) {}
+                return JSON.stringify({
+                  qr: window.__dyQr || null,
+                  poll: window.__dyPoll || null,
+                  pollAt: window.__dyPollAt || 0,
+                  open: open,
+                  verify: !!(document.getElementById('uc-second-verify') || bodyText.indexOf('身份验证') >= 0),
+                  codeInput: codeInput,
+                  scanned: text.indexOf('已扫码') >= 0 || text.indexOf('请在手机端确认') >= 0 ||
+                           text.indexOf('需在手机上进行确认') >= 0 || text.indexOf('扫描成功') >= 0 ||
+                           text.indexOf('扫码成功') >= 0,
+                  expired: text.indexOf('二维码已过期') >= 0 || text.indexOf('二维码失效') >= 0 ||
+                           text.indexOf('已失效') >= 0
+                });
+              } catch (e) { return JSON.stringify({error:String(e)}); }
+            })()
+            """;
+
+    /**
+     * 把验证码写进页面上那个真正渲染的输入框（原版 {@code eg1} 的注入 JS，逐字保留）。
+     *
+     * <p>必须走原生 value setter：直接赋值 {@code el.value = ...} 不会触发 React 受控组件的
+     * onChange，页面拿不到值。{@code __CODE__} 由 {@link #requestCodeSubmission} 用
+     * 已过滤成纯数字的验证码替换，不存在注入面。
+     */
+    static final String CODE_FILL_SCRIPT = """
+            (function(code){
+              try {
+                var ins = document.querySelectorAll('input');
+                var el = null;
+                for (var i = 0; i < ins.length; i++) {
+                  var it = ins[i];
+                  if ((it.getAttribute('placeholder') || '').indexOf('验证码') < 0) continue;
+                  var r = it.getBoundingClientRect();
+                  if (r.width < 20 || r.height < 12) continue;
+                  var hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+                  if (hit && (hit === it || it.contains(hit))) { el = it; break; }
+                }
+                if (!el) return 'no-input';
+                el.focus();
+                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                setter.call(el, code);
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                return 'ok';
+              } catch (e) { return 'err:' + e; }
+            })("__CODE__")
+            """;
+
+    /** 点掉离验证码输入框最近的那个「验证/登录/确认/确定/提交/下一步」按钮（原版 {@code eg1}，逐字保留）。 */
+    static final String CODE_CLICK_SCRIPT = """
+            (function(){
+              try {
+                var input = null;
+                var ins = document.querySelectorAll('input');
+                for (var i = 0; i < ins.length; i++) {
+                  var it = ins[i];
+                  if ((it.getAttribute('placeholder') || '').indexOf('验证码') < 0) continue;
+                  var r = it.getBoundingClientRect();
+                  if (r.width < 20 || r.height < 12) continue;
+                  var hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+                  if (hit && (hit === it || it.contains(hit))) { input = r; break; }
+                }
+                if (!input) return JSON.stringify({ clicked: false, reason: 'no-input' });
+                var texts = ['验证', '登录', '确认', '确定', '提交', '下一步'];
+                var best = null;
+                var sawDisabled = false;
+                var els = document.querySelectorAll('button,div,span,a');
+                for (var j = 0; j < els.length; j++) {
+                  var e = els[j];
+                  var t = (e.textContent || '').trim();
+                  if (texts.indexOf(t) < 0) continue;
+                  var r2 = e.getBoundingClientRect();
+                  if (r2.width < 40 || r2.height < 20) continue;
+                  var hit2 = document.elementFromPoint(r2.x + r2.width / 2, r2.y + r2.height / 2);
+                  if (!hit2 || !(hit2 === e || e.contains(hit2))) continue;
+                  if (r2.y < input.y) continue;
+                  var btn = e.closest ? e.closest('button,[role=button]') : null;
+                  if ((btn && btn.disabled) || e.getAttribute('aria-disabled') === 'true') {
+                    sawDisabled = true;
+                    continue;
+                  }
+                  var dy = r2.y - input.y;
+                  var rank = (t === '验证' ? 0 : 1);
+                  if (!best || dy < best.dy - 5 || (Math.abs(dy - best.dy) <= 5 && rank < best.rank)) {
+                    best = { e: e, dy: dy, rank: rank };
+                  }
+                }
+                if (!best) return JSON.stringify({ clicked: false, reason: sawDisabled ? 'disabled' : 'no-button' });
+                var el = best.e;
+                try { el.click(); } catch (e1) {}
+                // 有些按钮只对 pointer 序列响应，再补一套合成指针事件（原版注释）
+                try {
+                  ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(function(type) {
+                    var ev = type.indexOf('pointer') === 0
+                      ? new PointerEvent(type, { bubbles: true, cancelable: true, isPrimary: true })
+                      : new MouseEvent(type, { bubbles: true, cancelable: true });
+                    el.dispatchEvent(ev);
+                  });
+                } catch (e2) {}
+                return JSON.stringify({ clicked: true, text: (el.textContent || '').trim() });
+              } catch (e) { return JSON.stringify({ clicked: false, reason: String(e) }); }
+            })()
+            """;
 
     /**
      * 出码参数：真实登录页请求 get_qrcode / check_qrconnect 时用的那一套（aid=2906 + request_host）。
@@ -254,11 +400,25 @@ public final class QrLoginBridge {
     private volatile State state = State.idle();
     private volatile Listener listener;
     private volatile boolean cancelled;
+    /** UI 侧提交的验证码，由轮询线程取走执行（evaluateJavascript 会阻塞，不能在主线调用）。 */
+    private final AtomicReference<String> pendingCode = new AtomicReference<>();
     private Thread worker;
     private int restartCount;
 
     public QrLoginBridge(WebViewHost webView) {
         this.webView = webView;
+    }
+
+    /**
+     * 排队提交一个短信验证码（{@link #CODE_FILL_SCRIPT} + {@link #CODE_CLICK_SCRIPT}）。
+     *
+     * <p>只接受数字：非数字一律丢弃，剩下的一路带到 JS 里做字符串替换，所以没有注入面。
+     */
+    public void requestCodeSubmission(String code) {
+        String digits = code == null ? "" : code.replaceAll("\\D", "");
+        if (!digits.isEmpty()) {
+            this.pendingCode.set(digits);
+        }
     }
 
     public State state() {
@@ -398,6 +558,8 @@ public final class QrLoginBridge {
             int staleRestarts = 0;
             long scannedAt = 0L;
             boolean verifying = false;
+            /** 连续判到「验证已消失」的轮数：见下面 needsVerification 分支的去抖说明。 */
+            int verifyClears = 0;
             while (!this.cancelled) {
                 String cookie = readCookie();
                 if (AuthStore.hasSessionId(cookie)) {
@@ -447,15 +609,41 @@ public final class QrLoginBridge {
                             publish(new State(Status.SCANNED, "已扫码，请在手机上确认登录", image, "", "", false));
                         }
                     }
-                    // 账号风控会把确认流程转成安全验证（短信/滑块），页面必须可见才能继续，
-                    // 否则会永远停在「已扫码」，超时后还会把验证页重载掉。
-                    if ("verify".equals(pollAccountFlow(snapshot.pollRaw)) && !verifying) {
+                }
+                // 风控把确认流程转成网页端二次验证时，DOM 是唯一判据（见 SNAPSHOT_SCRIPT）。
+                // 检查必须放在「本轮有新的 check_qrconnect 响应」那个块外面：验证页出现后页面
+                // 常常不再发轮询请求，只在响应变化时判就永远等不到。
+                boolean needsVerification = snapshot.verify || snapshot.codeInput;
+                if (needsVerification) {
+                    verifyClears = 0;
+                    if (!verifying) {
                         verifying = true;
-                        this.webView.setInteractive(true);
-                        this.log.log(Level.INFO, "account_flow=verify, show login page for verification");
-                        publish(new State(Status.SCANNED,
-                                "该账号需要安全验证：请在登录页完成验证后等待自动返回", image, "", "", false));
+                        // 屏幕上已经有验证码输入框时，不把网页摊到电视上（电视没有键盘）：
+                        // 由应用侧数字键盘收码，再注入页面 input 并点「验证」。
+                        // 滑块 / 刷脸这类没法代填的，才把登录页浮出来让用户用遥控器或鼠标操作。
+                        this.webView.setInteractive(!snapshot.codeInput);
+                        this.log.log(Level.INFO, "verification required (codeInput=" + snapshot.codeInput + "), "
+                                + (snapshot.codeInput
+                                        ? "waiting for code from the on-screen keypad"
+                                        : "surfacing login page"));
+                        publish(new State(Status.VERIFY,
+                                snapshot.codeInput
+                                        ? "该账号需要短信验证码：用下方数字键盘输入后提交"
+                                        : "该账号需要安全验证：登录页已浮出，请用遥控器或鼠标完成，之后自动继续",
+                                image, "", "", snapshot.codeInput));
                     }
+                } else if (verifying && snapshot.valid && ++verifyClears >= 2) {
+                    // 只把“有效快照明确说验证消失”计为结束；evaluateJavascript 失败返回的
+                    // 无效快照不能把验证页收回去，否则用户填码中途会被打断。
+                    verifying = false;
+                    verifyClears = 0;
+                    this.webView.setInteractive(false);
+                    this.log.log(Level.INFO, "verification dismissed, hiding login page");
+                    publish(new State(Status.SCANNED, "验证已完成，等待手机端确认登录", image, "", "", false));
+                }
+                // 只有确实处在验证码验证态时才注入，避免误点页面按钮。
+                if (verifying && snapshot.codeInput) {
+                    submitPendingCode(image);
                 }
                 long aliveAt = Math.max(freshAt, pollAt);
                 long now = System.currentTimeMillis();
@@ -487,6 +675,7 @@ public final class QrLoginBridge {
                     lastPoll = null;
                     scannedAt = 0L;
                     verifying = false;
+                    verifyClears = 0;
                     this.webView.setInteractive(false);
                 }
                 sleep(POLL_INTERVAL_MS);
@@ -530,7 +719,10 @@ public final class QrLoginBridge {
             return new Snapshot(
                     Json.optString(map, "qr"),
                     Json.optString(map, "poll"),
-                    pollAt);
+                    pollAt,
+                    Json.optBoolean(map, "verify"),
+                    Json.optBoolean(map, "codeInput"),
+                    true);
         } catch (Exception e) {
             return Snapshot.EMPTY;
         }
@@ -554,22 +746,28 @@ public final class QrLoginBridge {
         return poll.substring(open + 1, close);
     }
 
-    /** 登录流程类型：{@code account_flow=verify} 表示账号触发了安全验证。 */
-    static String pollAccountFlow(String poll) {
-        if (poll == null) {
-            return null;
+    /**
+     * 取走 UI 提交的验证码：注入页面 input，再点最接近它的那个「验证/登录/确认」按钮。
+     *
+     * <p>跑在轮询线程上（{@code evaluateJavascript} 会等主线程回调，主线自己不能调）。
+     */
+    private void submitPendingCode(byte[] frame) {
+        String code = this.pendingCode.getAndSet(null);
+        if (code == null) {
+            return;
         }
-        int key = poll.indexOf("\"account_flow\"");
-        if (key < 0) {
-            return null;
+        try {
+            String fill = this.webView.evaluateJavascript(
+                    CODE_FILL_SCRIPT.replace("__CODE__", code), EVAL_TIMEOUT_MS);
+            String click = this.webView.evaluateJavascript(CODE_CLICK_SCRIPT, EVAL_TIMEOUT_MS);
+            this.log.log(Level.INFO, "verification code submitted (" + code.length() + " digits): fill="
+                    + fill + " click=" + click);
+            publish(new State(Status.VERIFY, "验证码已提交，等待页面确认…", frame, "", "", true));
+        } catch (Exception e) {
+            this.log.log(Level.WARNING, "verification code submission failed", e);
+            publish(new State(Status.VERIFY,
+                    "验证码提交失败：" + e.getMessage() + "（可重新输入后再提交）", frame, "", "", true));
         }
-        int colon = poll.indexOf(':', key);
-        int open = colon < 0 ? -1 : poll.indexOf('"', colon + 1);
-        int close = open < 0 ? -1 : poll.indexOf('"', open + 1);
-        if (close < 0) {
-            return null;
-        }
-        return poll.substring(open + 1, close);
     }
 
     /** 日志脱敏：token/ticket/sessionid 的值换成 ***，并截断超长内容。 */
@@ -581,9 +779,18 @@ public final class QrLoginBridge {
         return text.length() > 240 ? text.substring(0, 240) + "..." : text;
     }
 
-    /** 页面快照：{@code qr} 为 get_qrcode 原始响应，{@code poll} 为 check_qrconnect 原始响应。 */
-    record Snapshot(String qrRaw, String pollRaw, long pollAt) {
-        static final Snapshot EMPTY = new Snapshot(null, null, 0L);
+    /**
+     * 页面快照。
+     *
+     * @param qrRaw     get_qrcode 原始响应
+     * @param pollRaw   check_qrconnect 原始响应
+     * @param pollAt    页面最近一次轮询的时间戳
+     * @param verify    DOM 判到网页端二次身份验证
+     * @param codeInput DOM 上真正渲染了一个「验证码」输入框（可由应用侧代填）
+     */
+    record Snapshot(String qrRaw, String pollRaw, long pollAt, boolean verify, boolean codeInput,
+                    boolean valid) {
+        static final Snapshot EMPTY = new Snapshot(null, null, 0L, false, false, false);
     }
 
     /**

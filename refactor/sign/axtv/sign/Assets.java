@@ -32,7 +32,9 @@ public interface Assets {
             while ((read = in.read(chunk)) != -1) {
                 buffer.write(chunk, 0, read);
             }
-            return buffer.toString(StandardCharsets.UTF_8);
+            // ByteArrayOutputStream.toString(Charset) 是 Java 10 / API 39 才有的重载，
+            // desugaring 也不覆盖它：低版本真机会抛 NoSuchMethodError。改用 new String(byte[], Charset)。
+            return new String(buffer.toByteArray(), StandardCharsets.UTF_8);
         }
     }
 }

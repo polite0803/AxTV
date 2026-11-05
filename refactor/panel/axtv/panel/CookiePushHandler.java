@@ -5,7 +5,8 @@
  *         GET /logcat 导出日志、OPTIONS 预检、其余 404
  * 重构说明: 从 serve() 的 if-else 拆成路由表 + 各处理函数；字段名 cookie / security_payload / private_key
  *           与返回 JSON 的 success / message / device_name / app_name 原样保留。
- *           安全相关行为（无鉴权、无来源 IP 校验、明文 HTTP、CORS 全开）逐条保留并在 NOTES.md 标注。
+ *           已补 PanelAuth 令牌：所有路由（OPTIONS 预检除外）都要求 ?token= 或 X-AxTV-Token；
+ *           明文 HTTP 仍保留（局域网面板），限制与残余风险见 NOTES.md「安全风险」。
  */
 package axtv.panel;
 
@@ -56,15 +57,18 @@ public final class CookiePushHandler {
     private final PanelState state;
     private final Supplier<String> deviceName;
     private final LogcatExportHandler logcatHandler;
+    private final PanelAuth auth;
     private final Logger log = Logger.getLogger("CookieServer");
 
     public CookiePushHandler(ThemeRenderer renderer, AuthStore authStore, PanelState state,
-                             Supplier<String> deviceName, LogcatExportHandler logcatHandler) {
+                             Supplier<String> deviceName, LogcatExportHandler logcatHandler,
+                             PanelAuth auth) {
         this.renderer = renderer;
         this.authStore = authStore;
         this.state = state;
         this.deviceName = deviceName;
         this.logcatHandler = logcatHandler;
+        this.auth = auth;
     }
 
     /** 路由表。CORS 由各处理函数统一追加（原实现在 serve() 末尾统一追加 3 个头）。 */
@@ -75,7 +79,8 @@ public final class CookiePushHandler {
                 new PanelRoutes.Route(PanelRoutes.METHOD_GET, PATH_API_INFO, this::info),
                 new PanelRoutes.Route(PanelRoutes.METHOD_POST, PATH_API_SUBMIT, this::submit),
                 new PanelRoutes.Route(PanelRoutes.METHOD_GET, PATH_LOGCAT, this.logcatHandler::handle)),
-                request -> PanelRoutes.Response.text(PanelRoutes.SC_NOT_FOUND, PanelRoutes.TEXT_PLAIN, "404").withCors());
+                request -> PanelRoutes.Response.text(PanelRoutes.SC_NOT_FOUND, PanelRoutes.TEXT_PLAIN, "404").withCors())
+                .requireAuth(this.auth);
     }
 
     /** OPTIONS 预检：空体 200 + 4 个 CORS 头（预检多一个 Max-Age）。 */

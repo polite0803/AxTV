@@ -42,13 +42,15 @@
         </intent>
     </queries>
 
+    <!-- 局域网面板（9978/9979）走 HTTP，故 usesCleartextTraffic 保留为 true；
+         面板请求仍需 PanelAuth 令牌，且仅在电视与手机同一局域网时可用。 -->
     <application
         android:name=".MyApplication"
         android:label="AxTV"
         android:icon="@mipmap/ic_launcher"
         android:banner="@drawable/tv_banner"
         android:theme="@style/Theme.AxTV"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:enableOnBackInvokedCallback="true">

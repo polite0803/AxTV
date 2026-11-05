@@ -5,6 +5,8 @@
  * 只做内核层（换源/播放/参数/画面绑定），播放状态机与重试策略仍由核心层
  * axtv.player.PlayerEngine 负责，避免同一套逻辑两处维护。
  */
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.github.axtv.dv.player
 
 import android.content.Context
@@ -88,7 +90,7 @@ internal object Media3Resources {
         CacheDataSource.Factory()
             .setCache(cache(context))
             .setUpstreamDataSourceFactory(plainFactory())
-            .setFlags(PlayerConfig.CACHE_FLAGS)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
     fun mediaSourceFactory(context: Context, useCache: Boolean): DefaultMediaSourceFactory =
         DefaultMediaSourceFactory(if (useCache) cachedFactory(context) else plainFactory())
@@ -110,7 +112,7 @@ class Media3Engine(context: Context) : MediaEngine, WidgetPlayerControls {
         .setHandleAudioBecomingNoisy(true)
         .build()
         .apply {
-            repeatMode = PlayerConfig.REPEAT_MODE_OFF
+            repeatMode = Player.REPEAT_MODE_OFF
             playWhenReady = PlayerConfig.PLAY_WHEN_READY_ON_BUILD
         }
 

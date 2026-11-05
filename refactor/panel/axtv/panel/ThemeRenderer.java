@@ -103,7 +103,9 @@ public final class ThemeRenderer {
         values.put(PANEL_HEAD, asset(PANEL_HEAD_ASSET));
         String source = asset(template);
         Matcher matcher = PLACEHOLDER.matcher(source);
-        StringBuilder out = new StringBuilder(source.length() + 2048);
+        // StringBuffer：Matcher.appendReplacement/appendTail 的 StringBuilder 重载是 API 34，
+        // minSdk 24 的电视上没有；StringBuffer 重载从 Java 1.4 起就有，输出逐字相同。
+        StringBuffer out = new StringBuffer(source.length() + 2048);
         while (matcher.find()) {
             String key = matcher.group(1);
             String replacement = values.get(key);
