@@ -4,7 +4,8 @@
  * - NavMessageScreen：加载中 / 失败 / 空队列的统一画面（可返回、可重试）。
  * - PlayerFromFeedScreen：首页队列（HomeFeedRepository）直接播放；队列为空时先拉首屏。
  * - PlayerFromAwemeScreen：按 awemeId 走 VideoApi.detail 拉作品后单条播放，
- *   供详情页、历史、稍后再看与合集单集复用（合集 episode 没有 awemeId/直链，不能整队列播放）。
+ *   供详情页、历史、稍后再看复用（合集外单集没有整队列可播）。
+ * - PlayerFromMixScreen：合集内单条播放 + 分集列表（设置项 mix_playlist_panel 的数据源）。
  */
 package com.github.axtv.dv.ui.nav
 
@@ -36,6 +37,8 @@ import axtv.api.VideoApi
 import axtv.model.Aweme
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.ui.AxTvColors
+import com.github.axtv.dv.ui.collection.CollectionEpisode
+import com.github.axtv.dv.ui.collection.CollectionRepository
 import com.github.axtv.dv.ui.featured.FeaturedRepository
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.home.HomeFeedRepository
@@ -197,13 +200,17 @@ fun PlayerFromFeaturedScreen(
     }
 }
 
-/** 按 awemeId 拉取作品并单条播放（详情 / 历史 / 稍后再看 / 合集单集共用）。 */
+/** 单作品解析结果（详情接口 + 可重试），供 [PlayerFromAwemeScreen] 与 [PlayerFromMixScreen] 共用。 */
+private data class PlaybackLoad(
+    val aweme: Aweme?,
+    val loading: Boolean,
+    val error: String?,
+    val retry: () -> Unit,
+)
+
+/** 按 awemeId 走 VideoApi.detail 解析作品；切 id 时自动重解析。 */
 @Composable
-fun PlayerFromAwemeScreen(
-    awemeId: String,
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
+private fun rememberAwemePlayback(awemeId: String): PlaybackLoad {
     var aweme by remember(awemeId) { mutableStateOf<Aweme?>(null) }
     var loading by remember(awemeId) { mutableStateOf(true) }
     var error by remember(awemeId) { mutableStateOf<String?>(null) }
@@ -232,8 +239,18 @@ fun PlayerFromAwemeScreen(
         }
         loading = false
     }
+    return PlaybackLoad(aweme, loading, error) { attempt += 1 }
+}
 
-    val loadedAweme = aweme
+/** 按 awemeId 拉取作品并单条播放（详情 / 历史 / 稍后再看 / 合集单集共用）。 */
+@Composable
+fun PlayerFromAwemeScreen(
+    awemeId: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val load = rememberAwemePlayback(awemeId)
+    val loadedAweme = load.aweme
     when {
         loadedAweme != null -> PlayerOverlayScreen(
             modifier = modifier,
@@ -242,7 +259,7 @@ fun PlayerFromAwemeScreen(
             },
         )
 
-        loading -> NavMessageScreen(
+        load.loading -> NavMessageScreen(
             title = "播放器",
             message = "正在解析作品 $awemeId …",
             onBack = onBack,
@@ -251,11 +268,68 @@ fun PlayerFromAwemeScreen(
 
         else -> NavMessageScreen(
             title = "播放器",
-            message = error ?: "无法播放作品 $awemeId",
+            message = load.error ?: "无法播放作品 $awemeId",
             onBack = onBack,
             modifier = modifier,
             retryLabel = "重试",
-            onRetry = { attempt += 1 },
+            onRetry = load.retry,
+        )
+    }
+}
+
+/**
+ * 合集内播放：在单集播放之上再给出「合集分集」列表（设置项 mix_playlist_panel 的数据源）。
+ *
+ * 分集列表来自 CollectionRepository.loadDetail(mixId)（mix/aweme 分页，与合集详情页同一入口），
+ * 选一集只换 currentId → 重新解析作品 → 重建 provider 起播：
+ * 不改 PlayerSession 的换档/续播/兜底逻辑，也不额外压导航栈（BACK 仍是一次退出合集）。
+ * 分集列表拉取失败时只是没有面板，播放不受影响。
+ */
+@Composable
+fun PlayerFromMixScreen(
+    mixId: String,
+    awemeId: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var currentId by remember(mixId) { mutableStateOf(awemeId) }
+    var episodes by remember(mixId) { mutableStateOf<List<CollectionEpisode>>(emptyList()) }
+    val load = rememberAwemePlayback(currentId)
+
+    LaunchedEffect(mixId) {
+        episodes = runCatching { CollectionRepository.loadDetail(mixId).episodes }.getOrDefault(emptyList())
+    }
+
+    val loadedAweme = load.aweme
+    when {
+        loadedAweme != null -> PlayerOverlayScreen(
+            modifier = modifier,
+            playlistProvider = remember(loadedAweme) {
+                awemePlaylistProvider(listOf(loadedAweme), 0)
+            },
+            mixEpisodes = episodes,
+            mixCurrentEpisodeId = currentId,
+            onMixEpisodeSelected = { episode ->
+                if (episode.awemeId.isNotBlank() && episode.awemeId != currentId) {
+                    currentId = episode.awemeId
+                }
+            },
+        )
+
+        load.loading -> NavMessageScreen(
+            title = "合集播放",
+            message = "正在解析合集作品 $currentId …",
+            onBack = onBack,
+            modifier = modifier,
+        )
+
+        else -> NavMessageScreen(
+            title = "合集播放",
+            message = load.error ?: "无法播放作品 $currentId",
+            onBack = onBack,
+            modifier = modifier,
+            retryLabel = "重试",
+            onRetry = load.retry,
         )
     }
 }

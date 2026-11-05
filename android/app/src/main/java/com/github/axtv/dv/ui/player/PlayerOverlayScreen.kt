@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -72,6 +74,7 @@ import com.github.axtv.dv.danmaku.DanmakuComment
 import com.github.axtv.dv.danmaku.DanmakuConfig
 import com.github.axtv.dv.danmaku.DanmakuOverlayHost
 import com.github.axtv.dv.ui.AxTvColors
+import com.github.axtv.dv.ui.collection.CollectionEpisode
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.widget.WidgetPlaybackItem
 import com.github.axtv.dv.widget.WidgetRuntime
@@ -102,11 +105,22 @@ fun PlayerOverlayScreen(
      */
     danmakuCommentsLoader: (suspend (itemId: String, durationMs: Long) -> List<DanmakuComment>)? = null,
     danmakuConfig: DanmakuConfig = rememberDanmakuConfig(),
+    /**
+     * 合集分集列表（设置项 mix_playlist_panel 开启且当前条目属于合集时由调用方注入）。
+     *
+     * 空表 = 不属于合集，浮层不出现「合集」入口。选中某集后由 [onMixEpisodeSelected] 回调，
+     * 调用方负责把播放切到那一集（本应用在 ui/nav/PlayerFromMixScreen 内换 provider）。
+     */
+    mixEpisodes: List<CollectionEpisode> = emptyList(),
+    /** 当前集 id；用于分集面板的选中态。 */
+    mixCurrentEpisodeId: String = "",
+    onMixEpisodeSelected: (CollectionEpisode) -> Unit = {},
 ) {
     val context = LocalContext.current
     val settings = AppRuntime.settings
     val provider = playlistProvider ?: remember { demoPlaylistProvider() }
     val surfaceType = remember(settings) { settings?.surfaceType() ?: Settings.SurfaceType.SURFACE_VIEW }
+    val bufferAlign = remember(settings) { settings?.surfaceBufferAlign() == true }
     val initialSpeed = remember(settings) { settings?.playbackSpeed() ?: 1.0f }
     val completionAction = remember(settings) {
         settings?.completionAction() ?: Settings.CompletionAction.AUTO_NEXT
@@ -116,6 +130,9 @@ fun PlayerOverlayScreen(
     val showProgressBar = remember(settings) { settings?.playerProgressBar() ?: false }
     val clockMode = remember(settings) { settings?.playbackClock() ?: Settings.PlaybackClock.NEVER }
     val clockText = rememberPlayerClock(clockMode)
+
+    // 设置项 mix_playlist_panel 的消费点：关闭时连入口都不出现（而不是点了没反应）。
+    val visibleMixEpisodes = if (settings?.mixPlaylistPanelEnabled() == true) mixEpisodes else emptyList()
 
     val session = remember(provider, settings) {
         PlayerSession(
@@ -213,9 +230,11 @@ fun PlayerOverlayScreen(
     }
 
     var menuOpen by rememberSaveable { mutableStateOf(false) }
+    var mixPanelOpen by rememberSaveable { mutableStateOf(false) }
     val menuTriggerRequester = remember { FocusRequester() }
     val firstMenuItemRequester = remember { FocusRequester() }
     val surfaceFocusRequester = remember { FocusRequester() }
+    val firstEpisodeRequester = remember { FocusRequester() }
 
     /**
      * 控制层（顶部标题 + 底部按钮）显隐：无按键 [CONTROLS_AUTO_HIDE_MS] 后隐藏，
@@ -226,6 +245,7 @@ fun PlayerOverlayScreen(
     var chromeVisible by rememberSaveable { mutableStateOf(true) }
     var chromeWakeAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val latestMenuOpen by rememberUpdatedState(menuOpen)
+    val latestMixPanelOpen by rememberUpdatedState(mixPanelOpen)
 
     /**
      * 左右键微调给出的一次性进度条反馈：『播放器进度条』默认关，
@@ -254,7 +274,7 @@ fun PlayerOverlayScreen(
      * 每条按键都会唤醒控制层（标准 TV 播放器语义）。
      */
     fun dispatchPlayerKey(event: KeyEvent): Boolean {
-        if (latestMenuOpen) return false
+        if (latestMenuOpen || latestMixPanelOpen) return false
         if (event.type != KeyEventType.KeyDown) return false
         // 用 nativeKeyEvent.keyCode：Compose 的 Key 对 TV 方向键解析不出稳定的 keycode（实测拿到 Unknown/0）。
         val keyCode = event.nativeKeyEvent.keyCode
@@ -281,11 +301,15 @@ fun PlayerOverlayScreen(
         return true
     }
 
-    // 画面层持有焦点：进入播放页先抢一次，菜单关闭后收回来（否则按键会落进焦点空洞）。
-    LaunchedEffect(menuOpen) {
+    // 画面层持有焦点：进入播放页先抢一次，面板关闭后收回来（否则按键会落进焦点空洞）。
+    LaunchedEffect(menuOpen, mixPanelOpen) {
         withFrameNanos { }
         runCatching {
-            if (menuOpen) firstMenuItemRequester.requestFocus() else surfaceFocusRequester.requestFocus()
+            when {
+                menuOpen -> firstMenuItemRequester.requestFocus()
+                mixPanelOpen -> firstEpisodeRequester.requestFocus()
+                else -> surfaceFocusRequester.requestFocus()
+            }
         }
     }
 
@@ -294,10 +318,11 @@ fun PlayerOverlayScreen(
         chromeVisible,
         chromeWakeAt,
         menuOpen,
+        mixPanelOpen,
         keepChromeWhilePaused,
         session.error,
     ) {
-        if (!chromeVisible || menuOpen || session.error != null || keepChromeWhilePaused) {
+        if (!chromeVisible || menuOpen || mixPanelOpen || session.error != null || keepChromeWhilePaused) {
             return@LaunchedEffect
         }
         val remaining = chromeWakeAt + CONTROLS_AUTO_HIDE_MS - System.currentTimeMillis()
@@ -310,7 +335,12 @@ fun PlayerOverlayScreen(
     LaunchedEffect(session.playlistIndex) { wakeChrome() }
 
     // 控制层隐藏时 BACK 先唤出控制层，再按一次才退出播放页。
-    BackHandler(enabled = !chromeVisible && !menuOpen) { wakeChrome() }
+    BackHandler(enabled = !chromeVisible && !menuOpen && !mixPanelOpen) { wakeChrome() }
+    // 分集面板打开时 BACK 只收面板。
+    BackHandler(enabled = mixPanelOpen) { mixPanelOpen = false }
+
+    // 画中画：小窗里只保留画面，浮层/弹幕/面板全部让位（PIP 态由 PipCoordinator 写回，见 MainActivity）。
+    val inPip = PipCoordinator.inPipMode
 
     Box(
         modifier = modifier
@@ -323,19 +353,22 @@ fun PlayerOverlayScreen(
         PlayerSurface(
             session = session,
             surfaceType = surfaceType,
+            surfaceBufferAlign = bufferAlign,
             modifier = Modifier.fillMaxSize(),
         )
 
         // 弹幕层夹在画面与浮层之间：数据源走 PlayerSession.danmakuSource（位置/播放态/seek/尺寸）。
-        DanmakuOverlayHost(
-            source = session.danmakuSource,
-            comments = overlayDanmakuComments,
-            config = danmakuConfig,
-            modifier = Modifier.fillMaxSize(),
-        )
+        if (!inPip) {
+            DanmakuOverlayHost(
+                source = session.danmakuSource,
+                comments = overlayDanmakuComments,
+                config = danmakuConfig,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
         Column(modifier = Modifier.fillMaxSize()) {
-            if (chromeVisible) PlayerHeader(session, surfaceType, clockText)
+            if (chromeVisible && !inPip) PlayerHeader(session, surfaceType, clockText)
 
             Box(
                 modifier = Modifier.fillMaxWidth().weight(1f),
@@ -360,23 +393,25 @@ fun PlayerOverlayScreen(
                         session.state != PlayerState.ENDED && session.state != PlayerState.ERROR ->
                         PlayerHint(text = "加载中…")
 
-                    !cleanPause && !session.isPlaying && session.firstFrameRendered ->
+                    !cleanPause && !session.isPlaying && session.firstFrameRendered && !inPip ->
                         PlayerHint(text = "已暂停")
                 }
             }
 
-            if (chromeVisible) {
+            if (chromeVisible && !inPip) {
                 PlayerBottomBar(
                     session = session,
                     menuTriggerRequester = menuTriggerRequester,
                     showProgress = showProgressBar || seekFeedback,
+                    episodeCount = visibleMixEpisodes.size,
                     onOpenMenu = { menuOpen = true },
+                    onOpenEpisodes = { mixPanelOpen = true },
                 )
             }
         }
 
         // 时钟：控制层可见时随标题栏显示，隐藏时浮在右上角（设置项『播放时钟』的唯一落点）。
-        if (!chromeVisible && clockText != null) {
+        if (!chromeVisible && !inPip && clockText != null) {
             Text(
                 text = clockText,
                 color = Color.White.copy(alpha = 0.82f),
@@ -387,7 +422,7 @@ fun PlayerOverlayScreen(
             )
         }
 
-        if (menuOpen) {
+        if (menuOpen && !inPip) {
             PlayerMenuPanel(
                 modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
                 firstRequester = firstMenuItemRequester,
@@ -399,6 +434,20 @@ fun PlayerOverlayScreen(
                 speed = session.speed,
                 onSpeedSelected = session::applySpeed,
                 onClose = { menuOpen = false },
+            )
+        }
+
+        if (mixPanelOpen && !inPip && visibleMixEpisodes.isNotEmpty()) {
+            MixEpisodePanel(
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                firstRequester = firstEpisodeRequester,
+                episodes = visibleMixEpisodes,
+                currentEpisodeId = mixCurrentEpisodeId,
+                onEpisodeSelected = { episode ->
+                    mixPanelOpen = false
+                    onMixEpisodeSelected(episode)
+                },
+                onClose = { mixPanelOpen = false },
             )
         }
     }
@@ -503,7 +552,9 @@ private fun PlayerBottomBar(
     session: PlayerSession,
     menuTriggerRequester: FocusRequester,
     showProgress: Boolean,
+    episodeCount: Int,
     onOpenMenu: () -> Unit,
+    onOpenEpisodes: () -> Unit,
 ) {
     val progress = if (session.durationMs > 0L) {
         (session.positionMs.toFloat() / session.durationMs).coerceIn(0f, 1f)
@@ -544,6 +595,10 @@ private fun PlayerBottomBar(
             OverlayAction(label = PlayerMenuSpec.LABEL_DANMAKU, onClick = {})
             OverlayAction(label = PlayerMenuSpec.LABEL_QUALITY, onClick = onOpenMenu)
             OverlayAction(label = PlayerMenuSpec.LABEL_SPEED, onClick = onOpenMenu)
+            // 合集播放列表面板入口（设置项 mix_playlist_panel + 当前条目属于合集时才出现）。
+            if (episodeCount > 0) {
+                OverlayAction(label = "合集（$episodeCount 集）", onClick = onOpenEpisodes)
+            }
         }
     }
 }
@@ -641,6 +696,96 @@ private fun PlayerMenuPanel(
             text = PlayerMenuSpec.TEXT_SLIDER_HINT,
             color = AxTvColors.TextSecondary,
             style = TextStyle(fontSize = 12.sp),
+        )
+    }
+}
+
+/**
+ * 合集分集面板（设置项 mix_playlist_panel 的界面落点）。
+ *
+ * 数据由调用方注入（ui/nav/PlayerFromMixScreen 走 CollectionRepository），
+ * 本页只负责展示与"选哪一集"，不直接访问接口。
+ */
+@Composable
+private fun MixEpisodePanel(
+    modifier: Modifier = Modifier,
+    firstRequester: FocusRequester,
+    episodes: List<CollectionEpisode>,
+    currentEpisodeId: String,
+    onEpisodeSelected: (CollectionEpisode) -> Unit,
+    onClose: () -> Unit,
+) {
+    val currentIndex = episodes.indexOfFirst { it.awemeId == currentEpisodeId }
+    Column(
+        modifier = modifier
+            .width(400.dp)
+            .background(AxTvColors.SurfaceHigh, RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = "合集播放列表",
+            color = AxTvColors.TextPrimary,
+            style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold),
+        )
+        Text(
+            text = if (currentIndex >= 0) {
+                "共 ${episodes.size} 集 · 当前第 ${episodes[currentIndex].number} 集"
+            } else {
+                "共 ${episodes.size} 集"
+            },
+            color = AxTvColors.TextSecondary,
+            style = TextStyle(fontSize = 13.sp),
+        )
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(episodes, key = { it.awemeId }) { episode ->
+                EpisodeRow(
+                    label = "第 ${episode.number} 集 · ${episode.title}",
+                    selected = episode.awemeId == currentEpisodeId,
+                    modifier = if (episode === episodes.first()) {
+                        Modifier.focusRequester(firstRequester)
+                    } else {
+                        Modifier
+                    },
+                    onClick = { onEpisodeSelected(episode) },
+                )
+            }
+        }
+        MenuRow(label = "关闭", value = "", onClick = onClose)
+    }
+}
+
+@Composable
+private fun EpisodeRow(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        modifier = modifier
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .background(
+                color = if (selected) AxTvColors.Accent.copy(alpha = 0.2f) else AxTvColors.Surface,
+                shape = RoundedCornerShape(8.dp),
+            )
+            .focusRing(focused, RoundedCornerShape(8.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = label,
+            color = if (selected || focused) AxTvColors.TextPrimary else AxTvColors.TextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = TextStyle(
+                fontSize = 14.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            ),
         )
     }
 }

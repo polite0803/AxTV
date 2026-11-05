@@ -50,6 +50,14 @@ interface PlaylistProvider {
 
     /** 该条目的多码率列表（降序）；没有多码率返回空。 */
     fun qualities(itemId: String): List<QualityTrack> = emptyList()
+
+    /**
+     * 回填单独拉到的作品详情（设置项「音视频分离拉取」）。
+     *
+     * 信息流条目可能不带取流信息，这时按 id 单发一次 itemVideoDetail，
+     * 用返回的 video 覆盖该条目，见 ui/nav/DetailPrefetcher。默认不接（无详情可回填的数据源）。
+     */
+    fun adoptDetail(itemId: String, video: Video) = Unit
 }
 
 /**
@@ -75,6 +83,12 @@ class VideoPlaylistProvider(private val entries: List<Entry>) : PlaylistProvider
         val coverUrl: String = "",
     )
 
+    /**
+     * 音视频分离拉取回填的取流信息：awemeId → video。
+     * 写入来自后台线程（见 [adoptDetail] 的 @Synchronized），读取都在同一把锁内。
+     */
+    private val detailVideos = HashMap<String, Video>()
+
     override fun items(): List<PlaylistItem> =
         entries.map {
             PlaylistItem(
@@ -86,16 +100,24 @@ class VideoPlaylistProvider(private val entries: List<Entry>) : PlaylistProvider
             )
         }
 
+    @Synchronized
+    override fun adoptDetail(itemId: String, video: Video) {
+        detailVideos[itemId] = video
+    }
+
+    @Synchronized
     override fun resolveUrl(itemId: String): String? {
         val entry = entry(itemId) ?: return null
         entry.resolvedUrl?.takeIf { it.isNotEmpty() }?.let { return it }
         qualities(itemId).firstOrNull()?.url?.let { return it }
-        entry.video.playAddr().urlList().firstOrNull()?.let { return it }
-        return entry.video.playAddr265().urlList().firstOrNull()
+        val video = videoOf(entry)
+        video.playAddr().urlList().firstOrNull()?.let { return it }
+        return video.playAddr265().urlList().firstOrNull()
     }
 
+    @Synchronized
     override fun backupUrl(itemId: String): String? {
-        val video = entry(itemId)?.video ?: return null
+        val video = entry(itemId)?.let { videoOf(it) } ?: return null
         val sameGearBackup = video.playAddr().urlList().getOrNull(1)
         if (sameGearBackup != null) {
             return sameGearBackup
@@ -103,8 +125,9 @@ class VideoPlaylistProvider(private val entries: List<Entry>) : PlaylistProvider
         return video.playAddr265().urlList().firstOrNull()
     }
 
+    @Synchronized
     override fun qualities(itemId: String): List<QualityTrack> {
-        val video = entry(itemId)?.video ?: return emptyList()
+        val video = entry(itemId)?.let { videoOf(it) } ?: return emptyList()
         val fromBitRate = video.bitRate()
             .filter { it.hasUrls() }
             .map { bitRateTrack(it) }
@@ -117,6 +140,9 @@ class VideoPlaylistProvider(private val entries: List<Entry>) : PlaylistProvider
     }
 
     private fun entry(itemId: String): Entry? = entries.firstOrNull { it.id == itemId }
+
+    /** 条目实际取流信息：单独拉到的详情优先（音视频分离拉取回填）。 */
+    private fun videoOf(entry: Entry): Video = detailVideos[entry.id] ?: entry.video
 
     private fun bitRateTrack(bitRate: BitRate): QualityTrack {
         val height = bitRate.playAddr().height()

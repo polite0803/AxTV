@@ -16,6 +16,7 @@ import axtv.app.AppRoutes
 import com.github.axtv.dv.ui.AxTvApp
 import com.github.axtv.dv.ui.nav.NavRoutes
 import com.github.axtv.dv.ui.nav.RouteRequest
+import com.github.axtv.dv.ui.player.PipCoordinator
 
 class MainActivity : ComponentActivity() {
 
@@ -48,6 +49,21 @@ class MainActivity : ComponentActivity() {
             routeSeq += 1
             routeRequest.value = RouteRequest(route, routeSeq)
         })
+    }
+
+    /**
+     * 离开应用时按需进入画中画（设置项 pip_enabled 的入口，判定与参数见 ui/player/PipCoordinator）。
+     * 关闭该设置时什么都不做 —— 不进小窗、也不额外暂停（暂停由 ON_STOP 生命周期负责）。
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        PipCoordinator.onUserLeaveHint(this)
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode)
+        // 对应原版 MainActivity:289-298：把小窗态写回协调器，播放页据此收起浮层与弹幕。
+        PipCoordinator.onPipModeChanged(isInPictureInPictureMode)
     }
 
     private fun handleDeepLink(intent: Intent?, onRoute: (String) -> Unit) {

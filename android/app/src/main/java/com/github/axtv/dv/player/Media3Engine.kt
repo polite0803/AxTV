@@ -69,7 +69,8 @@ internal object Media3Resources {
     @Volatile
     private var cache: SimpleCache? = null
 
-    private fun cache(context: Context): SimpleCache = synchronized(this) {
+    /** 进程级 SimpleCache（同一目录只允许实例化一次）；预载与播放共用。 */
+    internal fun cache(context: Context): SimpleCache = synchronized(this) {
         cache ?: SimpleCache(
             File(context.applicationContext.cacheDir, PlayerConfig.CACHE_DIR_NAME),
             LeastRecentlyUsedCacheEvictor(PlayerConfig.CACHE_MAX_BYTES),
@@ -103,6 +104,8 @@ class Media3Engine(context: Context) : MediaEngine, WidgetPlayerControls {
     private val appContext = context.applicationContext
 
     private val player: ExoPlayer = ExoPlayer.Builder(appContext)
+        // 「音量均衡」= 响度对齐：处理器经 RenderersFactory 注入 AudioSink（原版 po5 同一位置）。
+        .setRenderersFactory(AudioBalanceRenderersFactory(appContext))
         .setMediaSourceFactory(Media3Resources.mediaSourceFactory(appContext, useCache = false))
         .setHandleAudioBecomingNoisy(true)
         .build()

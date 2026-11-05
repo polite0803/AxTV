@@ -58,6 +58,7 @@ import com.github.axtv.dv.ui.nav.NavRoutes
 import com.github.axtv.dv.ui.nav.PlayerFromAwemeScreen
 import com.github.axtv.dv.ui.nav.PlayerFromFeaturedScreen
 import com.github.axtv.dv.ui.nav.PlayerFromFeedScreen
+import com.github.axtv.dv.ui.nav.PlayerFromMixScreen
 import com.github.axtv.dv.ui.nav.RouteRequest
 import com.github.axtv.dv.ui.nav.debugLabel
 import com.github.axtv.dv.ui.profile.ProfileScreen
@@ -179,7 +180,15 @@ fun AxTvApp(
         BackHandler(enabled = backStack.size > 1) { goBack() }
         // 『禁用双击返回退出』的消费点：开启后在栈底吞掉 BACK，不退出应用。
         BackHandler(enabled = backStack.size == 1 && AppRuntime.settings?.disableDoubleBackExit() == true) { }
-        Column(modifier = Modifier.fillMaxSize().background(AxTvColors.Bg)) {
+        // 『反向导航』只在根节点接管一次 DPAD 上/下；播放页的上下键是「上一条/下一条」
+        // （原版语义，见 PlayerSession.handleRemoteKey），所以沉浸页不参与反转。
+        val reverseNavigation = AppRuntime.settings?.reverseNavigation() == true && !immersive
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(AxTvColors.Bg)
+                .reverseDpadUpDown(reverseNavigation),
+        ) {
             if (!immersive) {
                 TopTabBar(current = destination, onSelect = { navigateTab(it.route) })
             }
@@ -273,7 +282,8 @@ fun AxTvApp(
                     )
                 }
 
-                is NavDestination.MixPlay -> PlayerFromAwemeScreen(
+                is NavDestination.MixPlay -> PlayerFromMixScreen(
+                    mixId = target.mixId,
                     awemeId = target.awemeId,
                     onBack = { goBack() },
                     modifier = Modifier.weight(1f),

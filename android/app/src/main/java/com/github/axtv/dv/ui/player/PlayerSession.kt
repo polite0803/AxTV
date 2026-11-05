@@ -24,6 +24,8 @@ import axtv.player.VideoSize
 import axtv.settings.Settings
 import com.github.axtv.dv.danmaku.DanmakuPlaybackSource
 import com.github.axtv.dv.player.Media3Engine
+import com.github.axtv.dv.player.VideoPreload
+import com.github.axtv.dv.ui.nav.DetailPrefetcher
 
 class PlayerSession(
     context: Context,
@@ -49,7 +51,15 @@ class PlayerSession(
         }
     }
 
-    private val engine: PlayerEngine = PlayerEngine(pool, queue, null, null, null, scheduler)
+    private val engine: PlayerEngine = PlayerEngine(
+        pool,
+        queue,
+        null,
+        // 「起播预载」的消费点：关闭时 createIfNeeded 返回 null，PlayerEngine 就不会预载下一条。
+        VideoPreload.createIfNeeded(context),
+        null,
+        scheduler,
+    )
         .independent(true)
         .muteUntilFirstFrame(true)
         .useCache(true)
@@ -222,6 +232,7 @@ class PlayerSession(
                 error = null
                 retrying = false
                 fallbackUsed = false
+                prefetchUpcomingDetails()
             }
         })
         engine.setSpeed(initialSpeed)
@@ -239,6 +250,18 @@ class PlayerSession(
         queue.replaceAll(items, startIndex)
         engine.openCurrentItem()
         pendingSurface?.let { engine.attachSurface(it) }
+        // 画中画入口：本会话接管 onUserLeaveHint 的进窗与三个小窗动作。
+        PipCoordinator.register(this)
+        prefetchUpcomingDetails()
+    }
+
+    /**
+     * 音视频分离拉取：给后面几条补拉作品详情（设置项 separate_video_fetch 的消费点）。
+     *
+     * 只对「当前数据源解析不出直链」的条目发请求，已有取流信息的信息流条目不会被重复拉取。
+     */
+    private fun prefetchUpcomingDetails() {
+        DetailPrefetcher.prefetchUpcoming(provider, playlistIndex, handler)
     }
 
     fun togglePlayPause() {
@@ -367,9 +390,15 @@ class PlayerSession(
             return
         }
         released = true
+        PipCoordinator.unregister(this)
+        // 离开播放页不再需要预载，取消在跑的那一条，避免后台继续拉流。
+        VideoPreload.cancelPending()
         pendingSurface = null
         engine.release()
     }
+
+    /** 视频宽高比（供画中画按比例进窗；未出尺寸时返回 0 → PipController 回退 16:9）。 */
+    fun videoAspectRatio(): Float = videoSize.aspectRatio()
 
     // ------------------------------------------------------------------ 遥控器键
 

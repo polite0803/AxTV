@@ -15,7 +15,9 @@
  *   没有 webRid 或进房拿不到房间时，退回 LiveApi.roomInfoByScene(roomId)
  *   （scene 固定 aweme_video_feed_pc）。
  *
- * 弹幕：列表样式（LiveDanmakuFeed）；不使用录播的滚动浮层。
+ * 弹幕：设置项 live_danmaku_style 二选一 ——
+ *   「滚动样式」复用录播的 DanmakuOverlayHost（danmaku/ 包，滚动渲染器），
+ *   「列表样式」用右侧的 LiveDanmakuFeed 列表。两种样式都走同一条 WebSocket 订阅。
  *
  * 边界：只读调用 Media3Engine / LiveApi，不修改 player 与核心层。
  */
@@ -116,6 +118,19 @@ fun LiveRoomScreen(
     var onlineCount by remember { mutableStateOf<Long?>(null) }
     var danmakuState by remember { mutableStateOf(DanmakuState.CONNECTING) }
 
+    // 弹幕样式（设置项 live_danmaku_style，缺省 SCROLL）：滚动 = 录播那套浮层，列表 = 右侧列表。
+    val danmakuStyle = remember(settings) {
+        settings?.liveDanmakuStyle() ?: Settings.DanmakuStyle.SCROLL
+    }
+    val rollingDanmaku = danmakuStyle == Settings.DanmakuStyle.SCROLL
+    val danmakuSource = remember { LiveDanmakuSource() }
+    var danmakuController by remember { mutableStateOf<DanmakuOverlayController?>(null) }
+    // 直播的总开关是 live_danmaku_enabled（DanmakuSettingsBinder 读的是点播开关），其余样式参数共用。
+    val danmakuConfig = remember(settings) {
+        val source = settings?.let { DanmakuSettingsBinder(it).read() } ?: DanmakuConfig()
+        source.copy(enabled = settings?.liveDanmakuEnabled() == true)
+    }
+
     // 进入房间：有 webRid 时先走 enterRoom，info_by_scene 兜底（原版 op2 的顺序）。
     LaunchedEffect(roomId, webRid, reloadToken) {
         loading = true
@@ -157,8 +172,8 @@ fun LiveRoomScreen(
         }
     }
 
-    // 弹幕：列表样式；离开页面时必须关闭 WS 与 sign.js 运行时。
-    DisposableEffect(room) {
+    // 弹幕：两种样式共用同一条订阅；离开页面时必须关闭 WS 与 sign.js 运行时。
+    DisposableEffect(room, rollingDanmaku) {
         val loaded = room
         if (loaded == null) {
             return@DisposableEffect onDispose { }
@@ -167,7 +182,13 @@ fun LiveRoomScreen(
             context = context,
             room = loaded,
             onComment = { comment ->
-                comments = (comments + comment).takeLast(MAX_COMMENTS)
+                val line = "${comment.nickname}：${comment.content}"
+                if (rollingDanmaku) {
+                    // 滚动样式：走 sendLocal 立即上屏（条目时间轴会跳过"时间已到"的实时条目）。
+                    danmakuController?.sendLocal(line)
+                } else {
+                    comments = (comments + comment).takeLast(MAX_COMMENTS)
+                }
             },
             onUserSeq = { total -> onlineCount = total },
             onState = { state -> danmakuState = state },
