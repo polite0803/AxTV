@@ -206,9 +206,9 @@ internal fun AccountManagementDialog(
                         style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
                     )
                     Text(
-                        text = "uid ${account.userId().ifBlank { "—" }} · 凭据 ${
-                            if (account.tsSign().isBlank()) "无" else "有"
-                        } · PIN ${if (account.hasPin()) "已设" else "未设"}",
+                        text = "凭据 ${if (account.tsSign().isBlank()) "无" else "有"} · PIN ${
+                            if (account.hasPin()) "已设" else "未设"
+                        }",
                         color = AxTvColors.TextSecondary,
                         style = TextStyle(fontSize = 11.sp),
                     )

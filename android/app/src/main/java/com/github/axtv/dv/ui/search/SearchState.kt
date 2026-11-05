@@ -703,7 +703,7 @@ internal class SearchState(
     }
 
     private fun api(): SearchApi =
-        SearchApi(AppRuntime.api ?: throw IllegalStateException("API 尚未装配（AppRuntime.api == null）"))
+        SearchApi(AppRuntime.api ?: throw IllegalStateException("接口组件尚未就绪，请重启应用后重试"))
 
     private suspend fun <T> call(block: () -> T): Result<T> = withContext(Dispatchers.IO) {
         try {

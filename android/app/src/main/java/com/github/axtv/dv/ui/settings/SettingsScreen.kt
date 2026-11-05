@@ -73,8 +73,6 @@ import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.nav.NavRoutes
 import kotlin.math.roundToInt
 
-private val MAIN_COUNT = SettingsPageSpec.MAIN_PAGE.size
-private val PANEL_COUNT = SettingsPageSpec.DANMAKU_STYLE_PANEL.size
 private const val THEME_PREVIEW_KEY = "theme_preview"
 
 /** 设置页动作行打开的弹层种类。 */
@@ -377,7 +375,6 @@ fun SettingsScreen(
     }
 
     val focusRequesters = remember(rows) { rows.associate { it.key to FocusRequester() } }
-    var focusedKey by remember { mutableStateOf<String?>(null) }
     // 线 H：检查更新对话框（about_update 行触发；下载/安装全部走 UpdateManager）。
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateDialogWasOpen by remember { mutableStateOf(false) }
@@ -420,13 +417,6 @@ fun SettingsScreen(
         }
     }
 
-    val dynamicCount = rows.count { it is SelectRow }
-    val controlCount = rows.count { it !is ThemePreviewRow }
-    // 未接入计数：把两个条件门都置真后仍然禁用的行，就是被 UNWIRED 清单关掉的那些。
-    val unwiredCount = rows.count {
-        it.isFocusableRow() && !isRowEnabled(it, liveDanmakuOn = true, anyDanmakuOn = true)
-    }
-
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -434,21 +424,11 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        text = "设置页",
-                        color = AxTvColors.TextPrimary,
-                        style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold),
-                    )
-                    Text(
-                        text = "规格 ${MAIN_COUNT + PANEL_COUNT} 项 = 主设置页 $MAIN_COUNT + 面板 $PANEL_COUNT" +
-                            "（NOTES 记 77，规格数组另有接口身份 2 项）" +
-                            " + 动态枚举行 $dynamicCount = $controlCount 个控件行" +
-                            " · 未接入 $unwiredCount 行（置灰标「未接入」，点击不生效）",
-                        color = AxTvColors.TextSecondary,
-                        style = TextStyle(fontSize = 13.sp),
-                    )
-                }
+                Text(
+                    text = "设置页",
+                    color = AxTvColors.TextPrimary,
+                    style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold),
+                )
             }
             items(count = visibleRows.size) { index ->
                 val row = visibleRows[index]
@@ -493,7 +473,6 @@ fun SettingsScreen(
                                 sliderValues[control.key()] = next
                                 binder?.writeFloat(control.key(), next)
                             },
-                            onFocused = { focusedKey = control.key() },
                             onAction = { key ->
                                 when (key) {
                                     "about_update" -> showUpdateDialog = true
@@ -568,7 +547,6 @@ fun SettingsScreen(
                             selected = dynamicIndexes[row.binderKey] == row.optionIndex,
                             enabled = selectEnabled,
                             modifier = Modifier.focusRequester(focusRequesters.getValue(row.key)),
-                            onFocused = { focusedKey = row.key },
                             onClick = {
                                 dynamicIndexes[row.binderKey] = row.optionIndex
                                 binder?.writeEnumIndex(row.binderKey, row.optionIndex)
@@ -592,8 +570,7 @@ fun SettingsScreen(
             }
             item {
                 Text(
-                    text = "↑/↓ 移动焦点 · OK 开关/进入 · ←/→ 调值 · BACK 关闭弹层或返回上一页" +
-                        (focusedKey?.let { " · 当前焦点 $it" } ?: ""),
+                    text = "↑/↓ 移动焦点 · OK 开关/进入 · ←/→ 调值 · BACK 关闭弹层或返回上一页",
                     color = AxTvColors.TextSecondary,
                     style = TextStyle(fontSize = 12.sp),
                 )
@@ -659,7 +636,7 @@ private fun SettingItem(
     onToggle: () -> Unit,
     onEnumChange: (Int) -> Unit,
     onSliderChange: (Int) -> Unit,
-    onFocused: () -> Unit,
+    onFocused: () -> Unit = {},
     onAction: (String) -> Unit,
 ) {
     when (control.type()) {
@@ -677,11 +654,6 @@ private fun SettingItem(
                 text = sectionLabel(control.key()),
                 color = AxTvColors.Accent,
                 style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
-            )
-            Text(
-                text = "  · ${control.key()}",
-                color = AxTvColors.TextSecondary,
-                style = TextStyle(fontSize = 11.sp),
             )
         }
 

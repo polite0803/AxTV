@@ -189,7 +189,7 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
     fun applyCookie(normalized: String, successNotice: String, fromQr: Boolean) {
         val api = AppRuntime.api
         if (api == null) {
-            state = LoginState.Failure("接口组件尚未装配完成（AppRuntime.api 为空），请重启应用后重试")
+            state = LoginState.Failure("接口组件尚未就绪，请重启应用后重试")
             return
         }
         notice = ""
@@ -469,7 +469,7 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
 
         // ───────────────── 一行说明 ─────────────────
         Text(
-            text = "说明：优先扫上方二维码；手动 Cookie 仅在扫码不可用时使用。扫码结果会调 profileSelf() 复核，失败如实提示。BACK 返回上一级。",
+            text = "说明：优先扫上方二维码；手动 Cookie 仅在扫码不可用时使用。扫码结果会复核登录态，失败如实提示。BACK 返回上一级。",
             color = AxTvColors.TextSecondary,
             style = TextStyle(fontSize = 12.sp),
             maxLines = 1,

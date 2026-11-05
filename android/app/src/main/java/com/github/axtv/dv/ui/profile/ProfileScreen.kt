@@ -268,7 +268,7 @@ fun ProfileScreen(
                     style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold),
                 )
                 Text(
-                    text = "UserApi.profileSelf() · 作品 / 关注 / 粉丝",
+                    text = "作品 / 关注 / 粉丝 / 历史",
                     color = AxTvColors.TextSecondary,
                     style = TextStyle(fontSize = 13.sp),
                 )

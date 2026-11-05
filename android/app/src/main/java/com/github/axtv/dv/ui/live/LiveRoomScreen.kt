@@ -222,7 +222,7 @@ fun LiveRoomScreen(
             .padding(horizontal = 28.dp, vertical = 20.dp),
     ) {
         Text(
-            text = "直播中 · ${room?.effectiveWebRid().orEmpty().ifBlank { roomId }}",
+            text = "直播中",
             color = AxTvColors.TextSecondary,
             style = TextStyle(fontSize = 13.sp),
         )

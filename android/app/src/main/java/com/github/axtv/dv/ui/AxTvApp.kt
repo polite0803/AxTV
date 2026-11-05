@@ -65,7 +65,6 @@ import com.github.axtv.dv.ui.nav.PlayerFromFeaturedScreen
 import com.github.axtv.dv.ui.nav.PlayerFromFeedScreen
 import com.github.axtv.dv.ui.nav.PlayerFromMixScreen
 import com.github.axtv.dv.ui.nav.RouteRequest
-import com.github.axtv.dv.ui.nav.debugLabel
 import com.github.axtv.dv.ui.profile.ProfileScreen
 import com.github.axtv.dv.ui.search.SearchResultsPage
 import com.github.axtv.dv.ui.search.SearchScreen
@@ -425,14 +424,6 @@ private fun TopTabBar(current: NavDestination, compact: Boolean, onSelect: (TopT
                 label = item.label,
                 selected = item.isSelected(current),
                 onClick = { onSelect(item) },
-            )
-        }
-        if (!compact) {
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = "统一路由 · ${current.debugLabel}",
-                color = AxTvColors.TextSecondary,
-                style = TextStyle(fontSize = 13.sp),
             )
         }
     }

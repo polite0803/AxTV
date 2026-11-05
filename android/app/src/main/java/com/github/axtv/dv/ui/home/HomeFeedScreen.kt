@@ -168,12 +168,6 @@ fun HomeFeedScreen(
             color = AxTvColors.TextPrimary,
             style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold),
         )
-        Text(
-            text = "真实数据 · 已加载 ${feedItems.size} 条" +
-                " · LazyRow + LazyColumn · 焦点记忆恢复第 ${rememberedFocusIndex + 1} 项",
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 13.sp),
-        )
         Spacer(Modifier.height(14.dp))
 
         // 首页快捷入口：把无内部回调的页面（历史/收藏/稍后再看/登录）接到统一路由。

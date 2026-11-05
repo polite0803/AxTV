@@ -63,7 +63,7 @@ fun HistoryScreen(
 ) {
     UserWorksListScreen(
         title = "历史记录",
-        subtitle = "最近观看 · VideoApi.historyRead",
+        subtitle = "最近观看",
         pageLabel = "历史记录",
         emptyText = HistoryGroupSpec.LABEL_EMPTY,
         enterFrom = "personal_history",
@@ -82,7 +82,7 @@ fun FavoritesScreen(
 ) {
     UserWorksListScreen(
         title = "收藏",
-        subtitle = "我的收藏 · UserApi.userFavorites",
+        subtitle = "我的收藏",
         pageLabel = "收藏",
         emptyText = "暂无收藏",
         enterFrom = "personal_favorite",
@@ -115,7 +115,7 @@ fun WatchLaterScreen(
 ) {
     UserWorksListScreen(
         title = "稍后再看",
-        subtitle = "VideoApi.watchLater",
+        subtitle = "稍后再看",
         pageLabel = "稍后再看",
         emptyText = "暂无稍后再看",
         enterFrom = "personal_watch_later",

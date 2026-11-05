@@ -69,7 +69,7 @@ internal object LiveRepository {
         try {
             val api = AppRuntime.api
                 ?: return@withContext Result.failure(
-                    IllegalStateException("API 尚未装配（AppRuntime.api == null）"),
+                    IllegalStateException("接口组件尚未就绪，请重启应用后重试"),
                 )
             val liveApi = LiveApi(api)
             val rooms = when (tab) {
@@ -101,7 +101,7 @@ internal object LiveRepository {
         try {
             val api = AppRuntime.api
                 ?: return@withContext Result.failure(
-                    IllegalStateException("API 尚未装配（AppRuntime.api == null）"),
+                    IllegalStateException("接口组件尚未就绪，请重启应用后重试"),
                 )
             val liveApi = LiveApi(api)
             if (webRid.isNotBlank()) {

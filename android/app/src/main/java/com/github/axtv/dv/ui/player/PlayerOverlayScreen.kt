@@ -368,7 +368,7 @@ fun PlayerOverlayScreen(
         }
 
         Column(modifier = Modifier.fillMaxSize()) {
-            if (chromeVisible && !inPip) PlayerHeader(session, surfaceType, clockText)
+            if (chromeVisible && !inPip) PlayerHeader(session, clockText)
 
             Box(
                 modifier = Modifier.fillMaxWidth().weight(1f),
@@ -456,14 +456,8 @@ fun PlayerOverlayScreen(
 @Composable
 private fun PlayerHeader(
     session: PlayerSession,
-    surfaceType: Settings.SurfaceType,
     clockText: String?,
 ) {
-    val surfaceLabel = when (surfaceType) {
-        Settings.SurfaceType.SURFACE_VIEW -> "SurfaceView"
-        Settings.SurfaceType.TEXTURE_VIEW -> "TextureView"
-        Settings.SurfaceType.GL_SURFACE_VIEW -> "GL（暂回退 SurfaceView）"
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -482,7 +476,7 @@ private fun PlayerHeader(
         )
         Spacer(Modifier.width(12.dp))
         Text(
-            text = "第 ${session.playlistIndex + 1}/${session.itemCount} 条 · 画面：$surfaceLabel",
+            text = "第 ${session.playlistIndex + 1}/${session.itemCount} 条",
             color = AxTvColors.TextSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
