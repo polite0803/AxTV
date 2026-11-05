@@ -45,8 +45,8 @@ public final class UpdateManager {
 
     private static final Logger LOG = Logger.getLogger("UpdateManager");
 
-    /** Releases 最新版接口（原文硬编码）。 */
-    public static final String RELEASE_API = "https://api.github.com/repos/mytv-android/myDV/releases/latest";
+    /** Releases 最新版接口（原文指向上游 myDV，现指向本仓库 Release）。 */
+    public static final String RELEASE_API = "https://api.github.com/repos/polite0803/AxTV/releases/latest";
 
     /** 下载目录名（相对 filesDir）。 */
     public static final String UPDATE_DIR = "updates";

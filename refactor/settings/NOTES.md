@@ -61,7 +61,7 @@
 ## 3. 更新流程（UpdateManager）
 
 ```
-check() → GET https://api.github.com/repos/mytv-android/myDV/releases/latest
+check() → GET https://api.github.com/repos/polite0803/AxTV/releases/latest
         → ReleaseJson 解析 tag_name / body / assets[]（name / browser_download_url / digest）
         → 版本比较（2.3.43 → 43）
         → 下载：UpdateMirror 依次回退 9 个镜像
