@@ -182,6 +182,7 @@ internal fun AccountManagementDialog(
     val currentId = remember(version) { AppRuntime.settings?.currentAccountId().orEmpty() }
     var pendingDelete by remember { mutableStateOf<String?>(null) }
     val firstRequester = remember { FocusRequester() }
+    val context = LocalContext.current
     LaunchedEffect(Unit) {
         withFrameNanos { }
         runCatching { firstRequester.requestFocus() }
@@ -234,7 +235,7 @@ internal fun AccountManagementDialog(
                     label = "确认删除",
                     primary = true,
                     onClick = {
-                        deleteAccount(id)
+                        deleteAccount(context, id)
                         pendingDelete = null
                         onChanged()
                         version += 1
@@ -255,7 +256,7 @@ internal fun AccountManagementDialog(
  * 删的是当前账号时顺手收口登录态：还有别的账号就切到第一个，否则清 Cookie 与互动凭据 ——
  * 留着旧 Cookie 会出现「账号列表里没有了但仍然是登录态」的不一致。
  */
-private fun deleteAccount(accountId: String) {
+private fun deleteAccount(context: Context, accountId: String) {
     val settings = AppRuntime.settings ?: return
     val remaining = settings.accounts().filterNot { it.id() == accountId }
     settings.setAccounts(remaining)
@@ -267,7 +268,7 @@ private fun deleteAccount(accountId: String) {
         settings.setCookie("")
         // 同步清运行时 CookieStore（douyin_auth/cookie_header），否则删除当前账号后
         // 请求仍带着旧 cookie（LibraryCommon.kt:75 缺口的反方向遗留）。
-        AppRuntime.syncCookieToRuntimeStore(LocalContext.current)
+        AppRuntime.syncCookieToRuntimeStore(context)
         settings.clearInteraction()
     }
 }
