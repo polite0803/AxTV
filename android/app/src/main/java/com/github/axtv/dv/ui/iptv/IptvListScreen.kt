@@ -62,6 +62,8 @@ fun IptvListScreen(
     var showQr by remember { mutableStateOf(false) }
 
     val headerRequester = remember { FocusRequester() }
+    val cardRequesters = remember { mutableMapOf<String, FocusRequester>() }
+    var focusRestoredFor by remember { mutableIntStateOf(-1) }
 
     BackHandler(onBack = onBack)
 
@@ -71,12 +73,22 @@ fun IptvListScreen(
         loading = false
     }
 
-    // 无频道可聚焦时，把焦点交给顶部按钮，避免 D-pad 无处可去。
+    // 有频道时把初始焦点落到第一张卡片；无频道时交给顶部按钮，避免遥控器无处可去、整页不响应。
     LaunchedEffect(loading, catalog) {
-        if (!loading && (catalog == null || catalog!!.totalChannels == 0)) {
+        if (loading || catalog == null) return@LaunchedEffect
+        val c = catalog!!
+        if (c.totalChannels == 0) {
             withFrameNanos { }
             runCatching { headerRequester.requestFocus() }
+            return@LaunchedEffect
         }
+        if (focusRestoredFor == reloadToken) return@LaunchedEffect
+        withFrameNanos { }
+        withFrameNanos { }
+        val firstGroup = c.groups.firstOrNull { it.channels.isNotEmpty() } ?: return@LaunchedEffect
+        val first = firstGroup.channels.first()
+        runCatching { cardRequesters["${firstGroup.title}|${first.id}"]?.requestFocus() }
+        focusRestoredFor = reloadToken
     }
 
     Column(
@@ -137,6 +149,7 @@ fun IptvListScreen(
 
             else -> IptvGroupList(
                 groups = catalog!!.groups,
+                cardRequesters = cardRequesters,
                 onPlay = onPlay,
                 modifier = Modifier.weight(1f),
             )
@@ -151,6 +164,7 @@ fun IptvListScreen(
 @Composable
 private fun IptvGroupList(
     groups: List<IptvGroup>,
+    cardRequesters: MutableMap<String, FocusRequester>,
     onPlay: (channelId: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -171,19 +185,28 @@ private fun IptvGroupList(
             item(key = "r:${group.title}") {
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                     val columns = (maxWidth / 220.dp).toInt().coerceAtLeast(2)
-                    group.channels.chunked(columns).forEach { rowItems ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            rowItems.forEach { channel ->
-                                Box(modifier = Modifier.weight(1f)) {
-                                    IptvChannelCard(channel = channel, onClick = { onPlay(channel.id) })
+                    Column {
+                        group.channels.chunked(columns).forEach { rowItems ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                rowItems.forEach { channel ->
+                                    val reqKey = "${group.title}|${channel.id}"
+                                    val requester = remember(reqKey) { FocusRequester() }
+                                        .also { cardRequesters[reqKey] = it }
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        IptvChannelCard(
+                                            channel = channel,
+                                            requester = requester,
+                                            onClick = { onPlay(channel.id) },
+                                        )
+                                    }
                                 }
-                            }
-                            // 末行不满时补位，保证每列等宽
-                            repeat(columns - rowItems.size) {
-                                Box(modifier = Modifier.weight(1f)) {}
+                                // 末行不满时补位，保证每列等宽
+                                repeat(columns - rowItems.size) {
+                                    Box(modifier = Modifier.weight(1f)) {}
+                                }
                             }
                         }
                     }
@@ -194,15 +217,20 @@ private fun IptvGroupList(
 }
 
 @Composable
-private fun IptvChannelCard(channel: IptvChannel, onClick: () -> Unit) {
+private fun IptvChannelCard(
+    channel: IptvChannel,
+    requester: FocusRequester,
+    onClick: () -> Unit,
+) {
     var focused by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
+            .focusRequester(requester)
             .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(12.dp))
             .background(if (focused) AxTvColors.SurfaceHigh else AxTvColors.Surface, RoundedCornerShape(12.dp))
             .focusRing(focused, RoundedCornerShape(12.dp))
-            .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
