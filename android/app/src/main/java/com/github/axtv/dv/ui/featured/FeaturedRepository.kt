@@ -341,12 +341,11 @@ object FeaturedRepository {
     }
 
     /**
-     * 分区内容的统一收口：只保留普通视频（aweme_type=0）且 play_addr 非空的作品，
-     * 与原版 qg5/kq5 的 filterPrimaryPlayableAwemes 一致。
-     * 推荐流里夹带的直播/图文/空壳条目没有标题、作者、时长，直接渲染就是三行占位文案。
+     * 分区内容的统一收口：普通视频（aweme_type=0）、play_addr 非空，且至少有标题或作者。
+     * 前两条对齐原版 filterPrimaryPlayableAwemes；最后一条挡掉「无标题/未知作者/00:00」空壳。
      */
     private fun FeedResponse.playableVideos(): List<Aweme> =
-        DataModels.filterPrimaryPlayableAwemes(flatAwemes()).distinctBy { it.awemeId() }
+        DataModels.filterDisplayableFeedAwemes(flatAwemes()).distinctBy { it.awemeId() }
 
     private fun ChannelConfigItem.toFeaturedChannel(): FeaturedChannel = FeaturedChannel(
         tagId = key(),

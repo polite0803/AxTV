@@ -146,7 +146,7 @@ object FeaturedWebFeed {
             val response = runCatching {
                 api.decodeBody(json, FeedResponse::class.java, "/aweme/v2/web/module/feed/")
             }.getOrNull() ?: continue
-            for (aweme in DataModels.filterPrimaryPlayableAwemes(response.flatAwemes())) {
+            for (aweme in DataModels.filterDisplayableFeedAwemes(response.flatAwemes())) {
                 val id = aweme.awemeId()
                 if (id.isNotEmpty()) out.putIfAbsent(id, aweme)
             }

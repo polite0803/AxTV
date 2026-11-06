@@ -99,10 +99,11 @@ public final class FeedDataSource {
         FeedResponse response = feedApi.tabFeed(
                 DEFAULT_PAGE_SIZE, refreshIndex, pullType, trimRecent(recentAwemeIds));
         requireSuccess(response.statusCode());
-        // 原版 kq5（首页首屏/加载更多/刷新）统一先做 filterPrimaryPlayableAwemes：
-        // 推荐流会夹带直播/图文/空壳条目，只保普通视频且带播放地址，否则卡片只剩
-        // 「无标题视频 / 未知作者 / 00:00」。这里补上同一步，别把空壳渲染成作品。
-        List<Aweme> awemes = axtv.model.DataModels.filterPrimaryPlayableAwemes(response.flatAwemes());
+        // 原版 kq5（首页首屏/加载更多/刷新）统一先做 filterPrimaryPlayableAwemes；
+        // 这里再叠加「至少有标题或作者」，推荐流夹带的直播/广告/空壳条目会被渲染成
+        // 「无标题视频 / 未知作者 / 00:00」三行占位，必须在取数层丢掉。
+        List<Aweme> awemes =
+                axtv.model.DataModels.filterDisplayableFeedAwemes(response.flatAwemes());
         // has_more 可能以布尔/数字/字符串多种形态返回，模型层（ModelJsonCodec）已按
         // FlexibleBoolean 规则归一化；缺失（false）时退回「本页非空就还能翻」，
         // 避免服务端不下发该字段时直接停在第一页。
@@ -164,6 +165,8 @@ public final class FeedDataSource {
             if (awemes.isEmpty()) {
                 awemes = axtv.model.DataModels.filterPrimaryPlayableAwemes(response.awemeList());
             }
+            // 关注流同样可能夹带无文案/无作者的占位条目（原版 UI 侧也会渲染成空卡）。
+            awemes = axtv.model.DataModels.filterDisplayableIdentity(awemes);
             long nextCursor = response.cursor() > 0 ? response.cursor() : response.maxCursor();
             return new FollowFeedPage(awemes, nextCursor);
         }
@@ -195,7 +198,8 @@ public final class FeedDataSource {
         }
         List<Aweme> kept = new java.util.ArrayList<>();
         for (Aweme aweme : response.flatAwemes()) {
-            if (!aweme.awemeId().isBlank() && axtv.model.DataModels.isPrimaryAweme(aweme)) {
+            if (!aweme.awemeId().isBlank() && axtv.model.DataModels.isPrimaryAweme(aweme)
+                    && axtv.model.DataModels.hasDisplayableIdentity(aweme)) {
                 kept.add(aweme);
             }
         }

@@ -261,9 +261,9 @@ class TypedFacadeAndFeedDataSourceTest {
     }
 
     @Test
-    void loadFeedDropsNonPlayableAndNonPrimaryEntries() throws Exception {
+    void loadFeedDropsNonPlayableNonPrimaryAndAnonymousEntries() throws Exception {
         // 推荐流会夹带直播/图文/空壳条目：没有 desc/author/duration，卡片就只剩
-        // 「无标题视频 / 未知作者 / 00:00」。原版先过 filterPrimaryPlayableAwemes，这里锁住同一步。
+        // 「无标题视频 / 未知作者 / 00:00」。取数层必须先把这类条目丢掉。
         String json = """
                 {
                   "status_code": 0,
@@ -273,7 +273,9 @@ class TypedFacadeAndFeedDataSourceTest {
                      "video": {"play_addr": {"url_list": ["https://v.example/1.mp4"]}, "duration": 15000}},
                     {"aweme_id": "7000000000000000002"},
                     {"aweme_id": "7000000000000000003", "desc": "图文", "aweme_type": 68,
-                     "video": {"play_addr": {"url_list": ["https://v.example/3.mp4"]}, "duration": 0}}
+                     "video": {"play_addr": {"url_list": ["https://v.example/3.mp4"]}, "duration": 0}},
+                    {"aweme_id": "7000000000000000004",
+                     "video": {"play_addr": {"url_list": ["https://v.example/4.mp4"]}, "duration": 9000}}
                   ]
                 }
                 """;
@@ -563,7 +565,7 @@ class TypedFacadeAndFeedDataSourceTest {
     void loadFollowPrefersDataAndDerivesNextCursor() throws Exception {
         Harness h = new Harness("""
                 {"status_code":0,"cursor":"500","max_cursor":"900",
-                 "data":[{"aweme":{"aweme_id":"7300000000000000009","aweme_type":1}}]
+                 "data":[{"aweme":{"aweme_id":"7300000000000000009","desc":"关注作品","aweme_type":1}}]
                 }""");
         FeedDataSource.FollowFeedPage page =
                 new FeedDataSource(new FeedApi(h.api())).loadFollow(0);
@@ -578,7 +580,7 @@ class TypedFacadeAndFeedDataSourceTest {
     void loadFollowFallsBackToPlayableAwemeListAndMaxCursor() throws Exception {
         Harness h = new Harness("""
                 {"status_code":0,"cursor":"0","max_cursor":"900","aweme_list":[
-                  {"aweme_id":"1","aweme_type":0,"video":{"play_addr":{"url_list":["https://a/1.mp4"]}}},
+                  {"aweme_id":"1","desc":"可播作品","aweme_type":0,"video":{"play_addr":{"url_list":["https://a/1.mp4"]}}},
                   {"aweme_id":"2","aweme_type":1}
                 ]}""");
         FeedDataSource.FollowFeedPage page =
@@ -610,14 +612,15 @@ class TypedFacadeAndFeedDataSourceTest {
     void loadMobileKeepsOnlyPrimaryNotEmptyIds() throws Exception {
         Harness h = new Harness("""
                 {"status_code":0,"has_more":true,"aweme_list":[
-                  {"aweme_id":"7300000000000000001","aweme_type":0},
+                  {"aweme_id":"7300000000000000001","desc":"移动作品","aweme_type":0},
+                  {"aweme_id":"7300000000000000002","aweme_type":0},
                   {"aweme_id":"","aweme_type":0},
                   {"aweme_id":"7300000000000000003","aweme_type":2}
                 ]}""", ClientIdentityBranch.WEB);
         FeedDataSource.FeedPage page = new FeedDataSource(new FeedApi(h.api()))
                 .loadMobile(2, List.of("7300000000000000001"));
 
-        // kq5.m7280r:1503-1510：id 非空 + isPrimaryAweme 双条件
+        // kq5.m7280r:1503-1510：id 非空 + isPrimaryAweme；另外丢掉无文案/无作者的匿名占位
         assertEquals(1, page.awemes().size());
         assertEquals("7300000000000000001", page.awemes().get(0).awemeId());
         assertTrue(page.hasMore());

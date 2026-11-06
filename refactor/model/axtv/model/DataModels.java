@@ -111,6 +111,48 @@ public final class DataModels {
         return out;
     }
 
+    /**
+     * 卡片是否有可展示的身份：至少要有文案或作者昵称。
+     *
+     * <p>推荐/关注/分区流里夹带的直播卡、广告占位、`data[].aweme` 空壳可能带播放地址，
+     * 但 desc 与 author.nickname 全空 —— 渲染出来就是「无标题视频 / 未知作者 / 00:00」。
+     */
+    public static boolean hasDisplayableIdentity(Aweme aweme) {
+        if (aweme == null) {
+            return false;
+        }
+        return !aweme.desc().isBlank() || !aweme.author().nickname().isBlank();
+    }
+
+    /** 只丢掉完全没有文案/作者的条目，其余条件保持不变（用于关注流等不做可播过滤的链路）。 */
+    public static List<Aweme> filterDisplayableIdentity(List<Aweme> list) {
+        if (list == null) {
+            return List.of();
+        }
+        List<Aweme> out = new ArrayList<>();
+        for (Aweme a : list) {
+            if (hasDisplayableIdentity(a)) {
+                out.add(a);
+            }
+        }
+        return out;
+    }
+
+    /** 普通视频 + 有播放地址 + 有文案或作者：首页/精选卡片的可展示条件。 */
+    public static List<Aweme> filterDisplayableFeedAwemes(List<Aweme> list) {
+        if (list == null) {
+            return List.of();
+        }
+        List<Aweme> out = new ArrayList<>();
+        for (Aweme a : list) {
+            if (isPrimaryAweme(a) && a.video().playAddr().hasUrls()
+                    && hasDisplayableIdentity(a)) {
+                out.add(a);
+            }
+        }
+        return out;
+    }
+
     // ---------------------------------------------------------------- 码率排序
 
     /**
