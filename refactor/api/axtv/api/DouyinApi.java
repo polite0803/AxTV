@@ -51,6 +51,12 @@ public final class DouyinApi {
     /** 对应 n11.f14568f：身份引导每个进程只尝试一次，失败也不重试，避免每个请求都多打一次。 */
     private boolean identityAttempted;
 
+    /** 首页侧身份（msToken / s_v_web_id / user_unique_id）每进程补一次：ttwid/UIFID 已齐时也要补。 */
+    private boolean homeIdentityAttempted;
+
+    /** 最近一次搜索响应体（诊断用，截断保存）。仅当请求开启 searchDiagnostics 时写入。 */
+    private volatile String lastSearchResponse = "";
+
     /** 默认按 Web 接口分支；设置项切换时由 6 参构造器传入启动快照。 */
     public DouyinApi(HttpEngine http, SignProvider signer, CookieStore cookies,
                      DeviceProfile device, JsonCodec json) {
@@ -88,6 +94,15 @@ public final class DouyinApi {
      */
     public boolean ensureAnonymousIdentity() {
         if (AnonymousIdentity.hasIdentity(cookies) && AnonymousIdentity.hasUifid(cookies)) {
+            // ttwid/UIFID 已齐（例如扫码/粘贴的登录 Cookie）时，原实现仍会补首页侧的
+            // msToken / s_v_web_id / user_unique_id；缺这些指纹时搜索会返回 status_code=0
+            // 但数据为空。acquireHomeIdentity 只补缺失键，不会覆盖登录身份。
+            synchronized (identityLock) {
+                if (!homeIdentityAttempted) {
+                    homeIdentityAttempted = true;
+                    AnonymousIdentity.acquireHomeIdentity(http, cookies);
+                }
+            }
             return true;
         }
         synchronized (identityLock) {
@@ -99,8 +114,14 @@ public final class DouyinApi {
                 return false;
             }
             identityAttempted = true;
+            homeIdentityAttempted = true;
             return AnonymousIdentity.ensure(http, cookies);
         }
+    }
+
+    /** 最近一次搜索响应体（截断，诊断用）；没有记录时为空串。 */
+    public String lastSearchResponse() {
+        return lastSearchResponse;
     }
 
     public DeviceProfile device() {
@@ -206,6 +227,12 @@ public final class DouyinApi {
                 }
             }
             cookies.putAll(updates);
+        }
+
+        // 搜索诊断：保存原始响应体（截断），空结果时由界面展示，便于区分「真无结果」与「被风控截空」。
+        if (request.writesSearchDiagnostics()) {
+            String responseBody = response.bodyText();
+            lastSearchResponse = responseBody == null ? "" : Texts.truncate(responseBody, 800);
         }
 
         // ⑥ 查错

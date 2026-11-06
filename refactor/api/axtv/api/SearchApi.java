@@ -78,8 +78,8 @@ public final class SearchApi {
                 .params(params)
                 // 原 m8067w0 传的是 m7996d(str, "video")，不是 general。
                 .referer(DouyinEndpoints.searchReferer(keyword, "video"))
-                .sign()
-                .uifidHeader(), SearchVideoWorkResponse.class);
+                // 原版 search/item 的 m8002r 实参为 212：不算 a_bogus、不带 uifid 头。
+                .searchDiagnostics(), SearchVideoWorkResponse.class);
     }
 
     /**
@@ -111,8 +111,9 @@ public final class SearchApi {
                 .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .params(params)
                 .referer(DouyinEndpoints.searchReferer(keyword, "user"))
+                // 原版 discover/search 的 m8002r 实参为 244：算 a_bogus，但不带 uifid 头。
                 .sign()
-                .uifidHeader(), SearchUserResponse.class);
+                .searchDiagnostics(), SearchUserResponse.class);
     }
 
     /**
@@ -139,8 +140,9 @@ public final class SearchApi {
                 .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .params(params)
                 .referer(DouyinEndpoints.searchReferer(keyword, "live"))
+                // 原版 live/search 的 m8002r 实参为 244：算 a_bogus，但不带 uifid 头。
                 .sign()
-                .uifidHeader(), SearchLiveResponse.class);
+                .searchDiagnostics(), SearchLiveResponse.class);
     }
 
     /**

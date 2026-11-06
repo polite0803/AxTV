@@ -608,12 +608,20 @@ internal class SearchState(
      */
     private fun diagnostics(statusCode: Int, returned: Int): String {
         val jar = AppRuntime.api?.cookies()?.cookies().orEmpty()
-        val runtimeLoggedIn = jar["sessionid"]?.isNotBlank() == true ||
-            jar["sessionid_ss"]?.isNotBlank() == true
+        fun mark(name: String) = if (jar[name].isNullOrBlank()) "无" else "有"
         val settingsLoggedIn = AppRuntime.settings?.isLoggedIn == true
-        val line = "status_code=$statusCode，返回 $returned 条；" +
-            "请求 Cookie sessionid=${if (runtimeLoggedIn) "有" else "无"}；" +
-            "设置登录态=${if (settingsLoggedIn) "有" else "无"}"
+        val fingerprints = "sessionid=${mark("sessionid")}，" +
+            "ttwid=${mark("ttwid")}，" +
+            "UIFID=${mark("UIFID")}，" +
+            "s_v_web_id=${mark("s_v_web_id")}，" +
+            "msToken=${mark("msToken")}"
+        val raw = AppRuntime.api?.lastSearchResponse().orEmpty()
+            .replace(Regex("\\s+"), " ")
+            .take(240)
+        val line = "关键词=$committedKeyword；status_code=$statusCode，返回 $returned 条；" +
+            "设置登录态=${if (settingsLoggedIn) "有" else "无"}；" +
+            "Cookie $fingerprints" +
+            if (raw.isNotBlank()) "；响应：$raw" else ""
         android.util.Log.i("AxTV_SEARCH", "kw=$committedKeyword $line")
         return line
     }
