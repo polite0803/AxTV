@@ -15,6 +15,7 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -93,296 +94,84 @@ public final class QrLoginBridge {
 
         /** 当前 Activity 是否还在（原 ez3 用 k21 的弱引用判断，取不到就提示「请回到应用界面内再发起登录」）。 */
         boolean isHostAvailable();
+
+        /** 浏览器内核标识（如 "Chrome/77.0.3865.120"），用于诊断；未知返回 "unknown"。 */
+        String engineInfo();
+
+        /**
+         * 本机 WebView 是否可用。
+         *
+         * <p>电视盒子 / 定制 ROM 可能把 WebView 裁掉，构造 {@code new WebView(context)} 直接抛
+         * {@code MissingWebViewPackageException} / {@code AndroidRuntimeException}。为 false 时
+         * 没有 WebView 时扫码登录无法完成（轮询需要页面 SDK 生成的 msToken，裸 HTTP 会被风控 4031），
+         * 由 {@link #start()} 直接给出可操作提示，不再启动会失败的流程。
+         */
+        boolean isUsable();
     }
 
     public interface Listener {
         void onState(State state);
     }
 
-    /** 页面注入脚本（原 sy3，逐字保留：钩住 XHR/fetch 记录二维码与轮询响应）。 */
-    public static final String HOOK_SCRIPT = """
-            (function(){
-              if (window.__dyHook) return;
-              window.__dyHook = true;
-              window.__dyQr = null;
-              window.__dyPoll = null;
-              window.__dyPollAt = 0;
-              function save(url, text) {
-                try {
-                  // 自建会话已经拿到码时，页面自己的响应不再覆盖：两套 token 交错会让界面
-                  // 显示一张没人轮询的旧码。自建会话还没出码前仍接受页面响应，避免两边都空。
-                  if (window.__dySelfQr) return;
-                  if (url.indexOf('/passport/web/get_qrcode/') >= 0) window.__dyQr = text;
-                  else if (url.indexOf('/passport/web/check_qrconnect/') >= 0) {
-                    window.__dyPoll = text;
-                    window.__dyPollAt = Date.now();
-                  }
-                } catch (e) {}
-              }
-              var open = XMLHttpRequest.prototype.open;
-              var send = XMLHttpRequest.prototype.send;
-              XMLHttpRequest.prototype.open = function(method, url) {
-                try { this.__dyUrl = String(url || ''); } catch (e) {}
-                return open.apply(this, arguments);
-              };
-              XMLHttpRequest.prototype.send = function() {
-                var xhr = this;
-                try {
-                  xhr.addEventListener('load', function() {
-                    var text = '';
-                    try { text = xhr.responseText; } catch (e) {
-                      try { text = JSON.stringify(xhr.response); } catch (e2) { text = ''; }
-                    }
-                    save(xhr.__dyUrl, text);
-                  });
-                } catch (e) {}
-                return send.apply(this, arguments);
-              };
-              if (window.fetch) {
-                var origFetch = window.fetch;
-                window.fetch = function(input) {
-                  var url = '';
-                  try { url = typeof input === 'string' ? input : ((input && input.url) || ''); } catch (e) {}
-                  return origFetch.apply(this, arguments).then(function(res) {
-                    try { res.clone().text().then(function(t) { save(url, t); }); } catch (e) {}
-                    return res;
-                  });
-                };
-              }
-            })()
-            """;
 
-    /**
-     * 读快照脚本：钩子抓到的二维码/轮询响应，外加页面 DOM 探针。
-     *
-     * <p>DOM 探针逐字来自原版 {@code ez3}（smali 常量；jadx 因方法溢出没能还原出宿主方法）。
-     * 扫码后风控可能把确认流程转成网页端二次身份验证（短信 / 滑块 / 刷脸），而这件事
-     * 在 {@code check_qrconnect} 的响应里没有任何字段——本类此前读的 {@code account_flow}
-     * 在整份 APK 里都不存在，是猜的——只能从 DOM 判：
-     * <ul>
-     *   <li>{@code verify}：出现 {@code #uc-second-verify} 或正文含「身份验证」；</li>
-     *   <li>{@code codeInput}：屏幕上真的渲染了一个 placeholder 含「验证码」的输入框
-     *       （隐藏 tab 里的 input 也有非零 rect，必须用 elementFromPoint 验一次），
-     *       命中即可以由应用侧数字键盘代填。</li>
-     * </ul>
-     */
-    public static final String SNAPSHOT_SCRIPT = """
-            (function(){
-              try {
-                var modal = document.querySelector('.douyin_login_new_class');
-                var text = modal ? (modal.textContent || '') : '';
-                var open = false;
-                if (modal) {
-                  var cs = getComputedStyle(modal);
-                  var mr = modal.getBoundingClientRect();
-                  open = cs.display !== 'none' && cs.visibility !== 'hidden' && mr.width > 0 && mr.height > 0;
-                }
-                var bodyText = document.body ? (document.body.textContent || '') : '';
-                var codeInput = false;
-                try {
-                  var ins = document.querySelectorAll('input');
-                  for (var ci = 0; ci < ins.length; ci++) {
-                    var cit = ins[ci];
-                    if ((cit.getAttribute('placeholder') || '').indexOf('验证码') < 0) continue;
-                    var cr = cit.getBoundingClientRect();
-                    if (cr.width < 20 || cr.height < 12) continue;
-                    var ccs = getComputedStyle(cit);
-                    if (ccs.display === 'none' || ccs.visibility === 'hidden' || ccs.opacity === '0') continue;
-                    var chit = document.elementFromPoint(cr.x + cr.width / 2, cr.y + cr.height / 2);
-                    if (chit && (chit === cit || cit.contains(chit))) { codeInput = true; break; }
-                  }
-                } catch (e9) {}
-                return JSON.stringify({
-                  qr: window.__dyQr || null,
-                  poll: window.__dyPoll || null,
-                  pollAt: window.__dyPollAt || 0,
-                  open: open,
-                  verify: !!(document.getElementById('uc-second-verify') || bodyText.indexOf('身份验证') >= 0),
-                  codeInput: codeInput,
-                  scanned: text.indexOf('已扫码') >= 0 || text.indexOf('请在手机端确认') >= 0 ||
-                           text.indexOf('需在手机上进行确认') >= 0 || text.indexOf('扫描成功') >= 0 ||
-                           text.indexOf('扫码成功') >= 0,
-                  expired: text.indexOf('二维码已过期') >= 0 || text.indexOf('二维码失效') >= 0 ||
-                           text.indexOf('已失效') >= 0
-                });
-              } catch (e) { return JSON.stringify({error:String(e)}); }
-            })()
-            """;
-
-    /**
-     * 把验证码写进页面上那个真正渲染的输入框（原版 {@code eg1} 的注入 JS，逐字保留）。
-     *
-     * <p>必须走原生 value setter：直接赋值 {@code el.value = ...} 不会触发 React 受控组件的
-     * onChange，页面拿不到值。{@code __CODE__} 由 {@link #requestCodeSubmission} 用
-     * 已过滤成纯数字的验证码替换，不存在注入面。
-     */
-    static final String CODE_FILL_SCRIPT = """
-            (function(code){
-              try {
-                var ins = document.querySelectorAll('input');
-                var el = null;
-                for (var i = 0; i < ins.length; i++) {
-                  var it = ins[i];
-                  if ((it.getAttribute('placeholder') || '').indexOf('验证码') < 0) continue;
-                  var r = it.getBoundingClientRect();
-                  if (r.width < 20 || r.height < 12) continue;
-                  var hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-                  if (hit && (hit === it || it.contains(hit))) { el = it; break; }
-                }
-                if (!el) return 'no-input';
-                el.focus();
-                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                setter.call(el, code);
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                return 'ok';
-              } catch (e) { return 'err:' + e; }
-            })("__CODE__")
-            """;
-
-    /** 点掉离验证码输入框最近的那个「验证/登录/确认/确定/提交/下一步」按钮（原版 {@code eg1}，逐字保留）。 */
-    static final String CODE_CLICK_SCRIPT = """
-            (function(){
-              try {
-                var input = null;
-                var ins = document.querySelectorAll('input');
-                for (var i = 0; i < ins.length; i++) {
-                  var it = ins[i];
-                  if ((it.getAttribute('placeholder') || '').indexOf('验证码') < 0) continue;
-                  var r = it.getBoundingClientRect();
-                  if (r.width < 20 || r.height < 12) continue;
-                  var hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-                  if (hit && (hit === it || it.contains(hit))) { input = r; break; }
-                }
-                if (!input) return JSON.stringify({ clicked: false, reason: 'no-input' });
-                var texts = ['验证', '登录', '确认', '确定', '提交', '下一步'];
-                var best = null;
-                var sawDisabled = false;
-                var els = document.querySelectorAll('button,div,span,a');
-                for (var j = 0; j < els.length; j++) {
-                  var e = els[j];
-                  var t = (e.textContent || '').trim();
-                  if (texts.indexOf(t) < 0) continue;
-                  var r2 = e.getBoundingClientRect();
-                  if (r2.width < 40 || r2.height < 20) continue;
-                  var hit2 = document.elementFromPoint(r2.x + r2.width / 2, r2.y + r2.height / 2);
-                  if (!hit2 || !(hit2 === e || e.contains(hit2))) continue;
-                  if (r2.y < input.y) continue;
-                  var btn = e.closest ? e.closest('button,[role=button]') : null;
-                  if ((btn && btn.disabled) || e.getAttribute('aria-disabled') === 'true') {
-                    sawDisabled = true;
-                    continue;
-                  }
-                  var dy = r2.y - input.y;
-                  var rank = (t === '验证' ? 0 : 1);
-                  if (!best || dy < best.dy - 5 || (Math.abs(dy - best.dy) <= 5 && rank < best.rank)) {
-                    best = { e: e, dy: dy, rank: rank };
-                  }
-                }
-                if (!best) return JSON.stringify({ clicked: false, reason: sawDisabled ? 'disabled' : 'no-button' });
-                var el = best.e;
-                try { el.click(); } catch (e1) {}
-                // 有些按钮只对 pointer 序列响应，再补一套合成指针事件（原版注释）
-                try {
-                  ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(function(type) {
-                    var ev = type.indexOf('pointer') === 0
-                      ? new PointerEvent(type, { bubbles: true, cancelable: true, isPrimary: true })
-                      : new MouseEvent(type, { bubbles: true, cancelable: true });
-                    el.dispatchEvent(ev);
-                  });
-                } catch (e2) {}
-                return JSON.stringify({ clicked: true, text: (el.textContent || '').trim() });
-              } catch (e) { return JSON.stringify({ clicked: false, reason: String(e) }); }
-            })()
-            """;
-
-    /**
-     * 出码参数：真实登录页请求 get_qrcode / check_qrconnect 时用的那一套（aid=2906 + request_host）。
-     * 缺 request_host 或 aid 换成 6383 都会被风控判成 4031，逐字保留。
-     */
-    static final String SELF_QR_PARAMS =
-            "passport_jssdk_version=3.4.17&passport_jssdk_type=normal&is_from_ttaccountsdk=1"
-                    + "&aid=2906&language=zh&account_app_language=zh-CN&ts=1793880000"
-                    + "&next=https%3A%2F%2Fcreator.douyin.com%2F&need_short_url=true&need_logo=false"
-                    + "&is_new_login=1&is_from_iesaccountsaas=1&p_ui=2.4.19&account_sdk_source=web"
-                    + "&p_js_v=3.4.17&p_js_t=pro&p_zt=3.3.34&p_ver=1.1.4-beta.5&p_ver_real=0"
-                    + "&request_host=https%253A%252F%252Fcreator.douyin.com&p_bd=1.0.1.16";
-
-    /**
-     * 页面自身不出码时的自建会话脚本。
-     *
-     * <p>电视盒子的 WebView 内核常比手机落后好几代，登录页的 UMD 包跑不起来时，页面既不会请求
-     * get_qrcode、也不会轮询，界面只能等到「二维码生成超时」。本脚本只用 ES5 + XMLHttpRequest
-     * （不依赖 fetch/Promise/箭头函数），在同一页面内自己出码并轮询，结果仍写回
-     * {@code __dyQr/__dyPoll}，主流程无需区分来源。
-     *
-     * <p>已实测：同源请求出码与轮询都不需要 sign/a_bogus，只要 aid=2906 与 request_host 正确。
-     */
-    public static final String SELF_QR_SCRIPT =
-            "(function(){\n"
-                    + "  if (window.__dySelf) return;\n"
-                    + "  window.__dySelf = true;\n"
-                    + "  var P = '" + SELF_QR_PARAMS + "';\n"
-                    + "  var token = null;\n"
-                    + "  var confirmedAt = 0;\n"
-                    + "  var busy = false;\n"
-                    + "  function request(method, url, body, done) {\n"
-                    + "    try {\n"
-                    + "      var xhr = new XMLHttpRequest();\n"
-                    + "      xhr.open(method, url, true);\n"
-                    + "      xhr.withCredentials = true;\n"
-                    + "      if (body) xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');\n"
-                    + "      xhr.onreadystatechange = function(){\n"
-                    + "        if (xhr.readyState !== 4) return;\n"
-                    + "        try { done(xhr.responseText); } catch (e) {}\n"
-                    + "      };\n"
-                    + "      xhr.send(body || null);\n"
-                    + "    } catch (e) {}\n"
-                    + "  }\n"
-                    + "  function getQr() {\n"
-                    + "    request('GET', '/passport/web/get_qrcode/?' + P, null, function(text){\n"
-                    + "      var t = null;\n"
-                    + "      try { t = JSON.parse(text).data.token; } catch (e) {}\n"
-                    + "      if (!t) return;\n"
-                    + "      window.__dyQr = text;\n"
-                    + "      window.__dySelfQr = true;\n"
-                    + "      token = t;\n"
-                    + "    });\n"
-                    + "  }\n"
-                    + "  function poll() {\n"
-                    + "    if (busy || confirmedAt) return;\n"
-                    + "    if (!token) { getQr(); return; }\n"
-                    + "    busy = true;\n"
-                    + "    request('POST', '/passport/web/check_qrconnect/?' + P, 'token=' + encodeURIComponent(token), function(text){\n"
-                    + "      busy = false;\n"
-                    + "      window.__dyPoll = text;\n"
-                    + "      window.__dyPollAt = new Date().getTime();\n"
-                    + "      var d = null;\n"
-                    + "      try { d = JSON.parse(text).data; } catch (e) { return; }\n"
-                    + "      if (!d) return;\n"
-                    + "      if (d.status === 'confirmed') {\n"
-                    + "        confirmedAt = new Date().getTime();\n"
-                    + "        window.location.href = d.redirect_url ? d.redirect_url : '/';\n"
-                    + "      } else if (d.status === 'expired' || d.status === 'refused') {\n"
-                    + "        token = null;\n"
-                    + "      }\n"
-                    + "    });\n"
-                    + "  }\n"
-                    + "  getQr();\n"
-                    + "  setInterval(poll, 2000);\n"
-                    + "})()\n";
-
-    /** 自建会话的出码参数（测试用；生产代码直接引用常量）。 */
+    /** 自建会话脚本（测试与 HTTP 会话用；生产主流程已改走页面内出码）。 */
     public static String selfQrParams() {
-        return SELF_QR_PARAMS;
+        return QrLoginScripts.SELF_QR_PARAMS;
     }
 
-    /** 自建会话脚本（测试用；生产代码直接引用常量）。 */
+    /** 自建会话脚本（测试用）。 */
     public static String selfQrScript() {
-        return SELF_QR_SCRIPT;
+        return QrLoginScripts.SELF_QR_SCRIPT;
     }
 
-    public static final long PAGE_LOAD_TIMEOUT_MS = 60_000L;    public static final long QR_TIMEOUT_MS = 60_000L;
+    // 以下为 QrLoginProtocol 的包级委托：历史测试直接以 QrLoginBridge.前缀调用。
+
+    /** @see QrLoginProtocol#parseQrImage */
+    public static byte[] parseQrImage(String qrField) {
+        return QrLoginProtocol.parseQrImage(qrField);
+    }
+
+    /** @see QrLoginProtocol#pollStatus */
+    static String pollStatus(String poll) {
+        return QrLoginProtocol.pollStatus(poll);
+    }
+
+    /** @see QrLoginProtocol#urlLooksLikeVerification */
+    static boolean urlLooksLikeVerification(String url) {
+        return QrLoginProtocol.urlLooksLikeVerification(url);
+    }
+
+    /** @see QrLoginProtocol#pollLooksLikeVerification */
+    static boolean pollLooksLikeVerification(String poll) {
+        return QrLoginProtocol.pollLooksLikeVerification(poll);
+    }
+
+    /** @see QrLoginProtocol#confirmRedirectUrl */
+    static String confirmRedirectUrl(String poll) {
+        return QrLoginProtocol.confirmRedirectUrl(poll);
+    }
+
+    /** @see QrLoginProtocol#redactPoll */
+    static String redactPoll(String poll) {
+        return QrLoginProtocol.redactPoll(poll);
+    }
+
+    // 以下为 QrLoginScripts 脚本常量的委托：测试与 Android 侧历史代码以 QrLoginBridge.前缀引用。
+
+    /** @see QrLoginScripts#HOOK_SCRIPT */
+    public static final String HOOK_SCRIPT = QrLoginScripts.HOOK_SCRIPT;
+
+    /** @see QrLoginScripts#SNAPSHOT_SCRIPT */
+    public static final String SNAPSHOT_SCRIPT = QrLoginScripts.SNAPSHOT_SCRIPT;
+
+    /** @see QrLoginScripts#DISMISS_COMPAT_SCRIPT */
+    public static final String DISMISS_COMPAT_SCRIPT = QrLoginScripts.DISMISS_COMPAT_SCRIPT;
+
+    /** @see QrLoginScripts#OPEN_LOGIN_MODAL_SCRIPT */
+    public static final String OPEN_LOGIN_MODAL_SCRIPT = QrLoginScripts.OPEN_LOGIN_MODAL_SCRIPT;
+
+    public static final long PAGE_LOAD_TIMEOUT_MS = 60_000L;
+    public static final long QR_TIMEOUT_MS = 60_000L;
     public static final long QR_FIRST_TIMEOUT_MS = 20_000L;
     public static final long EVAL_TIMEOUT_MS = 15_000L;
     public static final long COOKIE_TIMEOUT_MS = 5_000L;
@@ -393,6 +182,13 @@ public final class QrLoginBridge {
     public static final long QR_STALE_MS = 25_000L;
     /** 已扫码后等待手机端确认的窗口：页面此时不再刷新二维码，不能按 stale 重载登录页。 */
     public static final long QR_CONFIRM_TIMEOUT_MS = 120_000L;
+    /** 手机已确认却这么久了还没拿到 sessionid：把登录页浮出来，让用户看到卡在哪一步。 */
+    public static final long CONFIRM_SURFACE_DELAY_MS = 8_000L;
+    /** 「浏览器不太兼容」提示的点击间隔（弹窗可能被页面重新渲染）。 */
+    private static final long COMPAT_DISMISS_INTERVAL_MS = 5_000L;
+    /** 浮出登录页后重试点开登录入口的间隔与上限。 */
+    private static final long PAGE_OPEN_INTERVAL_MS = 3_000L;
+    private static final int PAGE_OPEN_MAX_ATTEMPTS = 5;
 
     private final WebViewHost webView;
     private final Logger log = Logger.getLogger("QrLoginManager");
@@ -402,6 +198,10 @@ public final class QrLoginBridge {
     private volatile boolean cancelled;
     /** UI 侧提交的验证码，由轮询线程取走执行（evaluateJavascript 会阻塞，不能在主线调用）。 */
     private final AtomicReference<String> pendingCode = new AtomicReference<>();
+    /** UI 侧「显示登录页」请求；由轮询线程取走执行。 */
+    private final AtomicBoolean manualVerify = new AtomicBoolean();
+    /** UI 侧「收起登录页」：抑制自动浮出，直到用户再点开或验证态消失。 */
+    private final AtomicBoolean manualDismiss = new AtomicBoolean();
     private Thread worker;
     private int restartCount;
 
@@ -410,7 +210,7 @@ public final class QrLoginBridge {
     }
 
     /**
-     * 排队提交一个短信验证码（{@link #CODE_FILL_SCRIPT} + {@link #CODE_CLICK_SCRIPT}）。
+     * 排队提交一个短信验证码（{@link QrLoginScripts#CODE_FILL_SCRIPT} + {@link QrLoginScripts#CODE_CLICK_SCRIPT}）。
      *
      * <p>只接受数字：非数字一律丢弃，剩下的一路带到 JS 里做字符串替换，所以没有注入面。
      */
@@ -421,17 +221,56 @@ public final class QrLoginBridge {
         }
     }
 
+    /**
+     * 手动打开登录页（电视端遥控器直接操作页面、完成页面上的验证）。
+     *
+     * <p>探测不到验证态时的兜底：自动判据依赖页面 DOM/URL/轮询响应，任何一种变化都可能漏掉，
+     * 用户至少要有一条「把登录页拿出来自己点」的路，不能卡在「已扫码」。
+     */
+    public void requestManualVerification() {
+        if (!this.webViewReady) {
+            // HTTP 直连模式没有页面可浮出：UI 侧按 webView 可用性隐藏入口。
+            return;
+        }
+        this.manualDismiss.set(false);
+        this.manualVerify.set(true);
+    }
+
+    /** 收起浮出的登录页（页面里按 BACK）。验证态仍在时不自动再弹，直到用户再点「显示登录页」。 */
+    public void requestVerificationDismiss() {
+        this.manualDismiss.set(true);
+    }
+
     public State state() {
         return this.state;
+    }
+
+    /** 一屏能看完的紧凑诊断（内核 / 页面弹窗 / 二维码 / 兼容提示 / 轮询状态），供登录页展示。 */
+    public String diagnostic() {
+        return this.diagnostic;
     }
 
     public void setListener(Listener listener) {
         this.listener = listener;
     }
 
+    /** 本机 WebView 是否可用（扫码登录依赖页面内 SDK，没有它无法完成登录）。 */
+    private volatile boolean webViewReady;
+    /** 一屏能看完的紧凑诊断，LoginScreen 每秒刷新展示。 */
+    private volatile String diagnostic = "";
+
     /** 开始登录（原 {@code ez3.m3964m()}：重试计数清零 + 「正在打开抖音登录页」）。 */
     public synchronized void start() {
-        if (this.webView == null || this.worker != null) {
+        if (this.worker != null) {
+            return;
+        }
+        boolean webViewReady = this.webView != null && this.webView.isUsable();
+        if (!webViewReady) {
+            // 为什么不能"无 WebView 也能扫码"：check_qrconnect 会被风控拦成 4031，
+            // 因为网页 SDK 才会生成 msToken 等反爬令牌，裸 HTTP 请求补不齐（已用真实接口验证）。
+            publish(new State(Status.FAILED,
+                    "本机没有可用的 WebView，无法完成扫码登录；请用手机面板推送登录态，或「导入 Cookie」",
+                    null, "", "", false));
             return;
         }
         if (!this.webView.isHostAvailable()) {
@@ -441,6 +280,8 @@ public final class QrLoginBridge {
         }
         this.cancelled = false;
         this.restartCount = 0;
+        this.webViewReady = true;
+        this.log.log(Level.INFO, "qr login channel=webview, engine=" + this.webView.engineInfo());
         publish(new State(Status.STARTING, "正在打开抖音登录页", null, "", "", false));
         Thread thread = new Thread(this::run, "QrLogin");
         thread.setDaemon(true);
@@ -501,47 +342,85 @@ public final class QrLoginBridge {
         try {
             this.webView.clearCookies(COOKIE_TIMEOUT_MS);
             this.webView.loadUrl(LOGIN_URL, PAGE_LOAD_TIMEOUT_MS);
-            this.webView.evaluateJavascript(HOOK_SCRIPT, EVAL_TIMEOUT_MS);
+            this.webView.evaluateJavascript(QrLoginScripts.HOOK_SCRIPT, EVAL_TIMEOUT_MS);
 
-            // 页面自己在 20s 内没出码（电视端 WebView 内核旧、登录页 UMD 包跑不起来）时，
-            // 改用页面内自建会话继续出码，而不是干等 60s 后报「二维码生成超时」。
-            long firstDeadline = System.currentTimeMillis() + QR_FIRST_TIMEOUT_MS;
-            long deadline = System.currentTimeMillis() + QR_TIMEOUT_MS;
+            // 登录页是 SPA：不打开登录弹窗就不会出码，而电视遥控器点不动网页。
+            // 这里全程用注入脚本自动操作页面：先点掉「浏览器不兼容」提示，再点开「登录/扫码登录」入口。
+            //
+            // 不再使用"自建会话"出码：它拿不到网页 SDK 生成的 msToken，check_qrconnect 会被风控
+            // 判成 4031（已用真实接口验证），手机扫码后永远不会 confirmed —— 之前"卡在已扫码"就是这条。
+            long qrDeadline = System.currentTimeMillis() + QR_TIMEOUT_MS;
+            boolean timeoutNotified = false;
+            long lastOpenAt = 0L;
+            long lastCompatAt = 0L;
+            int openAttempts = 0;
             byte[] image = null;
             String imageRaw = null;
-            boolean selfStarted = false;
-            while (!this.cancelled && System.currentTimeMillis() < deadline) {
+            while (!this.cancelled && image == null) {
                 Snapshot head = snapshot();
-                byte[] decoded = head.qrRaw == null ? null : parseQrImage(head.qrRaw);
-                if (decoded != null) {
-                    image = decoded;
+                updateDiagnostic(head, null);
+                long now = System.currentTimeMillis();
+                if (head.compat && now - lastCompatAt > COMPAT_DISMISS_INTERVAL_MS) {
+                    lastCompatAt = now;
+                    try {
+                        String dismissed = this.webView.evaluateJavascript(
+                                QrLoginScripts.DISMISS_COMPAT_SCRIPT, EVAL_TIMEOUT_MS);
+                        this.log.log(Level.INFO, "compat dialog dismiss: " + dismissed);
+                    } catch (Exception e) {
+                        this.log.log(Level.WARNING, "compat dialog dismiss failed", e);
+                    }
+                }
+                image = head.qrRaw == null ? null : QrLoginProtocol.parseQrImage(head.qrRaw);
+                if (image != null) {
                     imageRaw = head.qrRaw;
+                } else if (head.domQrRaw != null) {
+                    // 原版 ez3.m3955b 的 DOM 兜底：XHR 钩子没拿到/拿到坏响应时，直接取弹窗里的二维码图片。
+                    image = QrLoginProtocol.parseQrImage(head.domQrRaw);
+                    if (image != null) {
+                        imageRaw = head.domQrRaw;
+                    }
+                }
+                if (image != null) {
+                    this.log.log(Level.INFO, "page produced qr (modal=" + head.open
+                            + " compat=" + head.compat + " attempts=" + openAttempts + ")");
                     break;
                 }
-                if (!selfStarted && System.currentTimeMillis() > firstDeadline) {
-                    selfStarted = true;
-                    // 页面已经耗掉首轮预算，自建会话重新起算，否则会剩不到 40s 就报超时。
-                    deadline = System.currentTimeMillis() + QR_TIMEOUT_MS;
-                    this.log.log(Level.INFO, "page did not produce qr in " + QR_FIRST_TIMEOUT_MS
-                            + "ms, start self qr session");
+                boolean manual = this.manualVerify.getAndSet(false);
+                if (manual) {
+                    this.manualDismiss.set(false);
+                    this.webView.setInteractive(true);
+                    this.log.log(Level.INFO, "login page surfaced by user request");
+                    publish(new State(Status.VERIFY,
+                            "已打开登录页：可查看页面提示，或直接在页面上完成登录，完成后自动继续",
+                            null, "", "", false));
+                }
+                if (this.manualDismiss.getAndSet(false)) {
+                    this.webView.setInteractive(false);
+                    publish(new State(Status.STARTING, "正在打开抖音登录页", null, "", "", false));
+                }
+                if (openAttempts < PAGE_OPEN_MAX_ATTEMPTS && now - lastOpenAt > PAGE_OPEN_INTERVAL_MS) {
+                    lastOpenAt = now;
+                    openAttempts++;
                     try {
-                        this.webView.evaluateJavascript(SELF_QR_SCRIPT, EVAL_TIMEOUT_MS);
+                        String opened = this.webView.evaluateJavascript(
+                                QrLoginScripts.OPEN_LOGIN_MODAL_SCRIPT, EVAL_TIMEOUT_MS);
+                        this.log.log(Level.INFO, "open login modal #" + openAttempts + ": " + opened);
                     } catch (Exception e) {
-                        this.log.log(Level.WARNING, "self qr session failed to start", e);
+                        this.log.log(Level.WARNING, "open login modal failed", e);
                     }
+                }
+                if (!timeoutNotified && now > qrDeadline) {
+                    timeoutNotified = true;
+                    // 不 return：继续留在循环里，用户点「显示登录页」或页面稍后出码都还能恢复。
+                    this.log.log(Level.WARNING, "page produced no qr in " + QR_TIMEOUT_MS + "ms");
+                    publish(new State(Status.FAILED,
+                            "登录页未能生成二维码（本机浏览器内核可能过旧，站点提示不兼容）。"
+                                    + "可点「显示登录页」查看页面提示，或改用手机面板/导入 Cookie",
+                            null, "", "", false));
                 }
                 sleep(POLL_INTERVAL_MS);
             }
             if (this.cancelled) {
-                return;
-            }
-            if (image == null) {
-                // 原实现：C1902zy.m12465i("抖音二维码生成超时，请重试")
-                publish(new State(Status.FAILED,
-                        selfStarted
-                                ? "抖音二维码生成超时（登录页未出码，自动出码也失败），请检查网络后重试"
-                                : "抖音二维码生成超时，请重试",
-                        null, "", "", false));
                 return;
             }
             publish(new State(Status.WAITING_SCAN, "等待扫码", image, "", "", false));
@@ -557,9 +436,18 @@ public final class QrLoginBridge {
             String lastPollStatus = null;
             int staleRestarts = 0;
             long scannedAt = 0L;
+            long confirmedAt = 0L;
             boolean verifying = false;
+            /** 当前验证态是「应用侧数字键盘」还是「浮出登录页」。 */
+            boolean keypadMode = false;
             /** 连续判到「验证已消失」的轮数：见下面 needsVerification 分支的去抖说明。 */
             int verifyClears = 0;
+            /** 上一次的页面探针结果，只在变化时打日志，避免每秒刷屏。 */
+            String lastProbeKey = "";
+            /** 浮出登录页后点开登录入口的重试节流（弹窗关掉后入口才点得到）。 */
+            long lastPageOpenAt = 0L;
+            int pageOpenAttempts = 0;
+            boolean surfacedManually = false;
             while (!this.cancelled) {
                 String cookie = readCookie();
                 if (AuthStore.hasSessionId(cookie)) {
@@ -568,13 +456,17 @@ public final class QrLoginBridge {
                     return;
                 }
                 Snapshot snapshot = snapshot();
-                if (snapshot.qrRaw != null && !snapshot.qrRaw.equals(frameRaw)) {
-                    byte[] next = parseQrImage(snapshot.qrRaw);
+                String candidateRaw = snapshot.qrRaw != null
+                        && QrLoginProtocol.parseQrImage(snapshot.qrRaw) != null
+                        ? snapshot.qrRaw : snapshot.domQrRaw;
+                if (candidateRaw != null && !candidateRaw.equals(frameRaw)) {
+                    byte[] next = QrLoginProtocol.parseQrImage(candidateRaw);
                     if (next != null) {
                         image = next;
-                        frameRaw = snapshot.qrRaw;
+                        frameRaw = candidateRaw;
                         freshAt = System.currentTimeMillis();
                         scannedAt = 0L;
+                        confirmedAt = 0L;
                         this.log.log(Level.INFO, "qr frame updated, bytes=" + next.length + ", freshAt=" + freshAt);
                         publish(new State(Status.WAITING_SCAN, "等待扫码", image, "", "", false));
                     }
@@ -584,25 +476,41 @@ public final class QrLoginBridge {
                 }
                 if (snapshot.pollRaw != null && !snapshot.pollRaw.equals(lastPoll)) {
                     lastPoll = snapshot.pollRaw;
-                    this.log.log(Level.INFO, "check_qrconnect: " + redactPoll(snapshot.pollRaw));
+                    this.log.log(Level.INFO, "check_qrconnect: " + QrLoginProtocol.redactPoll(snapshot.pollRaw));
                     // 页面换码走的是 check_qrconnect 响应里的 data.qrcode（不是重新发 get_qrcode），
                     // 所以这里也要解一帧，否则界面会一直显示已经过期的那张码。
-                    byte[] rotated = parseQrImage(snapshot.pollRaw);
+                    byte[] rotated = QrLoginProtocol.parseQrImage(snapshot.pollRaw);
                     if (rotated != null && !java.util.Arrays.equals(rotated, image)) {
                         image = rotated;
                         freshAt = System.currentTimeMillis();
                         frameRaw = null;
                         scannedAt = 0L;
+                        confirmedAt = 0L;
                         this.log.log(Level.INFO, "qr rotated from check_qrconnect, bytes="
                                 + rotated.length + ", freshAt=" + freshAt);
                         publish(new State(Status.WAITING_SCAN, "等待扫码", image, "", "", false));
                     }
-                    String pollStatus = pollStatus(snapshot.pollRaw);
+                    String pollStatus = QrLoginProtocol.pollStatus(snapshot.pollRaw);
                     if (pollStatus != null && !pollStatus.equals(lastPollStatus)) {
                         lastPollStatus = pollStatus;
                         this.log.log(Level.INFO, "poll status=" + pollStatus);
-                        if ("scan".equals(pollStatus) || "scanned".equals(pollStatus)
-                                || "confirmed".equals(pollStatus)) {
+                        if ("confirmed".equals(pollStatus)) {
+                            // 手机已确认：之后只等 Cookie 落地。文案必须和「请确认」区分开，
+                            // 否则界面上看起来永远是同一个状态（真机上就是「卡死在已扫码」的观感）。
+                            confirmedAt = System.currentTimeMillis();
+                            String redirect = QrLoginProtocol.confirmRedirectUrl(snapshot.pollRaw);
+                            if (redirect != null) {
+                                // 网页自己是跳到这个地址才真正种下 sessionid；自建二维码会话只轮询、
+                                // 不跳转，手机确认后不补这一步，Cookie 就永远不会落地。
+                                this.log.log(Level.INFO, "confirmed, completing login via redirect: " + redirect);
+                                try {
+                                    this.webView.loadUrl(redirect, PAGE_LOAD_TIMEOUT_MS);
+                                } catch (Exception e) {
+                                    this.log.log(Level.WARNING, "confirm redirect failed", e);
+                                }
+                            }
+                            publish(new State(Status.SCANNED, "手机已确认，正在获取登录态…", image, "", "", false));
+                        } else if ("scan".equals(pollStatus) || "scanned".equals(pollStatus)) {
                             if (scannedAt == 0L) {
                                 scannedAt = System.currentTimeMillis();
                             }
@@ -610,41 +518,125 @@ public final class QrLoginBridge {
                         }
                     }
                 }
-                // 风控把确认流程转成网页端二次验证时，DOM 是唯一判据（见 SNAPSHOT_SCRIPT）。
+                // 二次验证有三路判据，任何一路命中都要把登录页交给用户：
+                //   1) DOM：验证码输入框 / 验证文案（含同源 iframe）；
+                //   2) URL：跳到了 verify/captcha/challenge 这类验证页；
+                //   3) 轮询响应：出现风控相关字段（此前读的 account_flow 是猜的，按关键字兜底）。
                 // 检查必须放在「本轮有新的 check_qrconnect 响应」那个块外面：验证页出现后页面
                 // 常常不再发轮询请求，只在响应变化时判就永远等不到。
-                boolean needsVerification = snapshot.verify || snapshot.codeInput;
-                if (needsVerification) {
-                    verifyClears = 0;
-                    if (!verifying) {
-                        verifying = true;
-                        // 屏幕上已经有验证码输入框时，不把网页摊到电视上（电视没有键盘）：
-                        // 由应用侧数字键盘收码，再注入页面 input 并点「验证」。
-                        // 滑块 / 刷脸这类没法代填的，才把登录页浮出来让用户用遥控器或鼠标操作。
-                        this.webView.setInteractive(!snapshot.codeInput);
-                        this.log.log(Level.INFO, "verification required (codeInput=" + snapshot.codeInput + "), "
-                                + (snapshot.codeInput
-                                        ? "waiting for code from the on-screen keypad"
-                                        : "surfacing login page"));
-                        publish(new State(Status.VERIFY,
-                                snapshot.codeInput
-                                        ? "该账号需要短信验证码：用下方数字键盘输入后提交"
-                                        : "该账号需要安全验证：登录页已浮出，请用遥控器或鼠标完成，之后自动继续",
-                                image, "", "", snapshot.codeInput));
-                    }
-                } else if (verifying && snapshot.valid && ++verifyClears >= 2) {
-                    // 只把“有效快照明确说验证消失”计为结束；evaluateJavascript 失败返回的
-                    // 无效快照不能把验证页收回去，否则用户填码中途会被打断。
-                    verifying = false;
-                    verifyClears = 0;
-                    this.webView.setInteractive(false);
-                    this.log.log(Level.INFO, "verification dismissed, hiding login page");
-                    publish(new State(Status.SCANNED, "验证已完成，等待手机端确认登录", image, "", "", false));
+                boolean urlVerify = QrLoginProtocol.urlLooksLikeVerification(snapshot.url);
+                boolean pollVerify = QrLoginProtocol.pollLooksLikeVerification(snapshot.pollRaw);
+                boolean detectedVerify = snapshot.verify || snapshot.codeInput || urlVerify || pollVerify;
+                String probeKey = snapshot.valid + "|" + snapshot.verify + "|" + snapshot.codeInput
+                        + "|" + urlVerify + "|" + pollVerify + "|" + snapshot.open + "|" + snapshot.url;
+                if (!probeKey.equals(lastProbeKey)) {
+                    lastProbeKey = probeKey;
+                    this.log.log(Level.INFO, "page probe: valid=" + snapshot.valid
+                            + " domVerify=" + snapshot.verify + " codeInput=" + snapshot.codeInput
+                            + " urlVerify=" + urlVerify + " pollVerify=" + pollVerify
+                            + " open=" + snapshot.open + " selfQr=" + snapshot.selfQr
+                            + " compat=" + snapshot.compat + " url=" + snapshot.url);
                 }
-                // 只有确实处在验证码验证态时才注入，避免误点页面按钮。
-                if (verifying && snapshot.codeInput) {
+                // 抖音创作者中心会给"不认识的浏览器"弹一张兼容性提示（推荐装 Edge/Chrome）。
+                // 那是网页里的下载引导，电视上点了没反应，还会盖住登录入口 —— 检测到就直接点掉。
+                // 注意：隐藏态也要点，否则它会一直挡着页面自己的登录流程。
+                if (snapshot.compat) {
+                    long nowMs = System.currentTimeMillis();
+                    if (nowMs - lastCompatAt > COMPAT_DISMISS_INTERVAL_MS) {
+                        lastCompatAt = nowMs;
+                        try {
+                            String dismissed = this.webView.evaluateJavascript(
+                                    QrLoginScripts.DISMISS_COMPAT_SCRIPT, EVAL_TIMEOUT_MS);
+                            this.log.log(Level.INFO, "compat dialog dismiss: " + dismissed);
+                        } catch (Exception e) {
+                            this.log.log(Level.WARNING, "compat dialog dismiss failed", e);
+                        }
+                    }
+                }
+                boolean manualRequest = this.manualVerify.getAndSet(false);
+                if (manualRequest || !detectedVerify) {
+                    // 用户主动打开、或验证态确实消失了 → 解除「手动收起」抑制。
+                    this.manualDismiss.set(false);
+                }
+                boolean wantVerification = (detectedVerify || manualRequest) && !this.manualDismiss.get();
+                if (wantVerification) {
+                    verifyClears = 0;
+                    // 页面上真有验证码输入框、且不是用户主动要页面 → 用应用侧数字键盘代填；
+                    // 其余情况（滑块/刷脸/整页跳到验证页）一律把登录页浮出来给用户操作。
+                    // 已经处在这一态时也要响应「改为在登录页操作」：键盘态下点它会切到页面态。
+                    boolean nextKeypad = detectedVerify && snapshot.codeInput && !manualRequest;
+                    if (!verifying || nextKeypad != keypadMode) {
+                        verifying = true;
+                        keypadMode = nextKeypad;
+                        surfacedManually = manualRequest && !keypadMode;
+                        pageOpenAttempts = 0;
+                        lastPageOpenAt = System.currentTimeMillis();
+                        this.webView.setInteractive(!keypadMode);
+                        this.log.log(Level.INFO, "verification page shown (keypad=" + keypadMode
+                                + ", manual=" + manualRequest + ")");
+                        if (!keypadMode && manualRequest) {
+                            // 用户主动要页面（或手机已确认却拿不到登录态）：把页面的登录弹窗点出来。
+                            // 二维码如果来自自建会话，页面其实还没进登录流程，不点开就永远没有验证窗口。
+                            try {
+                                String opened = this.webView.evaluateJavascript(
+                                        QrLoginScripts.OPEN_LOGIN_MODAL_SCRIPT, EVAL_TIMEOUT_MS);
+                                this.log.log(Level.INFO, "open login modal: " + opened);
+                            } catch (Exception e) {
+                                this.log.log(Level.WARNING, "open login modal failed", e);
+                            }
+                        }
+                        publish(new State(Status.VERIFY,
+                                keypadMode
+                                        ? "该账号需要短信验证码：用下方数字键盘输入后提交"
+                                        : "已打开登录页：请完成页面上的验证，完成后会自动继续",
+                                image, "", "", keypadMode));
+                    }
+                } else if (verifying) {
+                    // 手动收起立即生效；自动探测消失要连续两轮才信，避免一次 JS 失败就收起页面。
+                    boolean dismissed = this.manualDismiss.get();
+                    if (dismissed || (snapshot.valid && ++verifyClears >= 2)) {
+                        verifying = false;
+                        keypadMode = false;
+                        verifyClears = 0;
+                        this.webView.setInteractive(false);
+                        this.log.log(Level.INFO, dismissed
+                                ? "verification page hidden by user"
+                                : "verification dismissed, hiding login page");
+                        publish(new State(Status.SCANNED,
+                                dismissed ? "已收起登录页（可再点「显示登录页」）" : "验证已完成，等待手机端确认登录",
+                                image, "", "", false));
+                    }
+                }
+                // 只有确实处在「数字键盘代填」态时才注入，避免在用户自己操作的页面上误点按钮。
+                if (verifying && keypadMode && snapshot.codeInput) {
                     submitPendingCode(image);
                 }
+                // 兼容性弹窗点掉后登录入口才露出来：浮出态下按节流重试几次（最多 5 次）。
+                // 只在用户主动要页面时做，避免在自动浮出的验证页上乱点。
+                if (verifying && !keypadMode && surfacedManually && !snapshot.compat
+                        && pageOpenAttempts < PAGE_OPEN_MAX_ATTEMPTS
+                        && System.currentTimeMillis() - lastPageOpenAt > PAGE_OPEN_INTERVAL_MS) {
+                    lastPageOpenAt = System.currentTimeMillis();
+                    pageOpenAttempts++;
+                    try {
+                        String opened = this.webView.evaluateJavascript(
+                                QrLoginScripts.OPEN_LOGIN_MODAL_SCRIPT, EVAL_TIMEOUT_MS);
+                        this.log.log(Level.INFO,
+                                "open login modal retry #" + pageOpenAttempts + ": " + opened);
+                    } catch (Exception e) {
+                        this.log.log(Level.WARNING, "open login modal retry failed", e);
+                    }
+                }
+                // 手机已确认却迟迟拿不到 sessionid：多半还有一步网页端验证/确认没做完。
+                // 把登录页浮出来让用户看到并完成那一步，而不是干等 2 分钟后被 stale 逻辑重载。
+                if (confirmedAt > 0L && !verifying
+                        && System.currentTimeMillis() - confirmedAt > CONFIRM_SURFACE_DELAY_MS) {
+                    confirmedAt = 0L;
+                    this.log.log(Level.INFO, "confirmed but no sessionid after "
+                            + (CONFIRM_SURFACE_DELAY_MS / 1000) + "s, surfacing login page");
+                    this.manualVerify.set(true);
+                }
+                updateDiagnostic(snapshot, lastPollStatus);
                 long aliveAt = Math.max(freshAt, pollAt);
                 long now = System.currentTimeMillis();
                 boolean awaitingConfirm = scannedAt > 0L;
@@ -661,21 +653,17 @@ public final class QrLoginBridge {
                             + "), reload login page (#" + staleRestarts + ")");
                     publish(new State(Status.STARTING, "二维码已失效，正在重新生成", image, "", "", false));
                     this.webView.loadUrl(LOGIN_URL, PAGE_LOAD_TIMEOUT_MS);
-                    if (selfStarted) {
-                        // 重载会清掉页面里的自建会话（__dySelf），旧 token 也随之失效。
-                        try {
-                            this.webView.evaluateJavascript(SELF_QR_SCRIPT, EVAL_TIMEOUT_MS);
-                        } catch (Exception e) {
-                            this.log.log(Level.WARNING, "self qr session failed to restart", e);
-                        }
-                    }
                     freshAt = System.currentTimeMillis();
                     pollAt = 0L;
                     frameRaw = null;
                     lastPoll = null;
                     scannedAt = 0L;
+                    confirmedAt = 0L;
                     verifying = false;
+                    keypadMode = false;
                     verifyClears = 0;
+                    lastProbeKey = "";
+                    this.manualDismiss.set(false);
                     this.webView.setInteractive(false);
                 }
                 sleep(POLL_INTERVAL_MS);
@@ -696,16 +684,47 @@ public final class QrLoginBridge {
         }
     }
 
+    /** 组装一句紧凑诊断，登录页每秒展示一次；用户截图即可定位问题出在哪一环。 */
+    private void updateDiagnostic(Snapshot snapshot, String pollStatus) {
+        StringBuilder text = new StringBuilder();
+        text.append("内核=").append(this.webView.engineInfo());
+        if (snapshot != null) {
+            String rawQr = snapshot.qrRaw != null ? snapshot.qrRaw : snapshot.domQrRaw;
+            if (rawQr != null) {
+                // “码=有”只说明页面发过 get_qrcode；这里再区分响应能否解出 PNG，
+                // 老内核上常见“有响应但数据不对”，只看“有/无”会误判。
+                boolean valid = QrLoginProtocol.parseQrImage(rawQr) != null;
+                text.append(" 码=").append(valid
+                        ? "有效"
+                        : "无效(" + rawQr.length() + "B)");
+            } else {
+                text.append(" 码=无");
+            }
+            text.append(" 登录弹窗=").append(snapshot.open ? "开" : "关");
+            if (snapshot.compat) {
+                text.append(" 兼容提示=有");
+            }
+            if (snapshot.url != null && !snapshot.url.isEmpty()) {
+                text.append(" url=").append(snapshot.url.length() > 56
+                        ? snapshot.url.substring(0, 56) + "…" : snapshot.url);
+            }
+        }
+        if (pollStatus != null) {
+            text.append(" 轮询=").append(pollStatus);
+        }
+        this.diagnostic = text.toString();
+    }
+
     /**
-     * 读页面快照（{@link #SNAPSHOT_SCRIPT}）：二维码帧、页面自己 check_qrconnect 的最新响应与时间戳。
+     * 读页面快照（{@link QrLoginScripts#SNAPSHOT_SCRIPT}）：二维码帧、页面自己 check_qrconnect 的最新响应与时间戳。
      *
      * <p>扫描/过期状态由页面自己判定，本类只负责把结果如实带给 UI 与日志；登录成功仍以
      * Cookie 里出现 sessionid 为唯一判据。
      */
     private Snapshot snapshot() {
         try {
-            String raw = this.webView.evaluateJavascript(SNAPSHOT_SCRIPT, EVAL_TIMEOUT_MS);
-            String json = unwrapJsResult(raw);
+            String raw = this.webView.evaluateJavascript(QrLoginScripts.SNAPSHOT_SCRIPT, EVAL_TIMEOUT_MS);
+            String json = QrLoginProtocol.unwrapJsResult(raw);
             if (json == null || json.isEmpty()) {
                 return Snapshot.EMPTY;
             }
@@ -718,33 +737,21 @@ public final class QrLoginBridge {
             }
             return new Snapshot(
                     Json.optString(map, "qr"),
+                    Json.optString(map, "domQr"),
                     Json.optString(map, "poll"),
                     pollAt,
+                    Json.optString(map, "url"),
                     Json.optBoolean(map, "verify"),
                     Json.optBoolean(map, "codeInput"),
+                    Json.optBoolean(map, "open"),
+                    Json.optBoolean(map, "selfQr"),
+                    Json.optBoolean(map, "compat"),
                     true);
         } catch (Exception e) {
             return Snapshot.EMPTY;
         }
     }
 
-    /** 从 check_qrconnect 原始响应里抠 {@code "status":"..."}（页面用它区分 未扫码/已扫码）。 */
-    static String pollStatus(String poll) {
-        if (poll == null) {
-            return null;
-        }
-        int key = poll.indexOf("\"status\"");
-        if (key < 0) {
-            return null;
-        }
-        int colon = poll.indexOf(':', key);
-        int open = colon < 0 ? -1 : poll.indexOf('"', colon + 1);
-        int close = open < 0 ? -1 : poll.indexOf('"', open + 1);
-        if (close < 0) {
-            return null;
-        }
-        return poll.substring(open + 1, close);
-    }
 
     /**
      * 取走 UI 提交的验证码：注入页面 input，再点最接近它的那个「验证/登录/确认」按钮。
@@ -758,8 +765,8 @@ public final class QrLoginBridge {
         }
         try {
             String fill = this.webView.evaluateJavascript(
-                    CODE_FILL_SCRIPT.replace("__CODE__", code), EVAL_TIMEOUT_MS);
-            String click = this.webView.evaluateJavascript(CODE_CLICK_SCRIPT, EVAL_TIMEOUT_MS);
+                    QrLoginScripts.CODE_FILL_SCRIPT.replace("__CODE__", code), EVAL_TIMEOUT_MS);
+            String click = this.webView.evaluateJavascript(QrLoginScripts.CODE_CLICK_SCRIPT, EVAL_TIMEOUT_MS);
             this.log.log(Level.INFO, "verification code submitted (" + code.length() + " digits): fill="
                     + fill + " click=" + click);
             publish(new State(Status.VERIFY, "验证码已提交，等待页面确认…", frame, "", "", true));
@@ -770,14 +777,6 @@ public final class QrLoginBridge {
         }
     }
 
-    /** 日志脱敏：token/ticket/sessionid 的值换成 ***，并截断超长内容。 */
-    static String redactPoll(String poll) {
-        if (poll == null) {
-            return "";
-        }
-        String text = poll.replaceAll("(?i)(\"(?:token|ticket|sessionid|sessionid_ss)\"\\s*:\\s*\")[^\"]*\"", "$1***\"");
-        return text.length() > 240 ? text.substring(0, 240) + "..." : text;
-    }
 
     /**
      * 页面快照。
@@ -788,9 +787,11 @@ public final class QrLoginBridge {
      * @param verify    DOM 判到网页端二次身份验证
      * @param codeInput DOM 上真正渲染了一个「验证码」输入框（可由应用侧代填）
      */
-    record Snapshot(String qrRaw, String pollRaw, long pollAt, boolean verify, boolean codeInput,
-                    boolean valid) {
-        static final Snapshot EMPTY = new Snapshot(null, null, 0L, false, false, false);
+    record Snapshot(String qrRaw, String domQrRaw, String pollRaw, long pollAt, String url,
+                    boolean verify, boolean codeInput, boolean open, boolean selfQr,
+                    boolean compat, boolean valid) {
+        static final Snapshot EMPTY =
+                new Snapshot(null, null, null, 0L, null, false, false, false, false, false, false);
     }
 
     /**
@@ -799,83 +800,26 @@ public final class QrLoginBridge {
      * @return PNG 字节日志；尚未生成返回 null
      */
     public byte[] pollQr(long timeoutMs) throws Exception {
-        String raw = this.webView.evaluateJavascript(SNAPSHOT_SCRIPT, timeoutMs);
-        String json = unwrapJsResult(raw);
+        String raw = this.webView.evaluateJavascript(QrLoginScripts.SNAPSHOT_SCRIPT, timeoutMs);
+        String json = QrLoginProtocol.unwrapJsResult(raw);
         if (json == null || json.isEmpty()) {
             return null;
         }
         Map<String, Object> snapshot = Json.parseObject(json);
-        return parseQrImage(Json.optString(snapshot, "qr"));
-    }
-
-    /**
-     * 从 {@code {"qr":"<内层 JSON>"}} 里取出 {@code data.qrcode} 的 Base64 并解码。
-     * 原实现 {@code ez3.m3953h} + {@code m3952e}：先去 {@code data:image/…base64,} 前缀再 Base64 解码。
-     *
-     * @return PNG 字节；缺失或格式不对返回 null
-     */
-    public static byte[] parseQrImage(String qrField) {
-        if (qrField == null) {
-            return null;
-        }
-        String raw = qrField.trim();
-        if (raw.isEmpty() || "null".equals(raw)) {
-            return null;
-        }
-        String code;
-        try {
-            Map<String, Object> outer = Json.parseObject(raw);
-            Object data = outer.get("data");
-            code = data instanceof Map<?, ?> map ? String.valueOf(map.get("qrcode")) : null;
-        } catch (RuntimeException e) {
-            return null;
-        }
-        if (code == null || code.isEmpty() || "null".equals(code)) {
-            return null;
-        }
-        String base64 = code;
-        int marker = base64.indexOf("base64,");
-        if (base64.startsWith("data:image/") && marker > 0) {
-            base64 = base64.substring(marker + "base64,".length());
-        }
-        try {
-            return Base64.getDecoder().decode(base64);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
+        byte[] image = QrLoginProtocol.parseQrImage(Json.optString(snapshot, "qr"));
+        return image != null ? image : QrLoginProtocol.parseQrImage(Json.optString(snapshot, "domQr"));
     }
 
     private String readCookie() {
         try {
             String raw = this.webView.evaluateJavascript("document.cookie", EVAL_TIMEOUT_MS);
-            String cookie = unwrapJsResult(raw);
+            String cookie = QrLoginProtocol.unwrapJsResult(raw);
             return cookie == null ? "" : cookie;
         } catch (Exception e) {
             return "";
         }
     }
 
-    /** Android 的 evaluateJavascript 会把结果再包一层 JSON 字符串（原 od2.m8561d 的 JSONTokener 处理）。 */
-    static String unwrapJsResult(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        String text = raw.trim();
-        if (text.isEmpty() || "null".equals(text)) {
-            return null;
-        }
-        if (text.length() >= 2 && text.charAt(0) == '"' && text.charAt(text.length() - 1) == '"') {
-            try {
-                Object decoded = Json.parse(text);
-                if (decoded instanceof String value) {
-                    return value;
-                }
-            } catch (RuntimeException ignored) {
-                // 不是合法 JSON 字符串，按原文返回
-            }
-        }
-        return text;
-    }
 
     private void publish(State newState) {
         this.state = newState;

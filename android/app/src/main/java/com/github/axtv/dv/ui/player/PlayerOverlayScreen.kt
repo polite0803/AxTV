@@ -45,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,6 +76,7 @@ import androidx.tv.material3.Text
 import axtv.player.PlaybackError
 import axtv.player.PlayerState
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import axtv.ui.PlayerMenuSpec
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.danmaku.DanmakuComment
@@ -94,16 +96,21 @@ import kotlin.math.abs
 /** 控制层（顶部标题 + 底部按钮）无操作自动隐藏延时。 */
 private const val CONTROLS_AUTO_HIDE_MS = 4_000L
 
-/** 播放时钟取时间隔（整点 / 半点模式最多滞后一分钟）。 */
-private const val CLOCK_TICK_MS = 15_000L
-
 /** 「长按下键」阈值：达到即把焦点交给控制栏，短按才是上一条/下一条。 */
 private const val LONG_PRESS_MS = 400L
+
+/** 队列接近队尾的提前量：剩余不足这么多条时继续拉下一页，保证按「下」不会卡住。 */
+private const val QUEUE_MORE_AHEAD = 3
 
 @Composable
 fun PlayerOverlayScreen(
     modifier: Modifier = Modifier,
     playlistProvider: PlaylistProvider? = null,
+    /**
+     * 信息流/精选播放的续页入口：播放位置接近队尾时调用，返回下一批条目
+     * （空表示没有更多或本次加载失败）。只对 [VideoPlaylistProvider] 生效。
+     */
+    playlistMore: (suspend () -> List<VideoPlaylistProvider.Entry>)? = null,
     danmakuComments: List<DanmakuComment> = emptyList(),
     /**
      * 弹幕数据源注入点：非空时按当前播放条目重新拉取并替换 [danmakuComments]。
@@ -129,16 +136,16 @@ fun PlayerOverlayScreen(
     val context = LocalContext.current
     val settings = AppRuntime.settings
     val provider = playlistProvider ?: remember { demoPlaylistProvider() }
-    val surfaceType = remember(settings) { settings?.surfaceType() ?: Settings.SurfaceType.SURFACE_VIEW }
+    val surfaceType = remember(settings) { settings?.surfaceType() ?: SettingsTypes.SurfaceType.SURFACE_VIEW }
     val bufferAlign = remember(settings) { settings?.surfaceBufferAlign() == true }
     val initialSpeed = remember(settings) { settings?.playbackSpeed() ?: 1.0f }
     val completionAction = remember(settings) {
-        settings?.completionAction() ?: Settings.CompletionAction.AUTO_NEXT
+        settings?.completionAction() ?: SettingsTypes.CompletionAction.AUTO_NEXT
     }
     // 设置页三项：暂停时是否隐藏控件 / 底部是否画进度条 / 播放时钟显示模式。
     val cleanPause = remember(settings) { settings?.cleanPause() ?: false }
     val showProgressBar = remember(settings) { settings?.playerProgressBar() ?: false }
-    val clockMode = remember(settings) { settings?.playbackClock() ?: Settings.PlaybackClock.NEVER }
+    val clockMode = remember(settings) { settings?.playbackClock() ?: SettingsTypes.PlaybackClock.NEVER }
     val clockText = rememberPlayerClock(clockMode)
 
     // 弹幕总开关：设置项 video_danmaku_enabled 的播放页读写口（浮层『弹幕』按钮与面板里的开关都写它）。
@@ -158,8 +165,33 @@ fun PlayerOverlayScreen(
         )
     }
 
+    // 队尾续页：切条/追加后都会重新判断；按「下」失败时自增触发重试。
+    var moreRequest by remember { mutableIntStateOf(0) }
+    val latestPlaylistMore by rememberUpdatedState(playlistMore)
+
     // 起播一次；表面挂载晚于起播时由 PlayerSession 补挂。
     LaunchedEffect(session) { session.start(0) }
+
+    // 播放位置进入队尾提前量时继续拉下一页；一次事件内补齐到安全余量。
+    LaunchedEffect(session.playlistIndex, session.itemCount, moreRequest) {
+        val loadMore = latestPlaylistMore ?: return@LaunchedEffect
+        while (true) {
+            val count = session.itemCount
+            if (count == 0 || session.playlistIndex < count - QUEUE_MORE_AHEAD) {
+                return@LaunchedEffect
+            }
+            val added = loadMore()
+            if (added.isEmpty()) {
+                return@LaunchedEffect
+            }
+            val before = session.itemCount
+            session.appendEntries(added)
+            if (session.itemCount <= before) {
+                // 返回的全是已存在的条目：停止本轮，等下一次切条/按键再试。
+                return@LaunchedEffect
+            }
+        }
+    }
 
     // 进度条轮询（ExoPlayer 的 position 不是 Compose 状态）。
     LaunchedEffect(session) {
@@ -333,7 +365,13 @@ fun PlayerOverlayScreen(
             }
 
             KeyEventType.KeyUp -> if (isSwitch && native.eventTime - native.downTime < LONG_PRESS_MS) {
-                session.handleRemoteKey(keyCode)
+                val handled = session.handleRemoteKey(keyCode)
+                // 已到队尾但页面还能续页：再按一次「下」触发加载，而不是没反应。
+                if (!handled && keyCode == AndroidKeyEvent.KEYCODE_DPAD_DOWN &&
+                    latestPlaylistMore != null
+                ) {
+                    moreRequest += 1
+                }
             }
         }
         wakeChrome()
@@ -444,6 +482,8 @@ fun PlayerOverlayScreen(
                         onNext = { session.playNext() },
                     )
 
+                    session.skipNotice != null -> PlayerSkipNotice(text = session.skipNotice!!)
+
                     session.retrying -> PlayerHint(
                         text = if (session.retryAttempt > 0) {
                             "重试中（第 ${session.retryAttempt} 次）…"
@@ -519,455 +559,4 @@ fun PlayerOverlayScreen(
             )
         }
     }
-}
-
-@Composable
-private fun PlayerHeader(
-    session: PlayerSession,
-    clockText: String?,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.45f))
-            .padding(horizontal = 32.dp, vertical = 20.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // 标题吃掉剩余宽度并省略号收尾：抖音标题普遍很长，不加权重要把条数/时钟/进度挤出屏幕。
-        Text(
-            text = session.currentTitle.ifEmpty { "播放器浮层" },
-            color = AxTvColors.TextPrimary,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold),
-        )
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = "第 ${session.playlistIndex + 1}/${session.itemCount} 条",
-            color = AxTvColors.TextSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = TextStyle(fontSize = 13.sp),
-        )
-        Spacer(Modifier.width(12.dp))
-        if (clockText != null) {
-            Text(
-                text = clockText,
-                color = AxTvColors.TextSecondary,
-                maxLines = 1,
-                style = TextStyle(fontSize = 13.sp),
-            )
-            Spacer(Modifier.width(12.dp))
-        }
-        Text(
-            text = "${formatTime(session.positionMs)} / ${formatTime(session.durationMs)}",
-            color = AxTvColors.TextSecondary,
-            maxLines = 1,
-            style = TextStyle(fontSize = 13.sp),
-        )
-    }
-}
-
-@Composable
-private fun PlayerHint(text: String) {
-    Box(
-        modifier = Modifier
-            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-    ) {
-        Text(text = text, color = Color.White.copy(alpha = 0.85f), style = TextStyle(fontSize = 16.sp))
-    }
-}
-
-@Composable
-private fun PlayerErrorCard(
-    error: PlaybackError,
-    retryRequester: FocusRequester,
-    onRetry: () -> Unit,
-    onNext: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .background(AxTvColors.SurfaceHigh, RoundedCornerShape(12.dp))
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(
-            text = "播放失败",
-            color = AxTvColors.TextPrimary,
-            style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold),
-        )
-        Text(
-            text = "${error.message()}（code=${error.errorCode()}）",
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 14.sp),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OverlayAction(label = "重试", modifier = Modifier.focusRequester(retryRequester), onClick = onRetry)
-            OverlayAction(label = "下一个", onClick = onNext)
-        }
-    }
-}
-
-@Composable
-private fun PlayerBottomBar(
-    session: PlayerSession,
-    bottomBarFocusRequester: FocusRequester,
-    chromeFocused: Boolean,
-    showProgress: Boolean,
-    episodeCount: Int,
-    danmakuOn: Boolean,
-    onToggleDanmaku: () -> Unit,
-    onOpenMenu: () -> Unit,
-    onOpenEpisodes: () -> Unit,
-) {
-    val progress = if (session.durationMs > 0L) {
-        (session.positionMs.toFloat() / session.durationMs).coerceIn(0f, 1f)
-    } else {
-        0f
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.55f))
-            .padding(horizontal = 32.dp, vertical = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        if (showProgress) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .background(AxTvColors.Divider, RoundedCornerShape(2.dp)),
-            ) {
-                if (progress > 0f) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(progress)
-                            .height(4.dp)
-                            .background(AxTvColors.Accent, RoundedCornerShape(2.dp)),
-                    )
-                }
-            }
-        }
-        Row(
-            modifier = Modifier.focusGroup(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            OverlayAction(
-                label = if (session.playingIntent) "暂停" else "播放",
-                modifier = Modifier.focusRequester(bottomBarFocusRequester),
-                onClick = session::togglePlayPause,
-            )
-            OverlayAction(label = PlayerMenuSpec.TEXT_MENU_TITLE, onClick = onOpenMenu)
-            // 画质/倍速不在这里重复一遍：它们都在「播放菜单」面板里，多两个焦点落点只会更乱。
-            OverlayAction(
-                label = "${PlayerMenuSpec.LABEL_DANMAKU}·${if (danmakuOn) "开" else "关"}",
-                onClick = onToggleDanmaku,
-            )
-            // 合集播放列表面板入口（设置项 mix_playlist_panel + 当前条目属于合集时才出现）。
-            if (episodeCount > 0) {
-                OverlayAction(label = "合集（$episodeCount 集）", onClick = onOpenEpisodes)
-            }
-        }
-        // 焦点在哪一层必须写在界面上：否则用户只知道"按了没反应"，不知道要长按。
-        Text(
-            text = if (chromeFocused) {
-                "控制栏操作中：方向键选择，确认键执行，BACK 返回画面"
-            } else {
-                "上/下换条，左/右微调，长按↓ 进入下方控制栏"
-            },
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 12.sp),
-        )
-    }
-}
-
-@Composable
-private fun OverlayAction(
-    label: String,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = modifier
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .background(AxTvColors.Surface, RoundedCornerShape(8.dp))
-            .focusRing(focused, RoundedCornerShape(8.dp))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = label,
-            color = if (focused) AxTvColors.TextPrimary else AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-        )
-    }
-}
-
-@Composable
-private fun PlayerMenuPanel(
-    modifier: Modifier = Modifier,
-    firstRequester: FocusRequester,
-    qualityTracks: List<QualityTrack>,
-    selectedQuality: Int,
-    onQualitySelected: (Int) -> Unit,
-    speed: Float,
-    onSpeedSelected: (Float) -> Unit,
-    danmakuOn: Boolean,
-    onDanmakuToggle: () -> Unit,
-    onClose: () -> Unit,
-) {
-    Column(
-        modifier = modifier
-            .width(360.dp)
-            .focusGroup()
-            .background(AxTvColors.SurfaceHigh, RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Text(
-            text = PlayerMenuSpec.TEXT_MENU_TITLE,
-            color = AxTvColors.TextPrimary,
-            style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold),
-        )
-
-        Text(
-            text = PlayerMenuSpec.LABEL_QUALITY,
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 13.sp),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            qualityTracks.forEachIndexed { index, track ->
-                SegmentChip(
-                    label = track.label,
-                    selected = index == selectedQuality,
-                    modifier = if (index == 0) Modifier.focusRequester(firstRequester) else Modifier,
-                    onClick = { onQualitySelected(index) },
-                )
-            }
-        }
-
-        Text(
-            text = PlayerMenuSpec.LABEL_SPEED,
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 13.sp),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PlayerMenuSpec.SPEED_OPTIONS.forEach { option ->
-                SegmentChip(
-                    label = PlayerMenuSpec.speedLabel(option),
-                    selected = abs(option - speed) < 0.01f,
-                    onClick = { onSpeedSelected(option) },
-                )
-            }
-        }
-
-        MenuRow(
-            label = PlayerMenuSpec.LABEL_DANMAKU,
-            value = if (danmakuOn) "开启" else "关闭",
-            onClick = onDanmakuToggle,
-        )
-        // 原版菜单里还有「屏蔽词」「完整简介」两行（PlayerMenuSpec.LABEL_BLOCK_WORDS /
-        // LABEL_FULL_DESCRIPTION）。两者都没有后端可接（屏蔽词只在弹幕过滤器里读设置，
-        // 本应用没有编辑入口；完整简介要跳详情页但面板拿不到 awemeId），
-        // 面板现在焦点可达了，留着只会按了没反应，先不渲染。
-        MenuRow(label = PlayerMenuSpec.LABEL_BACK, value = "", onClick = onClose)
-
-        Text(
-            text = PlayerMenuSpec.TEXT_SLIDER_HINT,
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 12.sp),
-        )
-    }
-}
-
-/**
- * 合集分集面板（设置项 mix_playlist_panel 的界面落点）。
- *
- * 数据由调用方注入（ui/nav/PlayerFromMixScreen 走 CollectionRepository），
- * 本页只负责展示与"选哪一集"，不直接访问接口。
- */
-@Composable
-private fun MixEpisodePanel(
-    modifier: Modifier = Modifier,
-    firstRequester: FocusRequester,
-    episodes: List<CollectionEpisode>,
-    currentEpisodeId: String,
-    onEpisodeSelected: (CollectionEpisode) -> Unit,
-    onClose: () -> Unit,
-) {
-    val currentIndex = episodes.indexOfFirst { it.awemeId == currentEpisodeId }
-    Column(
-        modifier = modifier
-            .width(400.dp)
-            .focusGroup()
-            .background(AxTvColors.SurfaceHigh, RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(
-            text = "合集播放列表",
-            color = AxTvColors.TextPrimary,
-            style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold),
-        )
-        Text(
-            text = if (currentIndex >= 0) {
-                "共 ${episodes.size} 集 · 当前第 ${episodes[currentIndex].number} 集"
-            } else {
-                "共 ${episodes.size} 集"
-            },
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 13.sp),
-        )
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(episodes, key = { it.awemeId }) { episode ->
-                EpisodeRow(
-                    label = "第 ${episode.number} 集 · ${episode.title}",
-                    selected = episode.awemeId == currentEpisodeId,
-                    modifier = if (episode === episodes.first()) {
-                        Modifier.focusRequester(firstRequester)
-                    } else {
-                        Modifier
-                    },
-                    onClick = { onEpisodeSelected(episode) },
-                )
-            }
-        }
-        MenuRow(label = "关闭", value = "", onClick = onClose)
-    }
-}
-
-@Composable
-private fun EpisodeRow(
-    label: String,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = modifier
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .background(
-                color = if (selected) AxTvColors.Accent.copy(alpha = 0.2f) else AxTvColors.Surface,
-                shape = RoundedCornerShape(8.dp),
-            )
-            .focusRing(focused, RoundedCornerShape(8.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-    ) {
-        Text(
-            text = label,
-            color = if (selected || focused) AxTvColors.TextPrimary else AxTvColors.TextSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = TextStyle(
-                fontSize = 14.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            ),
-        )
-    }
-}
-
-@Composable
-private fun SegmentChip(
-    label: String,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = modifier
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .background(
-                color = if (selected) AxTvColors.Accent.copy(alpha = 0.2f) else AxTvColors.Surface,
-                shape = RoundedCornerShape(8.dp),
-            )
-            .focusRing(focused, RoundedCornerShape(8.dp))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        Text(
-            text = label,
-            color = if (selected || focused) AxTvColors.TextPrimary else AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 13.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal),
-        )
-    }
-}
-
-@Composable
-private fun MenuRow(label: String, value: String, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .background(AxTvColors.Surface, RoundedCornerShape(8.dp))
-            .focusRing(focused, RoundedCornerShape(8.dp))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            color = if (focused) AxTvColors.TextPrimary else AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 14.sp),
-        )
-        Spacer(Modifier.weight(1f))
-        if (value.isNotEmpty()) {
-            Text(text = value, color = AxTvColors.Accent, style = TextStyle(fontSize = 13.sp))
-        }
-    }
-}
-
-/**
- * 内置弹幕数据源：点播评论 → 弹幕。
- *
- * 走 [loadCommentDanmakuComments]（InteractionApi.comments → CommentDanmakuMapper）；
- * 失败 / 未登录返回空表。调用方未显式注入 loader 且没有静态弹幕时自动使用。
- */
-private val defaultCommentDanmakuLoader: suspend (itemId: String, durationMs: Long) -> List<DanmakuComment> =
-    { itemId, durationMs -> loadCommentDanmakuComments(AppRuntime.api, itemId, durationMs) }
-
-private fun formatTime(millis: Long): String {
-    val totalSeconds = (millis / 1000L).coerceAtLeast(0L)
-    return String.format(Locale.US, "%02d:%02d", totalSeconds / 60L, totalSeconds % 60L)
-}
-
-/**
- * 播放时钟（设置页『播放时钟』的唯一消费点）。
- *
- * 模式语义：ALWAYS 常显、HOURLY 只在整点显示、HOURLY_AND_HALF 在整点与半点显示、NEVER 不显示。
- * 每 [CLOCK_TICK_MS] 取一次时间，保证整点 / 半点后的一分钟内出现，不必逐秒刷新。
- * 不显示时返回 null，由调用方决定是渲染在标题栏还是浮在右上角。
- */
-@Composable
-private fun rememberPlayerClock(mode: Settings.PlaybackClock): String? {
-    if (mode == Settings.PlaybackClock.NEVER) return null
-    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(mode) {
-        while (true) {
-            nowMs = System.currentTimeMillis()
-            delay(CLOCK_TICK_MS)
-        }
-    }
-    val calendar = Calendar.getInstance().apply { timeInMillis = nowMs }
-    val hour = calendar.get(Calendar.HOUR_OF_DAY)
-    val minute = calendar.get(Calendar.MINUTE)
-    if (!clockVisibleAt(mode, minute)) return null
-    return String.format(Locale.US, "%02d:%02d", hour, minute)
-}
-
-private fun clockVisibleAt(mode: Settings.PlaybackClock, minute: Int): Boolean = when (mode) {
-    Settings.PlaybackClock.ALWAYS -> true
-    Settings.PlaybackClock.HOURLY -> minute == 0
-    Settings.PlaybackClock.HOURLY_AND_HALF -> minute == 0 || minute == 30
-    Settings.PlaybackClock.NEVER -> false
 }

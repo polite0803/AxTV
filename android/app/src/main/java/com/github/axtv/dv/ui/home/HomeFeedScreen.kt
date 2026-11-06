@@ -2,7 +2,7 @@
  * 样板页 1：首页信息流（真实数据 + 结构 + 焦点）。
  * 规格出处：refactor/ui/NOTES.md §信息流（i42 容器 / on5 视频页）、
  *           refactor/ui/axtv/ui/FeedPageSpec.java、HomeTabsSpec.java。
- * 数据：refactor/app/axtv/app/FeedDataSource.loadFeed(cursor)（cursor = 页序号）。
+ * 数据：refactor/app/axtv/app/FeedDataSource.loadFeed(cursor, recentIds)（cursor = 已加载页数）。
  * 栈：LazyRow（相关推荐）+ LazyColumn（主信息流），焦点索引跨页记忆。
  * 错误处理：加载中 / 失败（可重试）/ 空态均有画面，绝不把异常吞成空列表。
  */
@@ -28,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -36,9 +37,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +58,7 @@ import axtv.model.Aweme
 import axtv.ui.DetailPageSpec
 import axtv.ui.FeedPageSpec
 import axtv.ui.HomeTabsSpec
+import coil.compose.AsyncImage
 import com.github.axtv.dv.adapter.ViewedVideoTracker
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.appearance.AmbientBackdrop
@@ -69,6 +74,15 @@ private const val RELATED_LIMIT = 5
 
 /** 提前多少条触发自动续页（焦点或滚动到达末尾前 N 条就开始拉下一页）。 */
 private const val AUTO_LOAD_AHEAD = 3
+
+/** 加载更多时回传给推荐接口的最近作品数（原版取 10 个）。 */
+private const val RECENT_ID_LIMIT = 10
+
+/** 连续这么多页没有新增作品就停止自动续页，避免服务端重复返回同一页时无限请求。 */
+private const val MAX_STALLED_PAGES = 3
+
+/** 首屏至少先备这么多条：服务端偶尔只回 2 条时，不至于让整页看起来只有两个视频。 */
+private const val MIN_FEED_BUFFER = 10
 
 /**
  * 信息流条目的组合键：必须与 items(key=) 用同一个函数。
@@ -93,14 +107,19 @@ fun HomeFeedScreen(
     val retryRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
 
-    var feedItems by remember { mutableStateOf<List<Aweme>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    var feedItems by remember { mutableStateOf(HomeFeedRepository.cachedAwemes) }
+    var loading by remember { mutableStateOf(feedItems.isEmpty()) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var loadingMore by remember { mutableStateOf(false) }
     var loadMoreError by remember { mutableStateOf<String?>(null) }
-    var nextCursor by remember { mutableStateOf(1L) }
-    var hasMore by remember { mutableStateOf(true) }
+    var nextCursor by remember { mutableStateOf(HomeFeedRepository.cachedNextCursor) }
+    var hasMore by remember { mutableStateOf(HomeFeedRepository.cachedHasMore) }
     var focusRestored by remember { mutableStateOf(false) }
+    // 每次加载结束 +1：即使这一页没有带来新条目，也要重新判断一次「是否已经接近末尾」，
+    // 否则第一页加载更多返回重复数据后，焦点卡在最后一条就再也不会触发下一页。
+    var pagingTick by remember { mutableIntStateOf(0) }
+    var stalledPages by remember { mutableIntStateOf(0) }
+    var backdropCoverUrl by remember { mutableStateOf("") }
 
     /** 列表变动后清掉已消失条目的焦点请求器：残留条目会让 requestFocus() 甩到远端。 */
     fun pruneRequesters() {
@@ -115,10 +134,11 @@ fun HomeFeedScreen(
         val result = HomeFeedRepository.load(0L)
         result.fold(
             onSuccess = { page ->
-                feedItems = page.distinctBy { it.awemeId() }
-                HomeFeedRepository.cache(feedItems)
+                feedItems = page.awemes.distinctBy { it.awemeId() }
+                HomeFeedRepository.cache(feedItems, 1L, page.hasMore)
                 nextCursor = 1L
-                hasMore = page.isNotEmpty()
+                hasMore = page.hasMore
+                stalledPages = 0
                 focusRestored = false
                 pruneRequesters()
             },
@@ -131,25 +151,35 @@ fun HomeFeedScreen(
         if (loading || loadingMore || !hasMore) return
         loadingMore = true
         loadMoreError = null
+        val beforeSize = feedItems.size
+        val recentIds = feedItems
+            .takeLast(RECENT_ID_LIMIT)
+            .mapNotNull { it.awemeId().takeIf(String::isNotEmpty) }
         try {
-            val result = HomeFeedRepository.load(nextCursor)
+            val result = HomeFeedRepository.load(nextCursor, recentIds)
             result.fold(
                 onSuccess = { page ->
-                    val merged = (feedItems + page).distinctBy { it.awemeId() }
+                    val merged = (feedItems + page.awemes).distinctBy { it.awemeId() }
                     feedItems = merged
-                    HomeFeedRepository.cache(merged)
                     nextCursor += 1
-                    hasMore = page.isNotEmpty()
+                    hasMore = page.hasMore
+                    stalledPages = if (merged.size > beforeSize) 0 else stalledPages + 1
+                    if (stalledPages >= MAX_STALLED_PAGES) hasMore = false
+                    HomeFeedRepository.cache(merged, nextCursor, hasMore)
                     pruneRequesters()
                 },
                 onFailure = { loadMoreError = describeFeedError(it) },
             )
         } finally {
             loadingMore = false
+            pagingTick += 1
         }
     }
 
-    LaunchedEffect(Unit) { loadFirstPage() }
+    // 有缓存就直接复用：从播放器/详情页返回时不再重拉首屏，也不会把已翻出来的列表打回第一页。
+    LaunchedEffect(Unit) {
+        if (feedItems.isEmpty()) loadFirstPage() else focusRestored = false
+    }
 
     // 电视端没有「上滑」手势，翻页必须自己发生：焦点或滚动逼近列表末尾就请求下一页。
     // 原来这里是 FeedFooter 里一个「上滑加载更多」按钮，等于要用户先发现它、再按一次才能继续看。
@@ -162,11 +192,21 @@ fun HomeFeedScreen(
     }
     // loadingMore 不能进 key：loadNextPage 自己会把它置 true，key 变化会取消正在执行的请求，
     // 导致 loadingMore 永久卡在 true（首页再也翻不了页）。这里只保留会改变「是否需要翻页」的输入。
-    LaunchedEffect(rememberedFocusIndex, scrolledNearEnd, feedItems.size, hasMore, loading, loadMoreError) {
+    LaunchedEffect(
+        rememberedFocusIndex,
+        scrolledNearEnd,
+        feedItems.size,
+        hasMore,
+        loading,
+        loadMoreError,
+        pagingTick,
+    ) {
         if (!hasMore || loading || loadingMore || loadMoreError != null) return@LaunchedEffect
         val focusNearEnd = feedItems.isNotEmpty() &&
             rememberedFocusIndex >= feedItems.size - AUTO_LOAD_AHEAD
-        if (focusNearEnd || scrolledNearEnd) loadNextPage()
+        // 服务端偶尔只回很少几条：先把缓冲区补到 MIN_FEED_BUFFER，否则电视上看起来只有两个视频。
+        val needsBuffer = feedItems.size < MIN_FEED_BUFFER
+        if (focusNearEnd || scrolledNearEnd || needsBuffer) loadNextPage()
     }
 
     // 焦点记忆：数据到位后滚到上次条目，下一帧再请求焦点。
@@ -197,12 +237,14 @@ fun HomeFeedScreen(
     LaunchedEffect(focusCoverUrl, AxAppearance.version.intValue) {
         // 开「画面取色」时每次移动焦点都会换一张封面：去抖 250ms，
         // 连按方向键的过程中不要每张封面都跑一次 Coil 取色 + 全局重着色（重着色会重组整棵树）。
+        // 背景图同步去抖：否则每移一格都下载/解码一张全屏封面，电视上会明显卡顿。
         delay(250L)
+        backdropCoverUrl = focusCoverUrl
         AxAppearance.sampleCoverSeed(context, focusCoverUrl)
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        AmbientBackdrop(focusCoverUrl)
+        AmbientBackdrop(backdropCoverUrl)
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -361,274 +403,5 @@ fun HomeFeedScreen(
             }
         }
     }
-    }
-}
-
-/** 把 ApiException 的种类翻译成可读文案；未识别的异常保留原始 message。 */
-private fun describeFeedError(t: Throwable): String = when (t) {
-    is ApiException -> when (t.kind()) {
-        ApiException.Kind.NETWORK -> "网络请求失败：${t.message.orEmpty()}"
-        ApiException.Kind.HTTP_STATUS -> "服务端返回 HTTP ${t.httpStatus()}"
-        ApiException.Kind.EMPTY_BODY -> "空响应：签名参数失效或 Cookie 已过期"
-        ApiException.Kind.HEADER_ERROR -> "请求被拦截：${t.message.orEmpty()}"
-        ApiException.Kind.API_STATUS -> "接口状态异常：status_code=${t.apiStatus()}"
-        ApiException.Kind.LOGIN_REQUIRED -> t.message.orEmpty()
-        ApiException.Kind.RATE_LIMITED -> t.message.orEmpty()
-        ApiException.Kind.DECODE -> "响应解析失败：${t.message.orEmpty()}"
-        ApiException.Kind.MISSING_CREDENTIAL -> t.message.orEmpty()
-        else -> "请求失败：${t.message.orEmpty()}"
-    }
-
-    else -> t.message ?: t.javaClass.simpleName
-}
-
-private fun formatCount(value: Long): String = when {
-    value >= 100_000_000L -> String.format(Locale.US, "%.1f亿", value / 100_000_000.0)
-    value >= 10_000L -> String.format(Locale.US, "%.1f万", value / 10_000.0)
-    else -> value.toString()
-}
-
-private fun Aweme.cardTitle(): String = desc().ifBlank { FeedPageSpec.TEXT_UNTITLED_VIDEO }
-
-/** 「已看」角标文案：来源是本地环形缓冲（ViewedVideoTracker），不是服务端历史。 */
-private const val TEXT_VIEWED = "已看"
-
-private fun Aweme.cardAuthor(): String =
-    author().nickname().takeIf { it.isNotBlank() }?.let { "@$it" } ?: "未知作者"
-
-private fun Aweme.cardMeta(): String {
-    val stat = statistics()
-    return listOf(
-        "点赞 ${formatCount(stat.diggCount())}",
-        "评论 ${formatCount(stat.commentCount())}",
-        "收藏 ${formatCount(stat.collectCount())}",
-    ).joinToString(FeedPageSpec.TEXT_META_SEPARATOR)
-}
-
-private fun Aweme.durationLabel(): String {
-    val totalSeconds = (video().duration().toLong() / 1000L).coerceAtLeast(0L)
-    return String.format(Locale.US, "%02d:%02d", totalSeconds / 60L, totalSeconds % 60L)
-}
-
-@Composable
-private fun FeedStatePanel(
-    title: String,
-    detail: String,
-    actionLabel: String? = null,
-    actionRequester: FocusRequester? = null,
-    onAction: (() -> Unit)? = null,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(AxTvColors.Surface, RoundedCornerShape(12.dp))
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            text = title,
-            color = AxTvColors.TextPrimary,
-            style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
-        )
-        Text(
-            text = detail,
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 13.sp),
-        )
-        if (actionLabel != null && onAction != null) {
-            var focused by remember { mutableStateOf(false) }
-            Box(
-                modifier = (if (actionRequester != null) Modifier.focusRequester(actionRequester) else Modifier)
-                    .onFocusChanged { focused = it.isFocused }
-                    .clickable(onClick = onAction)
-                    .background(AxTvColors.SurfaceHigh, RoundedCornerShape(8.dp))
-                    .focusRing(focused, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 18.dp, vertical = 10.dp),
-            ) {
-                Text(
-                    text = actionLabel,
-                    color = if (focused) AxTvColors.TextPrimary else AxTvColors.TextSecondary,
-                    style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun HomeTabChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = Modifier
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .background(
-                color = if (selected) AxTvColors.Accent.copy(alpha = 0.16f) else AxTvColors.Surface,
-                shape = RoundedCornerShape(8.dp),
-            )
-            .focusRing(focused, RoundedCornerShape(8.dp))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = label,
-            color = if (selected || focused) AxTvColors.TextPrimary else AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 14.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal),
-        )
-    }
-}
-
-@Composable
-private fun RelatedCard(item: Aweme, viewed: Boolean, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Column(
-        modifier = Modifier
-            .width(240.dp)
-            .height(150.dp)
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .background(AxTvColors.Surface, RoundedCornerShape(12.dp))
-            .focusRing(focused, RoundedCornerShape(12.dp))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .background(AxTvColors.SurfaceHigh, RoundedCornerShape(8.dp)),
-        )
-        Text(
-            text = item.cardTitle(),
-            color = AxTvColors.TextPrimary,
-            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-        )
-        Text(
-            text = "${item.cardAuthor()} · ${item.durationLabel()}",
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 12.sp),
-        )
-        if (viewed) ViewedBadge()
-    }
-}
-
-@Composable
-private fun FeedRow(
-    item: Aweme,
-    viewed: Boolean,
-    requester: FocusRequester,
-    onFocused: () -> Unit,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .focusRequester(requester)
-            .onFocusChanged {
-                focused = it.isFocused
-                if (it.isFocused) onFocused()
-            }
-            .clickable(onClick = onClick)
-            .background(AxTvColors.Surface, RoundedCornerShape(12.dp))
-            .focusRing(focused, RoundedCornerShape(12.dp))
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .width(160.dp)
-                .height(90.dp)
-                .background(AxTvColors.SurfaceHigh, RoundedCornerShape(8.dp)),
-        )
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                text = item.cardTitle(),
-                color = AxTvColors.TextPrimary,
-                style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
-            )
-            Text(
-                text = "${item.cardAuthor()} · ${item.durationLabel()}",
-                color = AxTvColors.TextSecondary,
-                style = TextStyle(fontSize = 13.sp),
-            )
-            Text(
-                text = item.cardMeta(),
-                color = AxTvColors.TextSecondary,
-                style = TextStyle(fontSize = 12.sp),
-            )
-            if (viewed) ViewedBadge()
-        }
-    }
-}
-
-/** 已看角标：小胶囊，取自本地 viewed_video_ids 清单。 */
-@Composable
-private fun ViewedBadge() {
-    Box(
-        modifier = Modifier
-            .background(AxTvColors.SurfaceHigh, RoundedCornerShape(6.dp))
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-    ) {
-        Text(
-            text = TEXT_VIEWED,
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.SemiBold),
-        )
-    }
-}
-
-@Composable
-private fun FeedFooter(
-    loadingMore: Boolean,
-    error: String?,
-    hasMore: Boolean,
-    loadedCount: Int,
-    onLoadMore: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    when {
-        loadingMore -> Text(
-            text = "加载更多中…",
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 13.sp),
-        )
-
-        error != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = "加载更多失败：$error",
-                color = AxTvColors.AccentWarm,
-                style = TextStyle(fontSize = 13.sp),
-            )
-            Box(
-                modifier = Modifier
-                    .onFocusChanged { focused = it.isFocused }
-                    .clickable(onClick = onLoadMore)
-                    .background(AxTvColors.Surface, RoundedCornerShape(8.dp))
-                    .focusRing(focused, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            ) {
-                Text(
-                    text = "重试",
-                    color = AxTvColors.TextPrimary,
-                    style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
-                )
-            }
-        }
-
-        hasMore -> Text(
-            // 原来是这里一个可点击的「上滑加载更多」：电视没有上滑手势，焦点走到末尾还会
-            // 撞上一个要按确认才生效的按钮。翻页现在由上面的 LaunchedEffect 在焦点/滚动
-            // 接近末尾时自动发生，这里只留状态说明。
-            text = "继续下移自动加载（已加载 $loadedCount 条）",
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 13.sp),
-        )
-
-        else -> Text(
-            text = "已加载全部 $loadedCount 条",
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 13.sp),
-        )
     }
 }

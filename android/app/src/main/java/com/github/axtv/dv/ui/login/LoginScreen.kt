@@ -74,11 +74,16 @@ import axtv.api.ApiException
 import axtv.api.UserApi
 import axtv.panel.QrLoginBridge
 import com.github.axtv.dv.adapter.AppRuntime
+import com.github.axtv.dv.panel.PanelRuntime
 import com.github.axtv.dv.api.SharedPrefsCookieStore
+import com.github.axtv.dv.ui.featured.FeaturedRepository
+import com.github.axtv.dv.ui.home.HomeFeedRepository
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.login.qr.AndroidQrWebViewHost
 import com.github.axtv.dv.ui.login.qr.findActivity
+import com.github.axtv.dv.ui.settings.QrLink
+import com.github.axtv.dv.ui.settings.QrLinksDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -115,7 +120,7 @@ private data class QrUiState(
 private const val TAG_QR = "AxTV_QR"
 
 /** Cookie 属性名（粘贴完整 Set-Cookie 行时需要剔除）。 */
-private val COOKIE_ATTRIBUTES = setOf(
+internal val COOKIE_ATTRIBUTES = setOf(
     "path", "domain", "expires", "max-age", "secure", "httponly",
     "samesite", "priority", "partitioned", "comment", "version",
 )
@@ -131,7 +136,9 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
     var notice by remember { mutableStateOf("") }
     var qrState by remember { mutableStateOf(QrUiState()) }
     var qrBridge by remember { mutableStateOf<QrLoginBridge?>(null) }
-    var qrHost by remember { mutableStateOf<AndroidQrWebViewHost?>(null) }
+    var qrHost by remember { mutableStateOf<QrLoginBridge.WebViewHost?>(null) }
+    /** 本机 WebView 是否可用；不可用时桥走纯 HTTP 通道，界面上不该再出现「显示登录页」。 */
+    var webViewUsable by remember { mutableStateOf(true) }
     /** 上一帧二维码内容的哈希：页面换码后桥会推新帧，据此刷新「最近刷新」时间。 */
     var lastQrFrameHash by remember { mutableStateOf(0) }
     /** 每秒跳一次的时钟，仅用于展示「最近刷新 X 秒前」。 */
@@ -143,6 +150,8 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
     val qrSide = with(LocalDensity.current) { 480.toDp() }
     /** 风控把扫码转成短信验证码时，应用侧数字键盘收集的那串数字。 */
     var verifyCode by remember { mutableStateOf("") }
+    /** 一屏能看完的登录诊断（内核 / 页面 / 二维码 / 轮询），用户截图即可定位问题。 */
+    var diagnosticText by remember { mutableStateOf("") }
     val keypadVisible = qrState.phase == QrPhase.Verifying && qrState.codeInput
 
     BackHandler { onBack() }
@@ -160,6 +169,22 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
         if (keypadVisible) {
             verifyCode = ""
         } else {
+            withFrameNanos { }
+            runCatching { qrRequester.requestFocus() }
+        }
+    }
+
+    // 诊断信息每秒刷新一次：扫码登录依赖页面内 SDK，出问题时这是最有用的现场证据。
+    LaunchedEffect(Unit) {
+        while (true) {
+            diagnosticText = qrBridge?.diagnostic().orEmpty()
+            delay(1000)
+        }
+    }
+
+    // 同上：浮出的登录页收起后阶段回到 Waiting，也要把焦点拉回扫码区。
+    LaunchedEffect(qrState.phase) {
+        if (qrState.phase != QrPhase.Verifying) {
             withFrameNanos { }
             runCatching { qrRequester.requestFocus() }
         }
@@ -257,6 +282,10 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
                     stopQrSession()
                     qrState = QrUiState(QrPhase.Success, "扫码登录成功：$nickname", lastQrBitmap)
                 }
+                // 必须在返回上一页之前清缓存：首页读的是进程内快照，
+                // 晚一步就会把登录前那一屏当成新推荐展示出来。
+                HomeFeedRepository.invalidate()
+                FeaturedRepository.invalidate()
                 onLoggedIn()
             }.onFailure { error ->
                 val message = error.message?.takeIf { it.isNotBlank() } ?: "验证失败，请稍后重试"
@@ -295,6 +324,9 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
         }
         val host = AndroidQrWebViewHost(activity)
         val bridge = QrLoginBridge(host)
+        webViewUsable = host.isUsable()
+        // 浮出的登录页里按 BACK：收起页面（WebView 自己会把它当成网页历史返回）。
+        host.onBackFromPage = { bridge.requestVerificationDismiss() }
         bridge.setListener { st ->
             mainHandler.post {
                 val bytes = st.qrImage()
@@ -366,7 +398,13 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
             settings.setCurrentAccountId("")
         }
         notice = "已退出登录，本机登录凭据已清空"
+        HomeFeedRepository.invalidate()
+        FeaturedRepository.invalidate()
     }
+
+    // 手机推送：电视内核不可用时，用手机登录抖音网页版再把 Cookie 推进来（不依赖 WebView 版本）。
+    val phonePushUrl = PanelRuntime.controller?.cookieSubmitUrl()
+    var showPhonePush by remember { mutableStateOf(false) }
 
     // 整页套一层 Box：验证码键盘要能盖住二维码区。电视整屏只有约 540dp 高，
     // 把键盘内联排在二维码下面会直接溢出屏幕。
@@ -430,6 +468,15 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
                 maxLines = 1,
             )
 
+            if (diagnosticText.isNotBlank() && qrState.phase != QrPhase.Idle) {
+                Text(
+                    text = "诊断：$diagnosticText",
+                    color = AxTvColors.TextSecondary,
+                    style = TextStyle(fontSize = 11.sp),
+                    maxLines = 2,
+                )
+            }
+
             // ───────────────── 扫码操作按钮 ─────────────────
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -450,6 +497,26 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
                 if (qrState.phase != QrPhase.Idle) {
                     LoginButton(label = "停止扫码", onClick = ::stopQrSession)
                 }
+                // 兜底入口：自动探测（DOM/URL/轮询字段）任何一种漏判时，用户仍能把登录页拿出来
+                // 自己在页面上完成验证；不做这个入口，真机就会卡在「已扫码」无处可去。
+                if (!keypadVisible && webViewUsable &&
+                    (qrState.phase == QrPhase.Waiting || qrState.phase == QrPhase.Verifying)
+                ) {
+                    LoginButton(
+                        label = "显示登录页",
+                        onClick = { qrBridge?.requestManualVerification() },
+                    )
+                }
+                LoginButton(
+                    label = "手机推送登录",
+                    onClick = {
+                        if (phonePushUrl != null) {
+                            showPhonePush = true
+                        } else {
+                            notice = "局域网面板尚未启动，请重启应用后再试"
+                        }
+                    },
+                )
                 LoginButton(
                     label = "退出登录",
                     enabled = state !is LoginState.Verifying && savedCookie.isNotBlank(),
@@ -521,6 +588,21 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
         }
 
         // 风控要求短信验证码：电视没有输入法，网页里的 input 也敲不进数字，只能应用侧收码。
+        if (showPhonePush && phonePushUrl != null) {
+            QrLinksDialog(
+                links = listOf(
+                    QrLink(
+                        title = "手机推送登录信息",
+                        url = phonePushUrl,
+                        hint = "手机扫码后登录抖音网页版，按页面提示把 Cookie 推到电视",
+                        openable = false,
+                    ),
+                ),
+                onOpen = {},
+                onDismiss = { showPhonePush = false },
+            )
+        }
+
         if (keypadVisible) {
             VerifyCodeKeypad(
                 code = verifyCode,
@@ -529,184 +611,7 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
                 onDelete = { if (verifyCode.isNotEmpty()) verifyCode = verifyCode.dropLast(1) },
                 onClear = { verifyCode = "" },
                 onSubmit = { qrBridge?.requestCodeSubmission(verifyCode) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun LoginButton(
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    primary: Boolean = false,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val background = when {
-        !enabled -> AxTvColors.SurfaceHigh
-        primary -> AxTvColors.Accent.copy(alpha = 0.18f)
-        else -> AxTvColors.Surface
-    }
-    Row(
-        modifier = modifier
-            .onFocusChanged { focused = it.isFocused }
-            // 不可用态保留焦点能力（便于 D-pad 逐行走查），但 OK 无动作。
-            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier.focusable())
-            .background(background, RoundedCornerShape(10.dp))
-            .focusRing(focused && enabled, RoundedCornerShape(10.dp))
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            color = when {
-                !enabled -> AxTvColors.TextSecondary
-                primary -> AxTvColors.Accent
-                else -> AxTvColors.TextPrimary
-            },
-            style = TextStyle(fontSize = 14.sp, fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Normal),
-        )
-    }
-}
-
-/**
- * 解析粘贴的 Cookie 串。
- *
- * 与 refactor/api/axtv/api/SetCookie.java:19-40 同一套「按 ";" 切分、首个 '=' 拆 name/value」规则
- * （SetCookie 只取第一段，这里对每一段都套用）；
- * 该类是包私有（`final class SetCookie`，非 public），Kotlin 侧（不同包）无法直接调用，
- * 故在此按同一算法逐项复刻，并额外剔除 Path/Domain/Expires 等属性项。
- */
-internal fun normalizeCookieInput(raw: String): String {
-    val cleaned = raw
-        .replace("\r\n", "\n")
-        .replace('\r', '\n')
-        .split('\n')
-        .joinToString(";")
-        .trim()
-        .removePrefix("Cookie:")
-        .removePrefix("cookie:")
-        .removePrefix("Set-Cookie:")
-        .removePrefix("set-cookie:")
-        .trim()
-    if (cleaned.isEmpty()) return ""
-    val pairs = LinkedHashMap<String, String>()
-    for (part in cleaned.split(";")) {
-        val equals = part.indexOf('=')
-        if (equals <= 0) continue
-        val name = part.substring(0, equals).trim()
-        val value = part.substring(equals + 1).trim()
-        if (name.isEmpty()) continue
-        if (name.lowercase(Locale.ROOT) in COOKIE_ATTRIBUTES) continue
-        pairs[name] = value
-    }
-    return pairs.entries.joinToString("; ") { "${it.key}=${it.value}" }
-}
-
-/** 二维码这一帧距现在多少秒（freshAt 为 0 表示还没拿到帧）。 */
-private fun qrAgeSeconds(freshAtMs: Long, nowMs: Long): Long =
-    if (freshAtMs <= 0L) 0L else ((nowMs - freshAtMs).coerceAtLeast(0L)) / 1000L
-
-/** 把 ApiException 转成可读原因（按 Kind 分档，不吞原始信息）。 */
-private fun describe(error: ApiException): String = when (error.kind()) {
-    ApiException.Kind.NETWORK -> "网络请求失败，请检查网络后重试（${error.message}）"
-    ApiException.Kind.EMPTY_BODY -> "接口返回空响应：Cookie 可能不完整或已失效，请重新复制完整 Cookie"
-    ApiException.Kind.LOGIN_REQUIRED -> "需要完整的登录 Cookie（缺少 sessionid / sessionid_ss）"
-    ApiException.Kind.RATE_LIMITED -> "请求频率过高，请稍后再试"
-    ApiException.Kind.HTTP_STATUS -> "接口返回 HTTP 错误：${error.message}"
-    ApiException.Kind.DECODE -> "接口响应解析失败：${error.message}"
-    ApiException.Kind.HEADER_ERROR, ApiException.Kind.API_STATUS -> "接口拒绝请求：${error.message}"
-    ApiException.Kind.MISSING_CREDENTIAL -> "缺少互动安全凭据：${error.message}"
-}
-
-/**
- * 短信验证码数字键盘：风控把扫码转成网页端二次验证、且页面上渲染了验证码输入框时弹出。
- *
- * 为什么不在网页里直接让用户输：电视没有输入法，页面 input 敲不进数字。原版同样是应用侧收码
- *（src/app/p000/in2.java 的数字键盘 + eg1 的注入脚本），收完写回页面 input 再点「验证」——
- * 注入脚本见 [QrLoginBridge.CODE_FILL_SCRIPT] 与 [QrLoginBridge.CODE_CLICK_SCRIPT]。
- * 滑块 / 刷脸这类代填不了的验证不走这里，由 [AndroidQrWebViewHost.setInteractive] 把登录页浮出来。
- */
-@Composable
-private fun VerifyCodeKeypad(
-    code: String,
-    hint: String,
-    onDigit: (Char) -> Unit,
-    onDelete: () -> Unit,
-    onClear: () -> Unit,
-    onSubmit: () -> Unit,
-) {
-    val firstKeyRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
-        withFrameNanos { }
-        runCatching { firstKeyRequester.requestFocus() }
-    }
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.88f))
-            .focusGroup(),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            modifier = Modifier
-                .width(460.dp)
-                .background(AxTvColors.SurfaceHigh, RoundedCornerShape(16.dp))
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                text = "该账号需要安全验证",
-                color = AxTvColors.TextPrimary,
-                style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold),
-            )
-            Text(
-                text = hint.ifBlank { "请输入手机上收到的短信验证码" },
-                color = AxTvColors.TextSecondary,
-                style = TextStyle(fontSize = 13.sp),
-                maxLines = 2,
-            )
-            Text(
-                text = if (code.isEmpty()) "验证码：（尚未输入）" else "验证码：$code",
-                color = AxTvColors.Accent,
-                style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold),
-            )
-            listOf("123", "456", "789").forEachIndexed { rowIndex, row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    row.forEachIndexed { index, digit ->
-                        LoginButton(
-                            label = digit.toString(),
-                            modifier = if (rowIndex == 0 && index == 0) {
-                                Modifier.weight(1f).focusRequester(firstKeyRequester)
-                            } else {
-                                Modifier.weight(1f)
-                            },
-                            onClick = { onDigit(digit) },
-                        )
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                LoginButton(label = "清空", modifier = Modifier.weight(1f), onClick = onClear)
-                LoginButton(
-                    label = "0",
-                    modifier = Modifier.weight(1f),
-                    onClick = { onDigit('0') },
-                )
-                LoginButton(label = "删除", modifier = Modifier.weight(1f), onClick = onDelete)
-            }
-            LoginButton(
-                label = "提交验证码",
-                modifier = Modifier.fillMaxWidth(),
-                enabled = code.isNotEmpty(),
-                primary = true,
-                onClick = onSubmit,
-            )
-            Text(
-                text = "BACK 退出扫码登录（验证码提交后会自动继续等登录态）",
-                color = AxTvColors.TextSecondary,
-                style = TextStyle(fontSize = 12.sp),
+                onOpenPage = { qrBridge?.requestManualVerification() },
             )
         }
     }
