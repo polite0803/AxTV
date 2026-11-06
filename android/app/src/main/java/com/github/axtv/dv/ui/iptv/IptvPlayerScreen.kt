@@ -64,6 +64,7 @@ import androidx.media3.ui.PlayerView
 import androidx.tv.material3.Text
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.focusRing
+import com.github.axtv.dv.ui.live.LiveImmersiveBars
 import com.github.axtv.dv.ui.live.LivePlaybackController
 import com.github.axtv.dv.ui.live.describePlaybackError
 import kotlinx.coroutines.delay
@@ -79,6 +80,9 @@ fun IptvPlayerScreen(
 ) {
     val context = LocalContext.current
     val controller = remember { LivePlaybackController(context) }
+
+    // 进入本页隐藏系统栏（手机/平板上）——与直播间同一套沉浸语义。
+    LiveImmersiveBars()
 
     // 扁平频道表：换台在同一份目录内循环，不压新路由。
     val ordered = remember { IptvRepository.orderedChannels() }

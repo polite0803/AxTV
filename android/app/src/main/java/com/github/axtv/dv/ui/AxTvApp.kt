@@ -228,7 +228,8 @@ fun AxTvApp(
         destination is NavDestination.MixPlay ||
         destination is NavDestination.SearchPlay ||
         destination is NavDestination.AuthorPlay ||
-        destination is NavDestination.LiveRoom
+        destination is NavDestination.LiveRoom ||
+        destination is NavDestination.IptvPlay
 
     AxTvTheme {
         BackHandler(enabled = backStack.size > 1) { goBack() }
