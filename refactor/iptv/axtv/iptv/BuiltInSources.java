@@ -24,19 +24,25 @@ public final class BuiltInSources {
     private BuiltInSources() {
     }
 
-    /** 源 ID 到 M3U URL 的映射（2026-11-07 本机实测：可拉取、可解析，且抽检流可连）。 */
+    /** 源 ID 到 M3U URL 的映射（2026-11-07 本机实测：Accept-only 可拉取、可解析，且抽样流可连）。 */
     public static final Map<String, String> URLS = Map.of(
-        // vbskycn 央视/卫视（IPv4）：377 条，组含 央视频道/卫视频道/地方/电影；抽检 15 条有 14 条可连
+        // vbskycn 央视/卫视（IPv4）：377 条，组含 央视频道/卫视频道/地方/电影；抽检 20 条 19 条可连
         "vbskycn", "https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u",
-        // iptv-org 中国频道（154 条，其中 CCTV 36 个）：抽检 10 条有 7 条可连
+        // TianmuTNT：554 条，17 CCTV/53 卫视；抽检 10 条 10 条可连
+        "tianmutv", "https://raw.githubusercontent.com/TianmuTNT/iptv/main/iptv.m3u",
+        // suxuang/myIPTV（IPv4）：1273 条，159 CCTV/233 卫视；抽检 30 条约 17 条可连
+        "suxuang", "https://raw.githubusercontent.com/suxuang/myIPTV/main/ipv4.m3u",
+        // iptv-org 中国频道（154 条，36 CCTV）：抽检 10 条 7 条可连（CDN 托管，可达性好）
         "iptv-org-cn", "https://iptv-org.github.io/iptv/countries/cn.m3u",
-        // iptv-org 中国全量（516 条，含海外/失效，作广度兜底）：抽检 10 条有 3 条可连
+        // iptv-org 中国全量（516 条，含海外/失效，作广度兜底）：抽检 10 条 3 条可连
         "iptv-org-cn-all", "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u"
     );
 
     /** 源 ID 对应的显示名称。 */
     public static final Map<String, String> DISPLAY_NAMES = Map.of(
         "vbskycn", "vbskycn 央视/卫视（IPv4）",
+        "tianmutv", "TianmuTNT 综合",
+        "suxuang", "suxuang 央视/卫视（IPv4）",
         "iptv-org-cn", "iptv-org 中国频道",
         "iptv-org-cn-all", "iptv-org 中国全量"
     );
@@ -44,6 +50,8 @@ public final class BuiltInSources {
     /** 核对日期（YYYY-MM-DD 格式）。 */
     public static final Map<String, String> VERIFICATION_DATES = Map.of(
         "vbskycn", "2026-11-07",
+        "tianmutv", "2026-11-07",
+        "suxuang", "2026-11-07",
         "iptv-org-cn", "2026-11-07",
         "iptv-org-cn-all", "2026-11-07"
     );
@@ -51,13 +59,17 @@ public final class BuiltInSources {
     /** 实测频道数（该 m3u 里的总条目数）。 */
     public static final Map<String, Integer> ESTIMATED_CHANNEL_COUNTS = Map.of(
         "vbskycn", 377,
+        "tianmutv", 554,
+        "suxuang", 1273,
         "iptv-org-cn", 154,
         "iptv-org-cn-all", 516
     );
 
-    /** 抽检 10~15 条流地址里可连通的条数（保守活性读数，非全量统计）。 */
+    /** 抽样可连通的流条数（各源样本量见 URLS 注释；保守活性读数，非全量统计）。 */
     public static final Map<String, Integer> REALTV_COVERAGE = Map.of(
-        "vbskycn", 14,
+        "vbskycn", 19,
+        "tianmutv", 10,
+        "suxuang", 17,
         "iptv-org-cn", 7,
         "iptv-org-cn-all", 3
     );
