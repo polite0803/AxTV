@@ -89,7 +89,6 @@ public final class M3uParser {
 
         byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
         List<Channel> channels = new ArrayList<>();
-        String rawError = "";
 
         // BOM 处理：如果是 UTF-8 BOM 请剥离（常见于某些社区源生成工具）
         if (bytes.length >= 3 && bytes[0] == (byte) 0xEF && bytes[1] == (byte) 0xBB && bytes[2] == (byte) 0xBF) {
@@ -106,101 +105,56 @@ public final class M3uParser {
         // 按行分割（CRLF/LF 均兼容）：归一化行结束符
         String[] lines = content.replace("\r\n", "\n").replace("\r", "\n").split("\n");
 
-        boolean inHeader = true; // 在 #EXTM3U 头之后
+        String lastExtinf = null;
         for (int i = 0; i < lines.length; i++) {
-            String line = lines[i];
-            if (line.isBlank()) {
+            String line = lines[i].trim();
+            if (line.isEmpty()) {
                 continue; // 跳过空行
             }
-
             if (line.startsWith("#")) {
-                // 注释行 / 头
-                if (i == 0) {
-                    // 已在最外层检查过 #EXTM3U，继续
-                    continue;
+                // #EXTINF 记下，供后续 URL 行关联；其它 # 行（#EXTM3U / #EXTVLCOPT / 注释）忽略
+                if (line.startsWith("#EXTINF")) {
+                    lastExtinf = line;
                 }
-                // 其他 # 行：可能是 #EXTINF、#EXTVLCOPT、或纯注释
-                if (line.equals("#EXTINF")) {
-                    // 单独出现的 #EXTINF 视为无效（需后面跟 URL）
-                    rawError = "orphan #EXTINF at line " + (i + 1);
-                    return ParseResult.failure(rawError, bytes.length);
-                }
-                // # 开头但非 EXTINF 的行为：跳过（注释）
                 continue;
             }
 
-            // 非 # 行：视为 URL（上一行若是 #EXTINF 则关联）
-            if (inHeader) {
-                // 首个非 # 行视为无效（EXTM3U 后应紧接着是 EXTINF 或 URL）
-                rawError = "EXTM3U header without EXTINF/URL at line " + (i + 1);
-                return ParseResult.failure(rawError, bytes.length);
+            // 非 # 行：URL。没有可关联的 #EXTINF 时跳过该行，不因单行坏数据判整份失败。
+            if (lastExtinf == null) {
+                continue;
             }
-            inHeader = false;
-
-            // 关联上一个 #EXTINF 行
-            // 这里的逻辑已在主循环里通过 pair 处理，此处仅作为回退
-            // 实际配对在下面的 pair 处理里完成
-            // 为简化：直接当作 URL 处理，查找上一个 EXTINF
-            String associatedName = null;
-            String associatedUrl = line.trim();
-            String associatedGroup = "";
-            String associatedLogo = "";
-            Map<String, String> associatedAttrs = new HashMap<>();
-
-            // 尝试从前面找最近的 EXTINF 行（向上扫描最多 2 行）
-            for (int j = i - 1; j >= Math.max(0, i - 3); j--) {
-                String prev = lines[j];
-                if (prev.startsWith("#EXTINF")) {
-                    // 解析 tvg-name
-                    String tvgName = extractTvgName(prev);
-                    if (tvgName != null && !tvgName.isBlank()) {
-                        associatedName = tvgName;
-                    }
-                    // tvg-id
-                    String tvgId = extractTvgId(prev);
-                    if (tvgId != null) {
-                        associatedAttrs.put("tvg-id", tvgId);
-                    }
-                    // group-title
-                    String group = extractGroupTitle(prev);
-                    if (group != null) {
-                        associatedGroup = group;
-                    }
-                    // logoUrl
-                    String logo = extractLogoUrl(prev);
-                    if (logo != null) {
-                        associatedLogo = logo;
-                    }
-                    // response-time / Geo-blocked 等保留为属性
-                    String rt = extractResponseTime(prev);
-                    if (rt != null) {
-                        associatedAttrs.put("response-time", rt);
-                    }
-                    // EXTVLCOPT 保留在 attrs 中（key=value 形式）
-                    String ev = extractExlVopt(prev);
-                    if (ev != null) {
-                        associatedAttrs.put("http-referrer", ev);
-                    }
-                    break; // 最近的一个即可
-                }
+            // 频道名优先取 EXTINF 里第一个「引号外逗号」之后的显示名（iptv-org 等多数清单如此），
+            // 缺失时回退 tvg-name 属性。
+            String name = displayName(lastExtinf);
+            if (name.isBlank()) {
+                name = extractTvgName(lastExtinf);
+            }
+            if (name == null || name.isBlank()) {
+                continue; // 无名条目跳过
             }
 
-            // 组装频道
-            if (associatedName != null) {
-                Channel ch = new Channel(
-                    associatedName,      // name 已做 D3 归一（去分辨率标注）
-                    associatedLogo,
-                    associatedGroup,
-                    associatedUrl,
-                    associatedAttrs,
-                    sourceId != null ? sourceId : ""
-                );
-                channels.add(ch);
-            } else {
-                // 无法识别的 URL 行（EXTINF 缺失/损坏）给出可查原因的错误
-                rawError = "unrecognized URL at line " + (i + 1) + " without EXTINF info";
-                return ParseResult.failure(rawError, bytes.length);
+            Map<String, String> attrs = new HashMap<>();
+            String tvgId = extractTvgId(lastExtinf);
+            if (tvgId != null) {
+                attrs.put("tvg-id", tvgId);
             }
+            String rt = extractResponseTime(lastExtinf);
+            if (rt != null) {
+                attrs.put("response-time", rt);
+            }
+            String ev = extractExlVopt(lastExtinf);
+            if (ev != null) {
+                attrs.put("http-referrer", ev);
+            }
+
+            channels.add(new Channel(
+                name,
+                extractLogoUrl(lastExtinf),
+                extractGroupTitle(lastExtinf),
+                line,
+                attrs,
+                sourceId != null ? sourceId : ""
+            ));
         }
 
         if (channels.isEmpty()) {
@@ -208,6 +162,20 @@ public final class M3uParser {
         }
 
         return ParseResult.success(channels, bytes.length);
+    }
+
+    /** EXTINF 里第一个「引号外逗号」之后的显示名（多数清单的标准写法）；无则返回空串。 */
+    private static String displayName(String extinf) {
+        boolean inQuote = false;
+        for (int i = 0; i < extinf.length(); i++) {
+            char c = extinf.charAt(i);
+            if (c == '"') {
+                inQuote = !inQuote;
+            } else if (c == ',' && !inQuote) {
+                return extinf.substring(i + 1).trim();
+            }
+        }
+        return "";
     }
 
     /** 从 EXTINF 行提取 tvg-name。 */
