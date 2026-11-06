@@ -51,6 +51,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -109,8 +110,10 @@ fun FeaturedScreen(
     val selected = channels.getOrNull(selectedIndex)
     // 再点已选中分区要发起「换一批」请求，需要页级协程作用域（SectionContent 里那个只服务它自己）。
     val scope = rememberCoroutineScope()
+    // 网页取数兜底需要 Activity Context（隐藏 WebView 要挂到窗口上）。
+    val context = LocalContext.current
 
-    suspend fun loadGroup(tagId: String) {
+    suspend fun loadGroup(tagId: String, allowWeb: Boolean) {
         val index = channels.indexOfFirst { it.tagId == tagId }
         if (index < 0) return
         val channel = channels[index]
@@ -121,8 +124,24 @@ fun FeaturedScreen(
             },
         )
         try {
-            val updated = FeaturedRepository.loadInitial(channel)
+            var updated = FeaturedRepository.loadInitial(channel)
                 .getOrElse { channel.copy(loading = false, error = it.collectionMessage()) }
+            // 原生 module/feed 拿空时，用页面自己的请求兜底取真实分区内容。
+            if (allowWeb && updated.videos.isEmpty() && !FeaturedRepository.isAllTag(tagId)) {
+                val reason = FeaturedWebFeed.unsupportedReason(context)
+                val webItems = if (reason != null) emptyList() else FeaturedWebFeed.fetch(context, tagId)
+                if (reason != null) updated = updated.copy(error = reason)
+                if (webItems.isNotEmpty()) {
+                    updated = updated.copy(
+                        videos = webItems,
+                        loading = false,
+                        error = null,
+                        hasMore = false,
+                        presentedIds = webItems.map { it.awemeId() },
+                        degraded = false,
+                    )
+                }
+            }
             val at = channels.indexOfFirst { it.tagId == tagId }
             if (at >= 0) {
                 updateChannels(channels.toMutableList().also { it[at] = updated })
@@ -187,8 +206,23 @@ fun FeaturedScreen(
             },
         )
         try {
-            val updated = FeaturedRepository.refresh(channel)
+            var updated = FeaturedRepository.refresh(channel)
                 .getOrElse { channel.copy(loading = false, error = it.collectionMessage()) }
+            if (updated.videos.isEmpty() && !FeaturedRepository.isAllTag(tagId)) {
+                val reason = FeaturedWebFeed.unsupportedReason(context)
+                val webItems = if (reason != null) emptyList() else FeaturedWebFeed.fetch(context, tagId)
+                if (reason != null) updated = updated.copy(error = reason)
+                if (webItems.isNotEmpty()) {
+                    updated = updated.copy(
+                        videos = webItems,
+                        loading = false,
+                        error = null,
+                        hasMore = false,
+                        presentedIds = webItems.map { it.awemeId() },
+                        degraded = false,
+                    )
+                }
+            }
             if (updated.error == null) refreshSeq += 1
             val at = channels.indexOfFirst { it.tagId == tagId }
             if (at >= 0) {
@@ -238,7 +272,7 @@ fun FeaturedScreen(
         val end = ChannelListSpec.prefetchEndIndexExclusive(start, channels.size)
         val tags = (start until end).map { channels[it].tagId }
         coroutineScope {
-            tags.map { tag -> async { loadGroup(tag) } }.awaitAll()
+            tags.map { tag -> async { loadGroup(tag, allowWeb = tag == tagId) } }.awaitAll()
         }
     }
 
@@ -352,7 +386,7 @@ fun FeaturedScreen(
                     onOpenPlayer(index)
                 },
                 // 分区 ERROR 重试：按规格重新拉取该分区（m9520c 重试 → 重新请求分组），不是翻页。
-                onRetry = { loadGroup(selected.tagId) },
+                onRetry = { loadGroup(selected.tagId, allowWeb = true) },
                 onNeedMore = { lastVisible -> loadMore(selected.tagId, lastVisible) },
             )
 

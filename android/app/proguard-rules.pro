@@ -21,3 +21,9 @@
 # axtv.api.ModelJsonCodec 通过反射按 @JsonKey 绑定 model record：
 # 必须保留 model 类、字段名、注解与规范构造器，否则 release 解码会失效/错位。
 -keep class axtv.model.** { *; }
+
+# WebView JS 桥（精选网页取数）：@JavascriptInterface 方法只在 JS 侧按名调用，
+# R8 看不到调用点会整类裁掉/改名，必须保留。
+-keepclasseswithmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}

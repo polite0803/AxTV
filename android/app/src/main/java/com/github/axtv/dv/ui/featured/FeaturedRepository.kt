@@ -75,7 +75,7 @@ object FeaturedRepository {
     private const val STATUS_RATE_LIMITED = 2154
 
     /** 频道设置里「全部」分区的 key（服务端下发 "0"，内置兜底表用空串，两者同义）。 */
-    private fun isAllTag(tagId: String): Boolean = tagId.isEmpty() || tagId == "0"
+    fun isAllTag(tagId: String): Boolean = tagId.isEmpty() || tagId == "0"
 
     /** presented_ids 回传上限（原 kq5 取最近 10 个）。 */
     private const val PRESENTED_ID_LIMIT = 10
