@@ -70,6 +70,7 @@ import com.github.axtv.dv.ui.focusRing
 fun LiveListScreen(
     onBack: () -> Unit,
     onOpenRoom: (roomId: String, webRid: String) -> Unit,
+    onOpenIptv: () -> Unit,
 ) {
     val branch = remember { AppRuntime.settings?.clientIdentityBranch() }
     var selectedTabName by rememberSaveable { mutableStateOf(LiveTab.FEED.name) }
@@ -113,16 +114,41 @@ fun LiveListScreen(
             .background(AxTvColors.Bg)
             .padding(horizontal = 40.dp, vertical = 20.dp),
     ) {
-        Text(
-            text = "直播",
-            color = AxTvColors.TextPrimary,
-            style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold),
-        )
-        Text(
-            text = "推荐 / 关注 / 分区 · 启动身份：${branch?.displayName ?: "未知"}",
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 13.sp),
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column {
+                Text(
+                    text = "直播",
+                    color = AxTvColors.TextPrimary,
+                    style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold),
+                )
+                Text(
+                    text = "推荐 / 关注 / 分区 · 启动身份：${branch?.displayName ?: "未知"}",
+                    color = AxTvColors.TextSecondary,
+                    style = TextStyle(fontSize = 13.sp),
+                )
+            }
+            // 电视台入口（D4）：不进直播分区枚举，独立页路由 NavRoutes.IPTV。
+            var iptvFocused by remember { mutableStateOf(false) }
+            Box(
+                modifier = Modifier
+                    .onFocusChanged { iptvFocused = it.isFocused }
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(AxTvColors.Accent.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
+                    .focusRing(iptvFocused, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onOpenIptv)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    text = "电视台",
+                    color = AxTvColors.TextPrimary,
+                    style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                )
+            }
+        }
         Spacer(Modifier.height(14.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

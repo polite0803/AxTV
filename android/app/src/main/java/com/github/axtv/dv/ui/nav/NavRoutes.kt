@@ -215,6 +215,10 @@ object NavRoutes {
     fun mixPlay(mixId: String, awemeId: String): String =
         "$MIX_PLAY?id=${AppRoutes.encode(mixId)}&aweme=${AppRoutes.encode(awemeId)}"
 
+    /** 电视台单频道播放（channelId = 归一化频道名）。 */
+    fun iptvPlay(channelId: String): String =
+        "$IPTV_PLAY?channelId=${AppRoutes.encode(channelId)}"
+
     // ---- 解析 / 归一化 ----
 
     fun isKnown(raw: String?): Boolean {

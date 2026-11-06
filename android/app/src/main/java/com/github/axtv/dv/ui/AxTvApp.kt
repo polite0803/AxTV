@@ -59,6 +59,8 @@ import com.github.axtv.dv.ui.library.HistoryScreen
 import com.github.axtv.dv.ui.library.WatchLaterScreen
 import com.github.axtv.dv.ui.live.LiveListScreen
 import com.github.axtv.dv.ui.live.LiveRoomScreen
+import com.github.axtv.dv.ui.iptv.IptvListScreen
+import com.github.axtv.dv.ui.iptv.IptvPlayerScreen
 import com.github.axtv.dv.ui.login.LoginScreen
 import com.github.axtv.dv.ui.login.qr.findActivity
 import com.github.axtv.dv.ui.nav.NavDestination
@@ -108,6 +110,7 @@ private val TOP_TABS = listOf(
     TopTab("精选", NavRoutes.FEATURED),
     TopTab("搜索", NavRoutes.SEARCH),
     TopTab("直播", NavRoutes.LIVE),
+    TopTab("电视台", NavRoutes.IPTV),
     TopTab("合集", NavRoutes.MIX_LIST),
     TopTab("个人", NavRoutes.PROFILE),
     TopTab("设置", NavRoutes.SETTINGS),
@@ -118,6 +121,7 @@ private fun TopTab.isSelected(destination: NavDestination): Boolean = when (rout
     NavRoutes.FEATURED -> destination is NavDestination.Featured || destination is NavDestination.FeaturedPlay
     NavRoutes.SEARCH -> destination is NavDestination.Search
     NavRoutes.LIVE -> destination is NavDestination.Live
+    NavRoutes.IPTV -> destination is NavDestination.Iptv || destination is NavDestination.IptvPlay
     NavRoutes.MIX_LIST -> destination is NavDestination.MixList
     NavRoutes.PROFILE -> destination is NavDestination.Profile
     NavRoutes.SETTINGS -> destination is NavDestination.Settings
@@ -387,6 +391,7 @@ fun AxTvApp(
                     LiveListScreen(
                         onBack = { goBack() },
                         onOpenRoom = { roomId, webRid -> navigate(NavRoutes.liveRoom(roomId, webRid)) },
+                        onOpenIptv = { navigate(NavRoutes.IPTV) },
                     )
                 }
 
@@ -468,21 +473,17 @@ fun AxTvApp(
                     )
                 }
 
-                // 电视台（IPTV）目的地已由并行工作加入 sealed 接口，对应屏幕未落地；
-                // 先占位保证 when 穷尽（不静默落首页），IptvScreen/IptvPlayScreen 就绪后替换。
                 NavDestination.Iptv -> Box(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "电视台功能开发中",
-                        color = AxTvColors.TextSecondary,
-                        style = TextStyle(fontSize = 15.sp),
+                    IptvListScreen(
+                        onBack = { goBack() },
+                        onPlay = { channelId -> navigate(NavRoutes.iptvPlay(channelId)) },
                     )
                 }
 
                 is NavDestination.IptvPlay -> Box(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "电视台功能开发中",
-                        color = AxTvColors.TextSecondary,
-                        style = TextStyle(fontSize = 15.sp),
+                    IptvPlayerScreen(
+                        channelId = target.channelId,
+                        onBack = { goBack() },
                     )
                 }
             }

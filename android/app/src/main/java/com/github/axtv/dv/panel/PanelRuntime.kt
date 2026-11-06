@@ -120,6 +120,7 @@ object PanelRuntime {
             LogcatExportHandler.ProcessLogcat(),
             PanelAuth.random(),
             PanelServer.TransportFactory { options -> AndroidPanelServer(options) },
+            AndroidIptvStore(),
         )
         controller = panel
         // 监听 socket 不适合放在 Application.onCreate 主线程：后台线程启动，失败只记日志。

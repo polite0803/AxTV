@@ -9,10 +9,12 @@
  */
 package axtv.panel;
 
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import axtv.iptv.IptvSourceHandler;
+import axtv.iptv.IptvStore;
 import axtv.iptv.IptvRoutes;
 
 /**
@@ -38,7 +40,6 @@ public final class PanelController implements AutoCloseable {
     private final LogcatExportHandler logcatHandler;
 
     private final PanelServer cookieServer;
-    private PanelServer iptvServer;
     private PanelServer searchPageServer;
     private SearchSocketServer searchSocketServer;
 
@@ -48,6 +49,7 @@ public final class PanelController implements AutoCloseable {
     /**
      * @param auth             访问令牌；所有 HTTP/WS 请求都要携带（手机通过电视展示的地址接入）
      * @param transportFactory Android 侧传入原生 ServerSocket 实现；JVM 侧传 null 走 JDK HTTP
+     * @param iptvStore        电视台直播源存储；其路由并入 9978 的 Cookie 服务器，共用同一令牌
      */
     public PanelController(PanelState state,
                            AuthStore authStore,
@@ -56,7 +58,8 @@ public final class PanelController implements AutoCloseable {
                            DeviceAddressResolver.DeviceIdentity identity,
                            LogcatExportHandler.LogcatSource logcatSource,
                            PanelAuth auth,
-                           PanelServer.TransportFactory transportFactory) {
+                           PanelServer.TransportFactory transportFactory,
+                           IptvStore iptvStore) {
         if (auth == null) {
             throw new IllegalArgumentException("面板令牌不能为空");
         }
@@ -69,12 +72,17 @@ public final class PanelController implements AutoCloseable {
         this.logcatHandler = new LogcatExportHandler(logcatSource);
         this.cookieHandler = new CookiePushHandler(this.renderer, authStore, state,
                 () -> DeviceAddressResolver.deviceName(identity), this.logcatHandler, auth);
-        this.iptvHandler = new IptvSourceHandler(this.renderer, authStore, state::authPushed, auth);
+        this.iptvHandler = new IptvSourceHandler(this.renderer, iptvStore,
+                () -> DeviceAddressResolver.deviceName(identity));
         this.searchHandler = new SearchInputHandler(this.renderer, state, auth);
+        // Cookie 推送与电视台直播源共用一台 9978 服务器：先取 Cookie 的未鉴权路由，追加 IPTV 路由，
+        // 再统一 requireAuth。绝不给直播源另开端口或放开鉴权（PLAN §C）。
+        List<PanelRoutes.Route> iptvRoutes = this.iptvHandler.routes();
+        PanelRoutes mergedRoutes = this.cookieHandler.routesWithoutAuth()
+                .with(iptvRoutes.toArray(new PanelRoutes.Route[0]))
+                .requireAuth(auth);
         this.cookieServer = new PanelServer("CookieServer", CookiePushHandler.PORT,
-                this.cookieHandler.routes(), false, 8, transportFactory);
-        this.iptvServer = new PanelServer("IptvServer", IptvRoutes.PORT,
-                this.iptvHandler.routes(), false, 8, transportFactory);
+                mergedRoutes, false, 8, transportFactory);
     }
 
     public PanelState state() {
@@ -108,7 +116,7 @@ public final class PanelController implements AutoCloseable {
      */
     public String iptvSubmitUrl() {
         return this.auth.appendTo(DeviceAddressResolver.url(
-                DeviceAddressResolver.localAddress(), CookiePushHandler.PORT, IptvRoutes.PATH_SUBMIT));
+                DeviceAddressResolver.localAddress(), CookiePushHandler.PORT, IptvRoutes.PATH_PAGE));
     }
 
     /** Cookie 服务启动；失败只记日志，不影响应用其它功能。 */
@@ -201,39 +209,16 @@ public final class PanelController implements AutoCloseable {
         }
     }
 
-    /** 应用启动：Cookie 推送与搜索输入与电视台直播均启动（两者都要求令牌）。 */
+    /** 应用启动：Cookie 推送（含电视台直播源路由）与搜索输入一起启动（都要求令牌）。 */
     public void startAll() {
         startCookieServer();
         startSearchServer();
-        startIptvServer();
     }
 
     /** 应用退出：两台都停。 */
     public void stopAll() {
         stopSearchServer();
         stopCookieServer();
-        stopIptvServer();
-    }
-
-    private synchronized void startIptvServer() {
-        try {
-            if (this.iptvServer.isRunning()) {
-                return;
-            }
-            this.iptvServer.start();
-            this.log.log(Level.INFO, "IPTV 服务器启动: " + iptvSubmitUrl());
-        } catch (Exception e) {
-            this.log.log(Level.SEVERE, "IPTV 服务器启动失败", e);
-        }
-    }
-
-    private synchronized void stopIptvServer() {
-        try {
-            this.iptvServer.stop();
-            this.log.log(Level.INFO, "IPTV 服务器已停止");
-        } catch (Exception e) {
-            this.log.log(Level.SEVERE, "IPTV 服务器停止失败", e);
-        }
     }
 
     @Override

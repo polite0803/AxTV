@@ -71,16 +71,23 @@ public final class CookiePushHandler {
         this.auth = auth;
     }
 
-    /** 路由表。CORS 由各处理函数统一追加（原实现在 serve() 末尾统一追加 3 个头）。 */
+    /** 路由表（已带令牌校验）。独立使用时走这个。 */
     public PanelRoutes routes() {
+        return routesWithoutAuth().requireAuth(this.auth);
+    }
+
+    /**
+     * 未加令牌校验的 Cookie 路由。PanelController 用它把 IPTV 路由并进同一台 9978 服务器后再统一
+     * {@code requireAuth}，避免两台服务器抢同一端口。OPTIONS 预检与各处理函数自行追加 CORS 头。
+     */
+    public PanelRoutes routesWithoutAuth() {
         return new PanelRoutes(java.util.List.of(
                 new PanelRoutes.Route(PanelRoutes.METHOD_OPTIONS, PanelRoutes.WILDCARD, this::preflight),
                 new PanelRoutes.Route(PanelRoutes.METHOD_GET, PATH_SUBMIT, this::submitPage),
                 new PanelRoutes.Route(PanelRoutes.METHOD_GET, PATH_API_INFO, this::info),
                 new PanelRoutes.Route(PanelRoutes.METHOD_POST, PATH_API_SUBMIT, this::submit),
                 new PanelRoutes.Route(PanelRoutes.METHOD_GET, PATH_LOGCAT, this.logcatHandler::handle)),
-                request -> PanelRoutes.Response.text(PanelRoutes.SC_NOT_FOUND, PanelRoutes.TEXT_PLAIN, "404").withCors())
-                .requireAuth(this.auth);
+                request -> PanelRoutes.Response.text(PanelRoutes.SC_NOT_FOUND, PanelRoutes.TEXT_PLAIN, "404").withCors());
     }
 
     /** OPTIONS 预检：空体 200 + 4 个 CORS 头（预检多一个 Max-Age）。 */
