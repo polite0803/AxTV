@@ -11,6 +11,7 @@ sourceSets {
             setSrcDirs(listOf(
                 rootDir.resolve("api"),
                 rootDir.resolve("app"),
+                rootDir.resolve("iptv"),
                 rootDir.resolve("live"),
                 rootDir.resolve("model"),
                 rootDir.resolve("panel"),

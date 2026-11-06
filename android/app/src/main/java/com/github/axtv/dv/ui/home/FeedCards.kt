@@ -91,8 +91,17 @@ internal fun Aweme.cardMeta(): String {
     ).joinToString(FeedPageSpec.TEXT_META_SEPARATOR)
 }
 
+/** 卡片副标题：作者 + 时长，空段剔除（原版元信息行用 " · " 连接，空段不占位）。 */
+internal fun Aweme.cardSubtitle(): String =
+    listOf(cardAuthor(), durationLabel())
+        .filter { it.isNotEmpty() }
+        .joinToString(FeedPageSpec.TEXT_META_SEPARATOR)
+
 internal fun Aweme.durationLabel(): String {
-    val totalSeconds = (video().duration().toLong() / 1000L).coerceAtLeast(0L)
+    val durationMs = video().duration().toLong()
+    // 原版对 duration<=0 直接不显示时长；这里也不能把「没有时长」渲染成 00:00。
+    if (durationMs <= 0L) return ""
+    val totalSeconds = durationMs / 1000L
     return String.format(Locale.US, "%02d:%02d", totalSeconds / 60L, totalSeconds % 60L)
 }
 
@@ -189,7 +198,7 @@ internal fun RelatedCard(item: Aweme, viewed: Boolean, onClick: () -> Unit) {
             style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
         )
         Text(
-            text = "${item.cardAuthor()} · ${item.durationLabel()}",
+            text = item.cardSubtitle(),
             color = AxTvColors.TextSecondary,
             style = TextStyle(fontSize = 12.sp),
         )
@@ -270,7 +279,7 @@ internal fun FeedRow(
                 style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
             )
             Text(
-                text = "${item.cardAuthor()} · ${item.durationLabel()}",
+                text = item.cardSubtitle(),
                 color = AxTvColors.TextSecondary,
                 style = TextStyle(fontSize = 13.sp),
             )

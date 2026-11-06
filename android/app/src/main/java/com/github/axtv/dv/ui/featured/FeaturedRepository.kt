@@ -23,6 +23,7 @@ import axtv.api.DouyinApi
 import axtv.api.FeedApi
 import axtv.model.Aweme
 import axtv.model.ChannelConfigItem
+import axtv.model.DataModels
 import axtv.model.FeedResponse
 import axtv.ui.ChannelListSpec
 import androidx.compose.runtime.getValue
@@ -185,7 +186,7 @@ object FeaturedRepository {
                 val index = if (isAllTag(channel.tagId)) nextRefreshIndex() else channel.nextPageIndex
                 val page = fetchPage(channel, index, PULL_TYPE_REFRESH, emptyList())
                 requireSuccess(page.response.statusCode(), "分区「${channel.name}」")
-                val videos = page.response.flatAwemes().distinctBy { it.awemeId() }
+                val videos = page.response.playableVideos()
                 Result.success(
                     channel.copy(
                         videos = videos,
@@ -217,7 +218,7 @@ object FeaturedRepository {
                 val presented = channel.presentedIds.takeLast(PRESENTED_ID_LIMIT)
                 val page = fetchPage(channel, index, PULL_TYPE_REFRESH, presented)
                 requireSuccess(page.response.statusCode(), "分区「${channel.name}」")
-                val videos = page.response.flatAwemes().distinctBy { it.awemeId() }
+                val videos = page.response.playableVideos()
                 Result.success(
                     channel.copy(
                         videos = videos,
@@ -252,7 +253,7 @@ object FeaturedRepository {
             try {
                 val result = fetchPage(channel, page, PULL_TYPE_LOAD_MORE, channel.presentedIds)
                 requireSuccess(result.response.statusCode(), "分区「${channel.name}」")
-                val added = result.response.flatAwemes()
+                val added = result.response.playableVideos()
                 val videos = (channel.videos + added).distinctBy { it.awemeId() }
                 Result.success(
                     channel.copy(
@@ -338,6 +339,14 @@ object FeaturedRepository {
             index
         }
     }
+
+    /**
+     * 分区内容的统一收口：只保留普通视频（aweme_type=0）且 play_addr 非空的作品，
+     * 与原版 qg5/kq5 的 filterPrimaryPlayableAwemes 一致。
+     * 推荐流里夹带的直播/图文/空壳条目没有标题、作者、时长，直接渲染就是三行占位文案。
+     */
+    private fun FeedResponse.playableVideos(): List<Aweme> =
+        DataModels.filterPrimaryPlayableAwemes(flatAwemes()).distinctBy { it.awemeId() }
 
     private fun ChannelConfigItem.toFeaturedChannel(): FeaturedChannel = FeaturedChannel(
         tagId = key(),

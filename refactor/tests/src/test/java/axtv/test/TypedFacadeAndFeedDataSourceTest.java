@@ -57,7 +57,8 @@ class TypedFacadeAndFeedDataSourceTest {
               "has_more": "1",
               "max_cursor": "100",
               "aweme_list": [
-                {"aweme_id": "7300000000000000001", "desc": "首页作品"}
+                {"aweme_id": "7300000000000000001", "desc": "首页作品",
+                 "video": {"play_addr": {"url_list": ["https://v.example/1.mp4"]}, "duration": 15000}}
               ]
             }
             """;
@@ -257,6 +258,30 @@ class TypedFacadeAndFeedDataSourceTest {
         assertEquals("7300000000000000001", awemes.get(0).awemeId());
         assertFalse(awemes.isEmpty());
         assertTrue(page.hasMore(), "has_more=1 时应透传 hasMore");
+    }
+
+    @Test
+    void loadFeedDropsNonPlayableAndNonPrimaryEntries() throws Exception {
+        // 推荐流会夹带直播/图文/空壳条目：没有 desc/author/duration，卡片就只剩
+        // 「无标题视频 / 未知作者 / 00:00」。原版先过 filterPrimaryPlayableAwemes，这里锁住同一步。
+        String json = """
+                {
+                  "status_code": 0,
+                  "has_more": 1,
+                  "aweme_list": [
+                    {"aweme_id": "7000000000000000001", "desc": "正常视频",
+                     "video": {"play_addr": {"url_list": ["https://v.example/1.mp4"]}, "duration": 15000}},
+                    {"aweme_id": "7000000000000000002"},
+                    {"aweme_id": "7000000000000000003", "desc": "图文", "aweme_type": 68,
+                     "video": {"play_addr": {"url_list": ["https://v.example/3.mp4"]}, "duration": 0}}
+                  ]
+                }
+                """;
+        Harness h = new Harness(json);
+        List<Aweme> awemes = new FeedDataSource(new FeedApi(h.api())).loadFeed(0).awemes();
+
+        assertEquals(1, awemes.size());
+        assertEquals("7000000000000000001", awemes.get(0).awemeId());
     }
 
     @Test

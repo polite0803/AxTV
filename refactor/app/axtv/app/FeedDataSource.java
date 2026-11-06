@@ -99,7 +99,10 @@ public final class FeedDataSource {
         FeedResponse response = feedApi.tabFeed(
                 DEFAULT_PAGE_SIZE, refreshIndex, pullType, trimRecent(recentAwemeIds));
         requireSuccess(response.statusCode());
-        List<Aweme> awemes = response.flatAwemes();
+        // 原版 kq5（首页首屏/加载更多/刷新）统一先做 filterPrimaryPlayableAwemes：
+        // 推荐流会夹带直播/图文/空壳条目，只保普通视频且带播放地址，否则卡片只剩
+        // 「无标题视频 / 未知作者 / 00:00」。这里补上同一步，别把空壳渲染成作品。
+        List<Aweme> awemes = axtv.model.DataModels.filterPrimaryPlayableAwemes(response.flatAwemes());
         // has_more 可能以布尔/数字/字符串多种形态返回，模型层（ModelJsonCodec）已按
         // FlexibleBoolean 规则归一化；缺失（false）时退回「本页非空就还能翻」，
         // 避免服务端不下发该字段时直接停在第一页。

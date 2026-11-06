@@ -2,6 +2,7 @@
  * 直播间的浮层组件与播放控制器（从 LiveRoomScreen.kt 拆出）。
  * 拆分原因: LiveRoomScreen.kt 超 800 行；这些组件只被主页面调用，无独立状态。
  */
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 package com.github.axtv.dv.ui.live
 
 import android.content.Context

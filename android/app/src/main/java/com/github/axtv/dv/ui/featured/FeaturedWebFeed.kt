@@ -21,6 +21,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import axtv.model.Aweme
+import axtv.model.DataModels
 import axtv.model.FeedResponse
 import com.github.axtv.dv.adapter.AppRuntime
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +34,7 @@ object FeaturedWebFeed {
 
     private const val TAG = "FeaturedWebFeed"
     private const val BRIDGE = "AxFeed"
-    private const val MIN_CHROME_MAJOR = 80
+    private const val MIN_CHROME_MAJOR = 66
     private const val HOOK_INJECT_DELAY_MS = 2_500L
     private const val SCROLL_ROUNDS = 2
     private const val SCROLL_INTERVAL_MS = 3_000L
@@ -145,7 +146,7 @@ object FeaturedWebFeed {
             val response = runCatching {
                 api.decodeBody(json, FeedResponse::class.java, "/aweme/v2/web/module/feed/")
             }.getOrNull() ?: continue
-            for (aweme in response.flatAwemes()) {
+            for (aweme in DataModels.filterPrimaryPlayableAwemes(response.flatAwemes())) {
                 val id = aweme.awemeId()
                 if (id.isNotEmpty()) out.putIfAbsent(id, aweme)
             }
@@ -184,9 +185,10 @@ object FeaturedWebFeed {
   X.open = function(m, u){ this.__u = String(u); return oo.apply(this, arguments); };
   X.send = function(b){
     try { this.addEventListener('load', function(){
-      try { var u = this.__u || ''; if (u.indexOf('/aweme/v2/web/module/feed/') >= 0) {
+      try { var u = this.__u || ''; if (u.indexOf('/module/feed/') >= 0) {
         var t = this.response;
-        if (typeof t !== 'string') { try { t = new TextDecoder('utf-8').decode(t); } catch(e) { t = ''; } }
+        if (t && typeof t === 'object' && !(t instanceof ArrayBuffer)) { try { t = JSON.stringify(t); } catch(e) { t = ''; } }
+        else if (typeof t !== 'string') { try { t = new TextDecoder('utf-8').decode(t); } catch(e) { t = ''; } }
         report(t || '');
       } } catch(e) {}
     }); } catch(e) {}
@@ -196,7 +198,7 @@ object FeaturedWebFeed {
   window.fetch = function(i, init){
     var u = typeof i === 'string' ? i : ((i && i.url) || '');
     var p = f.apply(this, arguments);
-    if (u.indexOf('/aweme/v2/web/module/feed/') >= 0) {
+    if (u.indexOf('/module/feed/') >= 0) {
       p.then(function(r){ r.clone().text().then(function(t){ report(t || ''); }); });
     }
     return p;
