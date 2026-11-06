@@ -62,12 +62,20 @@ fun IptvListScreen(
     var showQr by remember { mutableStateOf(false) }
 
     val headerRequester = remember { FocusRequester() }
+    val refreshRequester = remember { FocusRequester() }
     val cardRequesters = remember { mutableMapOf<String, FocusRequester>() }
     var focusRestoredFor by remember { mutableIntStateOf(-1) }
 
     BackHandler(onBack = onBack)
 
+    // 会话内缓存：再次进入本页直接复用上次目录，不再联网重拉；「刷新」按钮才强制重拉。
     LaunchedEffect(reloadToken) {
+        val cachedNow = IptvRepository.cachedCatalog()
+        if (reloadToken == 0 && cachedNow != null) {
+            catalog = cachedNow
+            loading = false
+            return@LaunchedEffect
+        }
         loading = true
         catalog = IptvRepository.load()
         loading = false
@@ -114,7 +122,13 @@ fun IptvListScreen(
                     style = TextStyle(fontSize = 13.sp),
                 )
             }
-            IptvTopButton(label = "用手机添加直播源", requester = headerRequester) { showQr = true }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IptvTopButton(label = "刷新", requester = refreshRequester) { reloadToken += 1 }
+                IptvTopButton(label = "用手机添加直播源", requester = headerRequester) { showQr = true }
+            }
         }
         Spacer(Modifier.height(12.dp))
 
@@ -229,7 +243,10 @@ private fun IptvChannelCard(
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(12.dp))
-            .background(if (focused) AxTvColors.SurfaceHigh else AxTvColors.Surface, RoundedCornerShape(12.dp))
+            .background(
+                if (focused) AxTvColors.Focus.copy(alpha = 0.30f) else AxTvColors.Surface,
+                RoundedCornerShape(12.dp),
+            )
             .focusRing(focused, RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
