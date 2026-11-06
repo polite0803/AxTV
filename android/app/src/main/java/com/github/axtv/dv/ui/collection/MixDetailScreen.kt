@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,11 +41,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.tv.foundation.ExperimentalTvFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -79,14 +84,19 @@ fun MixDetailScreen(
 ) {
     var reloadToken by remember { mutableIntStateOf(0) }
     var state by remember { mutableStateOf<DetailUiState>(DetailUiState.Loading) }
+    /** 合集详情确认失效：允许用户从本机列表移除，避免反复进入。 */
+    var invalidCollection by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     BackHandler(onBack = onBack)
 
     LaunchedEffect(mixId, reloadToken) {
         state = DetailUiState.Loading
+        invalidCollection = false
         state = try {
             DetailUiState.Ready(CollectionRepository.loadDetail(mixId))
         } catch (t: Throwable) {
+            invalidCollection = t.isCollectionGone()
             DetailUiState.Failed(t.collectionMessage())
         }
     }
@@ -159,6 +169,68 @@ fun MixDetailScreen(
                 onPlay = { episode -> play(current.detail, episode) },
                 onLoadMore = { loadMore(current) },
             )
+        }
+    }
+
+    // 失效合集：给「从本机列表移除」的出口（服务端没有可核实的取消收藏/删除接口）。
+    if (invalidCollection) {
+        InvalidCollectionDialog(
+            onDismiss = { invalidCollection = false },
+            onRemove = {
+                RemovedCollections.remove(context, mixId)
+                invalidCollection = false
+                onBack()
+            },
+        )
+    }
+}
+
+/** 失效合集弹层：确认后才落盘移除，取消则留在失败页可重试。 */
+@Composable
+private fun InvalidCollectionDialog(
+    onDismiss: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val removeRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { removeRequester.requestFocus() }
+    }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color(0xE6000000)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(560.dp)
+                    .background(AxTvColors.Surface, RoundedCornerShape(16.dp))
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = EpisodePickerSpec.FAILURE_TITLE,
+                    color = AxTvColors.TextPrimary,
+                    style = TextStyle(fontSize = 21.sp, fontWeight = FontWeight.Bold),
+                )
+                Text(
+                    text = "该合集已无法访问（可能已删除、设为私密或下架）。可以从本机列表移除，避免以后再次进入。",
+                    color = AxTvColors.TextSecondary,
+                    style = TextStyle(fontSize = 14.sp),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CollectionPill(
+                        label = "从本机列表移除",
+                        accent = true,
+                        onClick = onRemove,
+                        modifier = Modifier.focusRequester(removeRequester),
+                    )
+                    CollectionPill(label = "取消", accent = false, onClick = onDismiss)
+                }
+            }
         }
     }
 }

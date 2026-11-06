@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -63,11 +65,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import androidx.tv.foundation.ExperimentalTvFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.tv.material3.Text
+import axtv.api.ApiException
 import axtv.api.InteractionApi
+import axtv.api.TicketGuardException
 import axtv.api.VideoApi
 import axtv.model.Author
 import axtv.model.Aweme
@@ -82,10 +92,13 @@ import axtv.ui.InteractionBarSpec
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import com.github.axtv.dv.adapter.AppRuntime
+import com.github.axtv.dv.player.Media3Engine
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.appearance.AmbientBackdrop
 import com.github.axtv.dv.ui.appearance.AxAppearance
 import com.github.axtv.dv.ui.focusRing
+import com.github.axtv.dv.ui.nav.PlaybackUrlResolver
+import com.github.axtv.dv.ui.settings.InteractionCredentialQrDialog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -107,15 +120,33 @@ private const val RELATED_COUNT = 20
 private const val COMMENT_PAGE_SIZE = 20
 private const val REPLY_PAGE_SIZE = 20
 
+/** 当前条目在连播队列中的下标；不在队列里返回 -1（与原实现一致：未入队时无上一条/下一条）。 */
+private fun queueIndexFor(awemeId: String, queueIds: List<String>): Int = queueIds.indexOf(awemeId)
+
 @OptIn(ExperimentalTvFoundationApi::class)
 @Composable
-fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) {
+fun DetailScreen(
+    awemeId: String,
+    onBack: () -> Unit,
+    /** 全屏播放；queueIndex 非空表示该条在搜索/合集队列中的下标，播放器可据此连播。 */
+    onPlay: (awemeId: String, queueIndex: Int?) -> Unit,
+    /** 当前详情所属的连播队列（搜索结果为搜索列表顺序）；为空时隐藏上一条/下一条。 */
+    queueIds: List<String> = emptyList(),
+    /** 进入发布者频道（作者频道页）；参数为 author.sec_uid。 */
+    onOpenAuthor: (String) -> Unit = {},
+) {
     val douyinApi = AppRuntime.api
     val videoApi = remember(douyinApi) { douyinApi?.let { VideoApi(it) } }
     val interactionApi = remember(douyinApi) { douyinApi?.let { InteractionApi(it) } }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val playRequester = remember { FocusRequester() }
+    val relatedFirstRequester = remember { FocusRequester() }
+    /** 「下一条」按钮的焦点请求器：切条后自动把焦点留在操作行，避免遥控器下一次按键落空。 */
+    val nextRequester = remember { FocusRequester() }
+    /** 首次进入只聚焦一次「全屏播放」；相关推荐切条时焦点改回相关卡，不再甩回顶部。 */
+    var initialFocusGiven by remember { mutableStateOf(false) }
+    var focusRelatedOnNextReady by remember { mutableStateOf(false) }
 
     // 相关推荐点击 = 同页切换到该条详情（取证见文件头「相关推荐点击语义」）。
     // activeAwemeId 是当前展示条目的 id：切换时所有分区状态按新 id 重置并重新拉取。
@@ -127,6 +158,8 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
     var related by remember(activeAwemeId) { mutableStateOf(emptyList<Aweme>()) }
     var relatedLoading by remember(activeAwemeId) { mutableStateOf(false) }
     var relatedError by remember(activeAwemeId) { mutableStateOf<String?>(null) }
+    /** 相关推荐已经为哪个条目拉取完成（用于切条后等新列表就绪再落焦）。 */
+    var relatedLoadedForId by remember(activeAwemeId) { mutableStateOf<String?>(null) }
 
     var comments by remember(activeAwemeId) { mutableStateOf(emptyList<Comment>()) }
     var commentsCursor by remember(activeAwemeId) { mutableStateOf(0L) }
@@ -148,6 +181,10 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
     var disliked by remember(activeAwemeId) { mutableStateOf(false) }
     var busyDislike by remember(activeAwemeId) { mutableStateOf(false) }
     var notice by remember(activeAwemeId) { mutableStateOf<String?>(null) }
+    /** 点赞/收藏因缺少互动凭据失败：直接弹手机扫码补充，而不是只闪一句提示。 */
+    var credentialHelp by remember { mutableStateOf(false) }
+    /** 详情页内的小窗播放：不离开本页，直接在封面上方播放。 */
+    var inlinePlaying by remember { mutableStateOf(false) }
 
     // 详情：同时把互动初始状态/计数落到本地，后续操作做局部更新。
     LaunchedEffect(activeAwemeId, videoApi, detailAttempt) {
@@ -177,11 +214,12 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
 
     LaunchedEffect(activeAwemeId, videoApi) {
         if (videoApi == null) return@LaunchedEffect
+        val id = activeAwemeId
         relatedLoading = true
         relatedError = null
         try {
             related = withContext(Dispatchers.IO) {
-                videoApi.related(activeAwemeId, RELATED_COUNT, 0).flatAwemes()
+                videoApi.related(id, RELATED_COUNT, 0).flatAwemes()
             }
         } catch (ce: CancellationException) {
             throw ce
@@ -189,6 +227,7 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
             relatedError = e.message ?: "相关推荐加载失败"
         } finally {
             relatedLoading = false
+            relatedLoadedForId = id
         }
     }
 
@@ -223,10 +262,54 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
         if (notice == current) notice = null
     }
 
-    // 首屏把焦点给「播放」，避免 TV 遥控器首次按键落空。
+    // 首屏把焦点给「全屏播放」，避免 TV 遥控器首次按键落空；只做一次。
     LaunchedEffect(state) {
-        if (state is DetailUiState.Ready) {
+        if (state is DetailUiState.Ready && !initialFocusGiven) {
             withFrameNanos { }
+            runCatching { playRequester.requestFocus() }
+            initialFocusGiven = true
+        }
+    }
+
+    // 点击相关推荐后：等新详情与新相关列表都就绪，把焦点留在相关区（没有相关项才回播放按钮）。
+    LaunchedEffect(
+        focusRelatedOnNextReady,
+        activeAwemeId,
+        relatedLoadedForId,
+        related.size,
+        state,
+    ) {
+        if (!focusRelatedOnNextReady || state !is DetailUiState.Ready ||
+            relatedLoadedForId != activeAwemeId
+        ) {
+            return@LaunchedEffect
+        }
+        withFrameNanos { }
+        withFrameNanos { }
+        if (related.isNotEmpty()) {
+            runCatching { relatedFirstRequester.requestFocus() }
+        } else {
+            runCatching { playRequester.requestFocus() }
+        }
+        focusRelatedOnNextReady = false
+    }
+
+    /**
+     * 「下一条」/「上一条」切条后焦点固定在操作行：不甩回顶部、也不留在已消失的相关卡上。
+     *
+     * 详情与相关推荐的拉取都以 activeAwemeId 为 key 重建协程，切条后 state 会先回到 Loading，
+     * 本 effect 在 Ready 且队列仍有效时把焦点交给 nextRequester（下一条按钮）；
+     * 队列已耗尽（下一条为 null）时退回 playRequester。
+     */
+    LaunchedEffect(activeAwemeId, state, queueIds, queueIndexFor(activeAwemeId, queueIds)) {
+        val s = state
+        if (s !is DetailUiState.Ready) return@LaunchedEffect
+        val idx = queueIndexFor(s.aweme.awemeId(), queueIds)
+        val nextId = queueIds.getOrNull(idx + 1)
+        withFrameNanos { }
+        if (nextId != null) {
+            runCatching { nextRequester.requestFocus() }
+        } else {
             runCatching { playRequester.requestFocus() }
         }
     }
@@ -255,6 +338,11 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
         } catch (e: Exception) {
             rollback()
             notice = e.message ?: "操作失败"
+            if ((e is ApiException && e.kind() == ApiException.Kind.MISSING_CREDENTIAL) ||
+                e is TicketGuardException
+            ) {
+                credentialHelp = true
+            }
         }
     }
 
@@ -479,28 +567,67 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
                     modifier = Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 28.dp),
                     horizontalArrangement = Arrangement.spacedBy(32.dp),
                 ) {
-                    // 左列：封面、主操作、统计、相关推荐
+                    // 左列：视频小窗/主操作/统计/相关推荐；右列评论区收窄，给画面让空间。
                     Column(
-                        modifier = Modifier.weight(0.9f).fillMaxHeight(),
+                        modifier = Modifier.weight(1.2f).fillMaxHeight(),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        DetailRemoteImage(
-                            url = coverUrl,
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxWidth().height(300.dp),
-                            errorLabel = "封面加载失败",
-                        )
+                        val queueIndex = queueIds.indexOf(playTarget)
+                        val prevId = queueIds.getOrNull(queueIndex - 1)
+                        val nextId = queueIds.getOrNull(queueIndex + 1)
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(Modifier.fillMaxWidth().height(360.dp)) {
+                            if (inlinePlaying) {
+                                DetailInlinePlayer(
+                                    aweme = aweme,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            } else {
+                                DetailRemoteImage(
+                                    url = coverUrl,
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                    errorLabel = "封面加载失败",
+                                )
+                            }
+                        }
+
+                        // 六个操作只占一排：使用紧凑内边距，搜索结果来源也不换行。
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             DetailButton(
-                                label = "播放",
+                                label = "全屏播放",
+                                compact = true,
                                 active = true,
                                 modifier = Modifier.focusRequester(playRequester),
-                                onClick = { onPlay(playTarget) },
+                                onClick = {
+                                    onPlay(playTarget, queueIndex.takeIf { it >= 0 })
+                                },
                             )
-                            DetailButton(label = "返回", onClick = onBack)
+                            DetailButton(
+                                label = if (inlinePlaying) "停止小窗" else "小窗播放",
+                                compact = true,
+                                active = inlinePlaying,
+                                onClick = { inlinePlaying = !inlinePlaying },
+                            )
+                            if (queueIndex >= 0) {
+                                DetailButton(
+                                    label = "上一条",
+                                    compact = true,
+                                    enabled = prevId != null,
+                                    onClick = { prevId?.let { activeAwemeId = it } },
+                                )
+                                DetailButton(
+                                    label = "下一条",
+                                    compact = true,
+                                    enabled = nextId != null,
+                                    modifier = Modifier.focusRequester(nextRequester),
+                                    onClick = { nextId?.let { activeAwemeId = it } },
+                                )
+                            }
+                            DetailButton(label = "返回", compact = true, onClick = onBack)
                             DetailButton(
                                 label = if (disliked) "已标记不喜欢" else "不喜欢",
+                                compact = true,
                                 enabled = !busyDislike,
                                 onClick = ::markDisliked,
                             )
@@ -509,7 +636,11 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
                         Row(horizontalArrangement = Arrangement.spacedBy(26.dp)) {
                             // 「播放」文案无原版证据（原版详情页未见该行），属实现补充；
                             // 点赞 / 评论沿用 InteractionBarSpec 的恒定标签。
-                            DetailStat("播放", DataModels.formatCount(statistics.playCount()))
+                            //
+                            // 原版回退：src/app/p000/mw3.java:614-618 —— playCount <= 0 时改取 diggCount，
+                            // 因为服务端对未登录/未统计播放的条目常常不回 play_count，硬显示 0 会误导。
+                            val playCount = if (statistics.playCount() > 0) statistics.playCount() else statistics.diggCount()
+                            DetailStat("播放", DataModels.formatCount(playCount))
                             DetailStat(InteractionBarSpec.LABEL_LIKE, DataModels.formatCount(diggCount))
                             DetailStat(InteractionBarSpec.LABEL_COMMENT, DataModels.formatCount(statistics.commentCount()))
                         }
@@ -531,11 +662,17 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
                                     val item = related[index]
                                     RelatedCard(
                                         item = item,
+                                        modifier = if (index == 0) {
+                                            Modifier.focusRequester(relatedFirstRequester)
+                                        } else {
+                                            Modifier
+                                        },
                                         // 原版是「同页切换到该条详情」而非直接播放：
                                         // 点击只替换当前详情，播放仍由页面上的「播放」按钮触发。
                                         onClick = {
                                             val next = item.awemeId()
                                             if (next.isNotBlank() && next != activeAwemeId) {
+                                                focusRelatedOnNextReady = true
                                                 activeAwemeId = next
                                             }
                                         },
@@ -547,7 +684,7 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
 
                     // 右列：标题、作者、简介、互动按钮、评论
                     Column(
-                        modifier = Modifier.weight(1.1f).fillMaxHeight(),
+                        modifier = Modifier.weight(0.8f).fillMaxHeight(),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         Text(
@@ -558,7 +695,27 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
                             overflow = TextOverflow.Ellipsis,
                         )
 
+                        // 作者行 = 「进入发布者频道」入口：可聚焦点击，落地后可从「播放全部」连续看完其作品。
+                        val authorSecUid = author.secUid()
+                        var authorFocused by remember(authorSecUid) { mutableStateOf(false) }
                         Row(
+                            modifier = Modifier
+                                .then(
+                                    if (authorSecUid.isNotBlank()) {
+                                        Modifier
+                                            .onFocusChanged { authorFocused = it.isFocused }
+                                            .clickable { onOpenAuthor(authorSecUid) }
+                                            .background(
+                                                if (authorFocused) AxTvColors.SurfaceHigh
+                                                else Color.Transparent,
+                                                RoundedCornerShape(10.dp),
+                                            )
+                                            .focusRing(authorFocused, RoundedCornerShape(10.dp))
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                                .padding(horizontal = 6.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
@@ -573,6 +730,13 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
                                 color = AxTvColors.TextPrimary,
                                 style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium),
                             )
+                            if (authorSecUid.isNotBlank()) {
+                                Text(
+                                    text = "进入频道 ›",
+                                    color = AxTvColors.Accent,
+                                    style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
+                                )
+                            }
                             if (author.signature().isNotBlank()) {
                                 Text(
                                     text = CommentUiSpec.SEPARATOR + author.signature(),
@@ -692,5 +856,64 @@ fun DetailScreen(awemeId: String, onBack: () -> Unit, onPlay: (String) -> Unit) 
                     .padding(horizontal = 20.dp, vertical = 10.dp),
             )
         }
+
+        if (credentialHelp) {
+            InteractionCredentialQrDialog(onDismiss = { credentialHelp = false })
+        }
     }
+}
+
+/**
+ * 详情页内的小窗播放器：只在封面区域播放，不接管全屏、不进导航。
+ *
+ * 使用独立的 Media3Engine（与全屏播放页的 PlayerSession 无关），
+ * 离开本页/切换条目时立即释放，避免后台继续出声。
+ */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun DetailInlinePlayer(
+    aweme: Aweme,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val engine = remember(aweme.awemeId()) { Media3Engine(context.applicationContext) }
+    val lifecycleOwner = context as? LifecycleOwner
+
+    LaunchedEffect(engine, aweme.awemeId()) {
+        val url = PlaybackUrlResolver.playableUrl(aweme)
+        if (url.isBlank()) return@LaunchedEffect
+        engine.stopAndClear()
+        engine.setMediaItem(url, false)
+        engine.prepare()
+        engine.play()
+    }
+
+    DisposableEffect(lifecycleOwner, engine) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> engine.pause()
+                Lifecycle.Event.ON_START -> engine.play()
+                else -> Unit
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose {
+            lifecycleOwner?.lifecycle?.removeObserver(observer)
+            engine.setVideoSurface(null)
+            engine.release()
+        }
+    }
+
+    AndroidView(
+        modifier = modifier,
+        factory = { ctx ->
+            PlayerView(ctx).apply {
+                useController = false
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                setBackgroundColor(android.graphics.Color.BLACK)
+                keepScreenOn = true
+                engine.setVideoSurface(this)
+            }
+        },
+    )
 }

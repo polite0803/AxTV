@@ -60,6 +60,7 @@ import kotlinx.coroutines.launch
 private enum class ListTab(val label: String) {
     MIX("收藏合集"),
     SERIES("我的系列"),
+    FEATURED("精选合集"),
 }
 
 private sealed interface ListUiState {
@@ -87,10 +88,14 @@ fun MixListScreen(
     val tab = ListTab.entries.firstOrNull { it.name == selectedTabName } ?: ListTab.MIX
     var mixState by remember { mutableStateOf<ListUiState>(ListUiState.Loading) }
     var seriesState by remember { mutableStateOf<ListUiState>(ListUiState.Loading) }
+    var featuredState by remember { mutableStateOf<ListUiState>(ListUiState.Loading) }
     var mixReloadToken by remember { mutableIntStateOf(0) }
     var seriesReloadToken by remember { mutableIntStateOf(0) }
     // 进程恢复时如果页签停在「我的系列」，需要视为已发起过系列加载。
     var seriesStarted by remember { mutableStateOf(selectedTabName == ListTab.SERIES.name) }
+    // 精选合集标签同系列页签：首次切到「精选合集」才发请求，切换页签不会重复拉取。
+    var featuredStarted by remember { mutableStateOf(selectedTabName == ListTab.FEATURED.name) }
+    var featuredReloadToken by remember { mutableIntStateOf(0) }
 
     val scope = rememberCoroutineScope()
     val mixListState = rememberLazyListState()
@@ -124,11 +129,25 @@ fun MixListScreen(
         }
     }
 
+    LaunchedEffect(featuredReloadToken) {
+        if (!featuredStarted) return@LaunchedEffect
+        featuredState = ListUiState.Loading
+        featuredState = try {
+            val page = CollectionRepository.loadFeaturedMixList(cursor = 0L)
+            ListUiState.Loaded(page.items, page.hasMore, page.cursor)
+        } catch (t: Throwable) {
+            ListUiState.Failed(t.collectionMessage())
+        }
+    }
+
     fun selectTab(next: ListTab) {
         selectedTabName = next.name
         if (next == ListTab.SERIES && !seriesStarted) {
             seriesStarted = true
             seriesReloadToken++
+        } else if (next == ListTab.FEATURED && !featuredStarted) {
+            featuredStarted = true
+            featuredReloadToken++
         }
     }
 
@@ -138,8 +157,10 @@ fun MixListScreen(
         val stateBefore = loaded
         val setState: (ListUiState) -> Unit = if (currentTab == ListTab.MIX) {
             { mixState = it }
-        } else {
+        } else if (currentTab == ListTab.SERIES) {
             { seriesState = it }
+        } else {
+            { featuredState = it }
         }
         setState(stateBefore.copy(loadingMore = true, moreError = null))
         scope.launch {
@@ -147,8 +168,10 @@ fun MixListScreen(
                 try {
                     val page = if (currentTab == ListTab.MIX) {
                         CollectionRepository.loadMixList(stateBefore.cursor)
-                    } else {
+                    } else if (currentTab == ListTab.SERIES) {
                         CollectionRepository.loadMySeriesList(stateBefore.cursor)
+                    } else {
+                        CollectionRepository.loadFeaturedMixList(stateBefore.cursor)
                     }
                     ListUiState.Loaded(
                         items = stateBefore.items + page.items,
@@ -162,7 +185,11 @@ fun MixListScreen(
         }
     }
 
-    val state = if (tab == ListTab.MIX) mixState else seriesState
+    val state = when (tab) {
+        ListTab.MIX -> mixState
+        ListTab.SERIES -> seriesState
+        ListTab.FEATURED -> featuredState
+    }
     val firstItemId = (state as? ListUiState.Loaded)?.items?.firstOrNull()?.let { "${tab.name}:${it.id}" }
 
     // 电视端没有上滑手势：滚到接近末尾就自动续页，不再需要先发现并按下「加载更多」按钮。
@@ -226,7 +253,7 @@ fun MixListScreen(
                     )
                 }
                 Text(
-                    text = "收藏的合集与我的系列，进入后可从上次看到的一集继续。",
+                    text = "收藏的合集、我的系列与精选合集，进入后可从上次看到的一集继续。",
                     color = AxTvColors.TextSecondary,
                     style = TextStyle(fontSize = 13.sp),
                 )
@@ -240,6 +267,11 @@ fun MixListScreen(
                         label = ListTab.SERIES.label,
                         selected = tab == ListTab.SERIES,
                         onClick = { selectTab(ListTab.SERIES) },
+                    )
+                    ListTabChip(
+                        label = ListTab.FEATURED.label,
+                        selected = tab == ListTab.FEATURED,
+                        onClick = { selectTab(ListTab.FEATURED) },
                     )
                 }
                 Spacer(Modifier.height(4.dp))
@@ -294,8 +326,10 @@ fun MixListScreen(
                             Text(
                                 text = if (tab == ListTab.MIX) {
                                     "还没有收藏的合集"
-                                } else {
+                                } else if (tab == ListTab.SERIES) {
                                     "没有可显示的系列"
+                                } else {
+                                    "还没有精选合集"
                                 },
                                 color = AxTvColors.TextSecondary,
                                 style = TextStyle(fontSize = 14.sp),
@@ -306,8 +340,10 @@ fun MixListScreen(
                                 onClick = {
                                     if (tab == ListTab.MIX) {
                                         mixReloadToken++
-                                    } else {
+                                    } else if (tab == ListTab.SERIES) {
                                         seriesReloadToken++
+                                    } else {
+                                        featuredReloadToken++
                                     }
                                 },
                                 modifier = Modifier.focusRequester(statusActionRequester),

@@ -8,6 +8,8 @@ package com.github.axtv.dv.adapter
 
 import android.content.Context
 import axtv.api.DouyinApi
+import axtv.api.VideoApi
+import axtv.app.PlaybackFeedbackReporter
 import axtv.settings.Settings
 import axtv.sign.AbogusSigner
 import com.github.axtv.dv.api.SharedPrefsCookieStore
@@ -28,6 +30,14 @@ object AppRuntime {
 
     @Volatile
     var api: DouyinApi? = null
+        private set
+
+    /**
+     * 播放行为上报器（进程单例）：去重集合的作用域就是「一次进程」，
+     * 与原版 kq5.f12447i 一致，所以挂在装配根上而不是各页面各建一个。
+     */
+    @Volatile
+    var playbackFeedback: PlaybackFeedbackReporter? = null
         private set
 
     fun install(context: Context) {
@@ -55,6 +65,7 @@ object AppRuntime {
             settings.clientIdentityBranch(),
             anonymousIdentityBootstrap = true,
         )
+        playbackFeedback = PlaybackFeedbackReporter(VideoApi(this.api))
         // 局域网面板（9978/9979/9980）依赖 settings 与 douyin_auth，放在最后启动。
         PanelRuntime.install(application)
     }
@@ -91,6 +102,7 @@ object AppRuntime {
         signer?.close()
         signer = null
         settings = null
+        playbackFeedback = null
         api = null
     }
 }

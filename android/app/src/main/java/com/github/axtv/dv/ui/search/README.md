@@ -13,6 +13,7 @@
 fun SearchScreen(
     onBack: () -> Unit,
     onOpenDetail: (String) -> Unit,
+    onOpenVideo: (awemeId: String, index: Int) -> Unit = { awemeId, _ -> onOpenDetail(awemeId) },
     modifier: Modifier = Modifier,
 )
 
@@ -30,6 +31,7 @@ fun SearchPage(
 fun SearchResultsPage(
     query: String,
     onOpenDetail: (awemeId: String) -> Unit,
+    onOpenVideo: (awemeId: String, index: Int) -> Unit = { awemeId, _ -> onOpenDetail(awemeId) },
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 )
@@ -49,7 +51,10 @@ SearchPage(query = null, onOpenResults = { q -> /* 打开 search/results?query=q
 SearchResultsPage(query = q, onOpenDetail = { id -> /* 打开详情/播放页 */ }, onBack = { /* 回搜索页 */ })
 ```
 
-- `onOpenDetail` 只接收 **awemeId**：视频卡片、直播条目点击时传入；用户条目**不可点**（见取证结论）。
+- `onOpenDetail` 只接收 **awemeId**：直播条目点击时传入；用户条目**不可点**（见取证结论）。
+- `onOpenVideo` 额外带 **列表下标**：视频条目点击时传入，导航线据此把搜索结果连成播放队列
+  （`SearchPlaybackRepository` 缓存 aweme；详情页「播放」进 `search/play` 连播），
+  默认实现回退到 `onOpenDetail(awemeId)`，不接线时行为与旧版一致。
 - 本轮补齐「用户条目点击」「搜索历史」两个 stub，**对外签名无变化**，导航线无需改接线。
 - `onBack`：仅在编辑态按 BACK 时调用；结果态按 BACK 先回到编辑态，不会直接退出应用。
 - 双路由模式下 `SearchPage` 不加载结果：点热词/联想词/搜索只回填并调用 `onOpenResults(keyword)`。

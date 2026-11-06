@@ -380,6 +380,7 @@ fun SettingsScreen(
     var updateDialogWasOpen by remember { mutableStateOf(false) }
     // 取色 / 预览对话框（camera 行触发）：数据源是 AxAppearance 的运行时取色状态。
     var showPaletteDialog by remember { mutableStateOf(false) }
+    var paletteDialogWasOpen by remember { mutableStateOf(false) }
     // 动作行弹层：账号管理 / 互动凭据 / 配置管理 / 二维码链接。
     var actionDialog by remember { mutableStateOf<ActionDialog?>(null) }
     var actionTriggerKey by remember { mutableStateOf<String?>(null) }
@@ -414,6 +415,17 @@ fun SettingsScreen(
             withFrameNanos { }
             runCatching { focusRequesters[trigger]?.requestFocus() }
             actionTriggerKey = null
+        }
+    }
+
+    // 取色预览弹层关闭后同样把焦点还给触发行（camera）。
+    LaunchedEffect(showPaletteDialog) {
+        if (showPaletteDialog) {
+            paletteDialogWasOpen = true
+        } else if (paletteDialogWasOpen) {
+            withFrameNanos { }
+            runCatching { focusRequesters["camera"]?.requestFocus() }
+            paletteDialogWasOpen = false
         }
     }
 

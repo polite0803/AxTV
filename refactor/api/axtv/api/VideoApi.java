@@ -84,13 +84,23 @@ public final class VideoApi {
                 .uifidHeader(), DanmakuResponse.class);
     }
 
-    /** 播放埋点。`/aweme/v2/web/aweme/stats/`（POST 表单）。原实现丢弃响应体，保留 String 仅用于排障。 */
-    public String stats(String awemeId, String itemType, long playDeltaMillis) throws ApiException {
+    /**
+     * 播放埋点。`/aweme/v2/web/aweme/stats/`（POST 表单）。原实现丢弃响应体，保留 String 仅用于排障。
+     *
+     * <p>表单体逐字对齐 n11.java:4635：只有 {@code aweme_type / item_id / play_delta / source} 四项，
+     * 且 {@code play_delta} 是常量字符串 "1"（不是观看秒数）、{@code source} 是常量 "0"。
+     * 签名链对齐 m8004t(..., 56) → nz0.java:121 只算 a_bogus、nz0.java:173 的 ticket-guard 分支不进入。
+     *
+     * @param itemId    作品 id（原版字段名是 item_id，不是 aweme_id）
+     * @param awemeType 作品类型（原版由调用方传 aweme.aweme_type）
+     */
+    public String stats(String itemId, int awemeType) throws ApiException {
         return api.call(ApiRequest.postForm(DouyinEndpoints.AWEME_STATS)
                 .params(DouyinEndpoints.WEB_BASE_PARAMS)
-                .body("aweme_id", awemeId)
-                .body("item_type", itemType)
-                .body("play_delta", String.valueOf(playDeltaMillis / 1000L))
+                .body("aweme_type", String.valueOf(awemeType))
+                .body("item_id", itemId)
+                .body("play_delta", "1")
+                .body("source", "0")
                 .commonParams()
                 .sign()
                 .uifidHeader());
@@ -113,21 +123,24 @@ public final class VideoApi {
     /**
      * 写观看历史。`/aweme/v1/web/history/write/`
      *
-     * <p>原实现里参数很多（app_name / enter_from / keyword / language / publish_time …），
-     * 由 helper 拼装，这里只保留可核实的关键项，其余标「存疑」。
+     * <p>表单体逐字对齐 n11.java:620：只有 {@code author_id / aweme_id} 两项
+     * （此前记的「参数很多、由 helper 拼装」是取证不足的结论，已按调用点更正）。
+     * 签名链与 {@link #stats} 同为 m8004t(..., 56)：nz0.java:121 只算 a_bogus，
+     * nz0.java:173 的 ticket-guard 分支因 {@code (56 & 32) != 0} 不进入，
+     * 所以这里不再挂 {@code userCenterSignChain()}。
      * <p>原实现不解析响应体，保留 {@code String}。
+     *
+     * @param awemeId  作品 id
+     * @param authorId 发布者 id（取 {@code aweme.author.uid}）
      */
-    public String historyWrite(String awemeId, String enterFrom, long publishTime) throws ApiException {
+    public String historyWrite(String awemeId, String authorId) throws ApiException {
         return api.call(ApiRequest.postForm(DouyinEndpoints.HISTORY_WRITE)
                 .params(DouyinEndpoints.WEB_BASE_PARAMS)
+                .body("author_id", authorId)
                 .body("aweme_id", awemeId)
-                .body("enter_from", enterFrom)
-                .body("publish_time", String.valueOf(publishTime))
-                .body("enable_history", "1")
-                .body("app_name", "douyin_web")
                 .commonParams()
                 .sign()
-                .userCenterSignChain());
+                .uifidHeader());
     }
 
     /** 稍后再看列表。`/aweme/v1/web/watchlater/list/` */

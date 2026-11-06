@@ -133,4 +133,10 @@ object PanelRuntime {
         controller?.close()
         controller = null
     }
+
+    /** 手机扫码添加电视台直播源要用的推送地址（带 token）；面板未启动时返回空串。 */
+    fun iptvSubmitUrl(): String = controller?.iptvSubmitUrl().orEmpty()
+
+    /** 手机扫码补充互动凭据要用的推送地址（与 Cookie 推送同页，但引导填互动凭据区）。 */
+    fun cookieSubmitUrl(): String = controller?.cookieSubmitUrl().orEmpty()
 }

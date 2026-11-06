@@ -1,0 +1,33 @@
+/*
+ * 来源: 新建（电视直播功能）。
+ * 原职责: 无。
+ * 重构说明: 沉板模板。读 location.search 中的 PANEL_TOKEN，POST JSON {type:"url"|"content", name:"...", source:"..."} 到 /api/iptv?token=...；成功渲染 success.html，失败渲染 error.html。
+ *
+ * 模板变量（ThemeRenderer 同 submit.html）：
+ *   {{THEME_CSS}} → theme Css
+ *   {{PANEL_HEAD}} → panel-head.html
+ *   {{DEVICE_NAME}} → 设备名称
+ *
+ * 客户端 JS 约定：
+ *   const TOKEN = new URLSearchParams(location.search).get('token');
+ *   const form = document.getElementById('iptvForm');
+ *   form.addEventListener('submit', async e => { e.preventDefault(); const type = detector.isContent(document.getElementById('iptvText').value) ? 'content' : 'url'; const name = document.getElementById('iptvName').value.trim(); const body = JSON.stringify({type,name,source:type==='url'?document.getElementById('iptvText').value:''}); await fetch('/api/iptv?token='+TOKEN, {method:'POST',headers:{'Content-Type':'application/json'},body}); const resp = await resp.json(); if(resp.success){ window.location.href = '/success?source='+type; }else{ document.getElementById('msg').innerText = resp.message; } });
+ */
+<template name="iptv.html">
+<div class="panel-container">
+  <h2>电视台直播源</h2>
+  <p>粘贴一条直播源 URL 或整份 M3U 正文（可从浏览器粘贴）。</p>
+  <form id="iptvForm">
+    <div class="form-group">
+      <label for="iptvName">频道名称</label>
+      <input type="text" id="iptvName" placeholder="例如 CCTV-1 综合" required />
+    </div>
+    <div class="form-group">
+      <label for="iptvText">直播源内容</label>
+      <textarea id="iptvName" rows="4" placeholder="粘贴 URL (http://... 或 .m3u8) 或整份 M3U 正文"></textarea>
+    </div>
+    <button type="submit" class="btn-primary">推送到电视</button>
+  </form>
+  <div id="msg" style="margin-top:12px;color:#b00;"></div>
+</div>
+</template>

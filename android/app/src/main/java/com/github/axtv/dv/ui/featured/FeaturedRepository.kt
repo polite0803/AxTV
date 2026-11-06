@@ -3,14 +3,17 @@
  *
  * 只依赖核心层门面 axtv.api.CollectionApi / FeedApi，不直接拼 URL：
  *   - 分区列表 → CollectionApi.channelSetting（/home/channel/setting）
- *   - 分区内容 → FeedApi.moduleFeed（/module/feed，按 channel id 拉分组）
+ *   - 分区内容 → FeedApi.moduleFeed（/module/feed，POST，按 tag_id 拉分组）；「全部」走 tab/feed
+ * module/feed 只接受 POST（GET 会被 Janus 判 404）；万一不可用则退回 tab/feed 并在 UI
+ * 标注「非精选内容」，不把首页推荐静默伪装成分区内容。
  * 分页阈值、预取条数、数量上限、空判定全部复用 axtv.ui.ChannelListSpec，不另立口径。
  *
  * 参数取值来源（反编译侧）：
  *   - channel 固定 "channel_pc_web"           src/app/p000/n11.java:877
  *   - 加载更多 pull_type = 2                  src/app/p000/n11.java:2414
  *   - 刷新 pull_type = 0                      原版 tab/feed 首屏（n11.m7995c0）
- *   - refresh_index：首屏取 1、翻页取页序号 + 1
+ *   - refresh_index：刷新从本地持久化进度自增取号（原版恒定 1，会导致跨重启同一批），
+ *                    翻页取页序号 + 1
  */
 package com.github.axtv.dv.ui.featured
 
@@ -20,6 +23,7 @@ import axtv.api.DouyinApi
 import axtv.api.FeedApi
 import axtv.model.Aweme
 import axtv.model.ChannelConfigItem
+import axtv.model.FeedResponse
 import axtv.ui.ChannelListSpec
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +51,8 @@ data class FeaturedChannel(
     val nextPageIndex: Int = 1,
     /** 已展示作品 id（原 kq5 维护最近 10 个，作为 presented_ids / pre_item_ids 回传）。 */
     val presentedIds: List<String> = emptyList(),
+    /** module/feed 不可用、内容退回首页推荐时为真；UI 必须明示，不能当精选内容展示。 */
+    val degraded: Boolean = false,
 ) {
     /** 交给 ChannelListSpec 的只读视图（videos 保持同一实例，不复制）。 */
     fun toSpecGroup(): ChannelListSpec.ChannelGroup =
@@ -61,8 +67,7 @@ object FeaturedRepository {
     /** 原版分区内容每页条数：非空 tag 传 10（a40 / C1887zj）。 */
     private const val PAGE_SIZE = 10
 
-    /** 首屏 refresh_index / pull_type；翻页 pull_type 见 FILE_HEAD 注释。 */
-    private const val FIRST_REFRESH_INDEX = 1
+    /** 刷新 pull_type=0、加载更多 pull_type=2；refresh_index 见 nextRefreshIndex。 */
     private const val PULL_TYPE_REFRESH = 0
     private const val PULL_TYPE_LOAD_MORE = 2
 
@@ -177,24 +182,51 @@ object FeaturedRepository {
                 return@withContext Result.success(channel)
             }
             try {
-                // module/feed 已下线（404 Unsupported path），分区内容统一走 tab/feed 的 tag_id。
-                val response = FeedApi(requireApi()).tabFeed(
-                    PAGE_SIZE,
-                    FIRST_REFRESH_INDEX,
-                    PULL_TYPE_REFRESH,
-                    emptyList(),
-                    if (isAllTag(channel.tagId)) "" else channel.tagId,
-                )
-                requireSuccess(response.statusCode(), "分区「${channel.name}」")
-                val videos = response.flatAwemes().distinctBy { it.awemeId() }
+                val index = if (isAllTag(channel.tagId)) nextRefreshIndex() else channel.nextPageIndex
+                val page = fetchPage(channel, index, PULL_TYPE_REFRESH, emptyList())
+                requireSuccess(page.response.statusCode(), "分区「${channel.name}」")
+                val videos = page.response.flatAwemes().distinctBy { it.awemeId() }
                 Result.success(
                     channel.copy(
                         videos = videos,
                         loading = false,
                         error = null,
-                        hasMore = response.hasMore() || videos.isNotEmpty(),
-                        nextPageIndex = FIRST_REFRESH_INDEX + 1,
+                        hasMore = page.response.hasMore() || videos.isNotEmpty(),
+                        nextPageIndex = index + 1,
                         presentedIds = videos.map { it.awemeId() },
+                        degraded = page.degraded,
+                    ),
+                )
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (t: Throwable) {
+                Result.success(channel.copy(loading = false, error = t.collectionMessage()))
+            }
+        }
+
+    /**
+     * 「换一批」：分区已有内容时重新拉一页并整屏替换（对位原版 Tab 再点一次 → i42.java:6276）。
+     *
+     * 与 loadInitial 的区别是不做「已加载就原样返回」的短路，且回传最近已展示 id，
+     * 让服务端把这批排除掉；refresh_index 用持久化进度，重启后也不会退化成同一批。
+     */
+    suspend fun refresh(channel: FeaturedChannel): Result<FeaturedChannel> =
+        withContext(Dispatchers.IO) {
+            try {
+                val index = if (isAllTag(channel.tagId)) nextRefreshIndex() else channel.nextPageIndex
+                val presented = channel.presentedIds.takeLast(PRESENTED_ID_LIMIT)
+                val page = fetchPage(channel, index, PULL_TYPE_REFRESH, presented)
+                requireSuccess(page.response.statusCode(), "分区「${channel.name}」")
+                val videos = page.response.flatAwemes().distinctBy { it.awemeId() }
+                Result.success(
+                    channel.copy(
+                        videos = videos,
+                        loading = false,
+                        error = null,
+                        hasMore = page.response.hasMore() || videos.isNotEmpty(),
+                        nextPageIndex = index + 1,
+                        presentedIds = videos.map { it.awemeId() }.takeLast(PRESENTED_ID_LIMIT),
+                        degraded = page.degraded,
                     ),
                 )
             } catch (cancel: CancellationException) {
@@ -218,24 +250,19 @@ object FeaturedRepository {
             }
             val page = channel.nextPageIndex
             try {
-                val response = FeedApi(requireApi()).tabFeed(
-                    PAGE_SIZE,
-                    page,
-                    PULL_TYPE_LOAD_MORE,
-                    channel.presentedIds,
-                    if (isAllTag(channel.tagId)) "" else channel.tagId,
-                )
-                requireSuccess(response.statusCode(), "分区「${channel.name}」")
-                val added = response.flatAwemes()
+                val result = fetchPage(channel, page, PULL_TYPE_LOAD_MORE, channel.presentedIds)
+                requireSuccess(result.response.statusCode(), "分区「${channel.name}」")
+                val added = result.response.flatAwemes()
                 val videos = (channel.videos + added).distinctBy { it.awemeId() }
                 Result.success(
                     channel.copy(
                         videos = videos,
                         loading = false,
                         error = null,
-                        hasMore = response.hasMore() || added.isNotEmpty(),
+                        hasMore = result.response.hasMore() || added.isNotEmpty(),
                         nextPageIndex = page + 1,
                         presentedIds = videos.map { it.awemeId() }.takeLast(PRESENTED_ID_LIMIT),
+                        degraded = result.degraded,
                     ),
                 )
             } catch (cancel: CancellationException) {
@@ -244,6 +271,46 @@ object FeaturedRepository {
                 Result.success(channel.copy(loading = false, error = t.collectionMessage()))
             }
         }
+
+    private data class ChannelPage(val response: FeedResponse, val degraded: Boolean)
+
+    /**
+     * 按原版通路取一页分区内容：
+     *   - 「全部」（空 tag）→ tab/feed，tag_id 传空串（n11.m8031W 的 kq5 空 tag 分支）；
+     *   - 具体分区 → module/feed，module_id=3003101 + tag_id（n11.m8031W）。
+     *
+     * module/feed 若仍返回 404（GET 或服务端拒斥），退回 tab/feed 并把 degraded 置真，
+     * 由 UI 标注「非精选内容」；其他错误照常抛出，不掩盖登录/限流等真实故障。
+     */
+    private fun fetchPage(
+        channel: FeaturedChannel,
+        index: Int,
+        pullType: Int,
+        presentedIds: List<String>,
+    ): ChannelPage {
+        val api = FeedApi(requireApi())
+        if (isAllTag(channel.tagId)) {
+            return ChannelPage(
+                api.tabFeed(PAGE_SIZE, index, pullType, presentedIds, ""),
+                degraded = false,
+            )
+        }
+        return try {
+            ChannelPage(
+                api.moduleFeed(channel.tagId, PAGE_SIZE, index, pullType, presentedIds),
+                degraded = false,
+            )
+        } catch (e: ApiException) {
+            if (!isEndpointGone(e)) throw e
+            ChannelPage(
+                api.tabFeed(PAGE_SIZE, index, pullType, presentedIds, ""),
+                degraded = true,
+            )
+        }
+    }
+
+    private fun isEndpointGone(e: ApiException): Boolean =
+        e.kind() == ApiException.Kind.HTTP_STATUS && e.httpStatus() == 404
 
     private fun requireApi(): DouyinApi =
         AppRuntime.api ?: throw IllegalStateException("抖音接口尚未初始化，请重启应用")
@@ -254,6 +321,22 @@ object FeaturedRepository {
         if (statusCode == STATUS_LOGIN_REQUIRED) throw ApiException.loginRequired()
         if (statusCode == STATUS_RATE_LIMITED) throw ApiException.rateLimited()
         throw ApiException.apiStatus(statusCode, "$what 返回 status_code=$statusCode")
+    }
+
+    /**
+     * 从本地持久化进度取下一个刷新序号并落盘（默认 1，每次调用 +1）。
+     *
+     * 原版 f50 的首屏/「换一批」走 tab/feed 用恒定 refresh_index=1，重启后也回 1，
+     * 服务端按冷启动返回同一批；这里落盘让请求跨重启也不同。
+     */
+    private val indexLock = Any()
+    private fun nextRefreshIndex(): Int {
+        val settings = AppRuntime.settings ?: return 1
+        return synchronized(indexLock) {
+            val index = settings.featuredRefreshIndex()
+            settings.setFeaturedRefreshIndex(index + 1)
+            index
+        }
     }
 
     private fun ChannelConfigItem.toFeaturedChannel(): FeaturedChannel = FeaturedChannel(

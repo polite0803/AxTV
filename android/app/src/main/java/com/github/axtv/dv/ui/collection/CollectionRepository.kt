@@ -23,7 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** 当前详情来自 mix 接口还是 series 接口。 */
-enum class CollectionSource { MIX, SERIES }
+enum class CollectionSource { MIX, SERIES, FEATURED }
 
 /** 合集内的一集（序号从 1 开始，按接口返回顺序）。 */
 data class CollectionEpisode(
@@ -35,6 +35,8 @@ data class CollectionEpisode(
     val authorName: String,
     /** 服务端记录的单集播放位置（毫秒）；仅用于恢复进度的兜底推断，不是集号。 */
     val playProgressMs: Long,
+    /** 接口原始作品：连播队列直接用它，避免再逐集请求详情。 */
+    val aweme: Aweme,
 )
 
 /** 一页剧集 + 分页游标。 */
@@ -214,6 +216,19 @@ object CollectionRepository {
         )
     }
 
+    /** 精选合集列表。 */
+    suspend fun loadFeaturedMixList(cursor: Long): CollectionListPage = withContext(Dispatchers.IO) {
+        val response = CollectionApi(requireApi()).mixListCollection(cursor, PAGE_SIZE)
+        val items = response.mixInfos().orEmpty()
+            .filter { it.mixId().isNotBlank() }
+            .map { it.toSummary(CollectionSource.FEATURED) }
+        CollectionListPage(
+            items = items,
+            hasMore = response.hasMore(),
+            cursor = nextCursor(response.hasMore(), response.cursor(), cursor, items.size),
+        )
+    }
+
     /**
      * 我的系列列表（series/list）。
      * 该接口必须带 sec_user_id，用当前登录账号的 secUid（UserApi.profileSelf）。
@@ -328,6 +343,7 @@ object CollectionRepository {
             coverUrl = cover,
             authorName = author().nickname(),
             playProgressMs = playProgress().playProgress(),
+            aweme = this,
         )
     }
 
@@ -348,6 +364,16 @@ object CollectionRepository {
 
     private fun requireApi(): DouyinApi =
         AppRuntime.api ?: throw IllegalStateException("抖音接口尚未初始化，请重启应用")
+}
+
+/** 是否属于「合集已失效/不存在」而非网络或登录问题：据此决定是否提供「从本机列表移除」。 */
+fun Throwable.isCollectionGone(): Boolean = when (this) {
+    is ApiException -> kind() == ApiException.Kind.API_STATUS ||
+        (kind() == ApiException.Kind.HTTP_STATUS && httpStatus() == 404)
+
+    else -> message.orEmpty().let {
+        it.contains("未获取到合集信息") || it.contains("不存在") || it.contains("已失效")
+    }
 }
 
 /** 把 ApiException 映射为可读中文提示；非 ApiException 保留原 message。 */

@@ -44,6 +44,8 @@ internal object AxTvColors {
     val TextSecondary: Color get() = palette.textSecondary
     val Accent: Color get() = palette.accent
     val AccentWarm: Color get() = palette.accentWarm
+    /** 焦点框色：与强调色同色相、保证最低对比度（见 AxPaletteEngine.focusColor）。 */
+    val Focus: Color get() = palette.focus
     val Divider: Color get() = palette.divider
 }
 
@@ -103,7 +105,8 @@ private fun rememberTarget(version: Int, seed: Int, uiMode: Int): AxPalette =
 /** 统一的「自绘焦点框」：TV 端不用 Leanback 的焦点盒，由 Compose 自绘。 */
 internal fun Modifier.focusRing(focused: Boolean, shape: Shape = RoundedCornerShape(12.dp)): Modifier =
     border(
-        width = if (focused) 2.dp else 1.dp,
-        color = if (focused) AxTvColors.Accent else AxTvColors.Divider,
+        // 3dp：电视观看距离下 2dp 的高对比描边仍然偏细。
+        width = if (focused) 3.dp else 1.dp,
+        color = if (focused) AxTvColors.Focus else AxTvColors.Divider,
         shape = shape,
     )

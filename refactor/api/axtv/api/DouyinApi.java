@@ -172,10 +172,14 @@ public final class DouyinApi {
         }
 
         String body = form.isEmpty() ? "" : Texts.joinQuery(form);
-        String userAgent = userAgents.userAgent();
+        // .mobile() 端点（/aweme/v2/feed/）无论启动身份分支如何都用移动 UA：
+        // 原版 lz0.java:76 头里只有 m8001p0()（App UA），签名实参 UA 必须与头同值。
+        boolean mobile = request.isMobile();
+        String userAgent = mobile ? device.mobileUserAgent() : userAgents.userAgent();
         String path = request.path();
         // 头与签名必须同值：本次实际分支/UA 打一条可筛选的日志（logcat 标签 System.out）。
-        System.out.println("I AxTV_UA: branch=" + userAgents.branch() + " ua=" + userAgent
+        System.out.println("I AxTV_UA: branch=" + (mobile ? ClientIdentityBranch.APP_FEED : userAgents.branch())
+                + " ua=" + userAgent
                 + " path=" + path);
 
         // ② 签名
@@ -184,6 +188,8 @@ public final class DouyinApi {
         } else if (request.needsSecsdkSignatureOnly()) {
             applySecsdkSignature(query);
         } else if (request.signMode() == ApiRequest.SignMode.A_BOGUS) {
+            // 原版 lz0.java:52-73：签之前先把参数表里已有的 a_bogus 移除——这里签名发生在
+            // a_bogus 写回之前，天然满足「按不含 a_bogus 的参数表签名」。
             String abogus = signer.signABogus(path, Texts.joinQueryEncodedValues(query),
                     body, userAgent);
             if (!Texts.isBlank(abogus)) {
@@ -386,8 +392,13 @@ public final class DouyinApi {
     // ------------------------------------------------------------------ 请求头
 
     private Map<String, String> buildHeaders(ApiRequest request, String path, Map<String, String> query) {
-        LinkedHashMap<String, String> headers = new LinkedHashMap<>(userAgents.headers());
-        if (userAgents.branch() != ClientIdentityBranch.APP_FEED) {
+        // 移动形态请求头固定 4 个（lz0.java:76-79）：UA/Accept/Accept-Language + 非空 Cookie；
+        // 即使启动身份分支是 Web，也不得带桌面 sec-ch-ua 指纹或 referer。
+        boolean mobile = request.isMobile();
+        LinkedHashMap<String, String> headers = new LinkedHashMap<>(mobile
+                ? DouyinEndpoints.headersFor(ClientIdentityBranch.APP_FEED, device.mobileUserAgent())
+                : userAgents.headers());
+        if (!mobile && userAgents.branch() != ClientIdentityBranch.APP_FEED) {
             String referer = request.referer() != null
                     ? request.referer()
                     : DouyinEndpoints.refererFor(path, query);
@@ -409,6 +420,7 @@ public final class DouyinApi {
                 ApiLog.d(ApiLog.TAG_API, "ticket-guard headers attached for " + path);
             }
         }
+        headers.putAll(request.extraHeaders());
         return headers;
     }
 

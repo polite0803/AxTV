@@ -20,6 +20,14 @@ class SharedPrefsCookieStore(context: Context) : CookieStore {
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences("douyin_auth", Context.MODE_PRIVATE)
 
+    /**
+     * 互动凭据的唯一真源是设置仓库（axtv_settings）：
+     * 设置页粘贴保存、手机面板推送、账号切换都会写这一份；
+     * douyin_auth 里的 interaction_* 只是面板路径的附带副本，不能作为读取源。
+     */
+    private val settingsPrefs: SharedPreferences =
+        context.applicationContext.getSharedPreferences("axtv_settings", Context.MODE_PRIVATE)
+
     @Synchronized
     override fun cookieHeader(): String = prefs.getString(KEY_HEADER, "") ?: ""
 
@@ -60,9 +68,19 @@ class SharedPrefsCookieStore(context: Context) : CookieStore {
     }
 
     override fun ticketGuard(): TicketGuardCredentials {
-        // TODO(适配层收尾): 按 api/NOTES.md 解析 bd_ticket_guard_client_data 的
-        //  rawPayload/ticket/tsSign/privateKey/serverCert 五字段。
-        return TicketGuardCredentials.empty()
+        // 老版本面板可能只写过 douyin_auth 的 interaction_*；设置仓库为空时回退读它。
+        fun read(key: String): String =
+            settingsPrefs.getString(key, "").orEmpty()
+                .ifBlank { prefs.getString(key, "").orEmpty() }
+        // serverCert 的 ECDH 加密分支核心层未实现（会直接抛错），这里不把它带进签名：
+        // 走「私钥派生公钥 + ECDSA client-data」的标准 ticket-guard 路径。
+        return TicketGuardCredentials(
+            read("interaction_security_payload"),
+            read("interaction_ticket"),
+            read("interaction_ts_sign"),
+            read("interaction_private_key"),
+            "",
+        )
     }
 
     companion object {

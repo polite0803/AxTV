@@ -22,6 +22,7 @@ package com.github.axtv.dv.ui.appearance
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import axtv.settings.Settings
 import axtv.settings.SettingsTypes
 
@@ -36,6 +37,11 @@ internal data class AxPalette(
     val accent: Color,
     val accentWarm: Color,
     val divider: Color,
+    /**
+     * 焦点框专用色：与 accent 同色相，但强制最低对比度。
+     * accent 可能是「画面取色 / 还原」得到的暗色，直接拿来画焦点框在暗底上会看不见。
+     */
+    val focus: Color,
 )
 
 /** 逐色插值（color_transition=自动 的动画基元）；dark 在过半时翻转。 */
@@ -49,6 +55,7 @@ internal fun lerpPalette(from: AxPalette, to: AxPalette, fraction: Float): AxPal
     accent = lerp(from.accent, to.accent, fraction),
     accentWarm = lerp(from.accentWarm, to.accentWarm, fraction),
     divider = lerp(from.divider, to.divider, fraction),
+    focus = lerp(from.focus, to.focus, fraction),
 )
 
 internal object AxPaletteEngine {
@@ -138,6 +145,7 @@ internal object AxPaletteEngine {
             accent = accent,
             accentWarm = accentWarm,
             divider = lerp(divider, textPrimary, dividerMix),
+            focus = focusColor(accent, dark, bg),
         )
     }
 
@@ -149,6 +157,35 @@ internal object AxPaletteEngine {
         source = SettingsTypes.ColorSource.BRAND,
         seedArgb = 0,
     )
+
+    /**
+     * 焦点框专用色：与强调色同色相，但保证与背景至少 4.5:1 的对比度。
+     *
+     * 强调色可能来自「画面取色 / 还原」，亮度完全不可控（可能和暗色背景糊在一起）。
+     * 这里从强调色出发，暗底向白色、浅底向黑色逐步混合，直到达到目标对比度；
+     * 接近灰色（色相无意义）时直接用纯白/纯黑。
+     */
+    private fun focusColor(accent: Color, dark: Boolean, bg: Color): Color {
+        val fallback = if (dark) Color.White else Color.Black
+        if (accent.toHsl()[1] < 0.08f) {
+            return fallback
+        }
+        val toward = if (dark) Color.White else Color.Black
+        var candidate = accent
+        repeat(20) { step ->
+            if (contrastRatio(candidate, bg) >= 4.5f) {
+                return candidate
+            }
+            candidate = lerp(accent, toward, (step + 1) / 20f)
+        }
+        return fallback
+    }
+
+    private fun contrastRatio(a: Color, b: Color): Float {
+        val first = maxOf(a.luminance(), b.luminance()) + 0.05f
+        val second = minOf(a.luminance(), b.luminance()) + 0.05f
+        return first / second
+    }
 
     // ──────────────── 自用的 RGB ↔ HSL（口径：h 0..360，s/l 0..1）────────────────
 

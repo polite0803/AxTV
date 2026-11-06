@@ -61,6 +61,7 @@ import axtv.ui.DetailPageSpec
 import axtv.ui.LiveBrowseSpec
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.ui.AxTvColors
+import com.github.axtv.dv.ui.FocusMemory
 import com.github.axtv.dv.ui.focusRing
 
 /** 直播列表页固定签名（供导航接线）。 */
@@ -78,31 +79,22 @@ fun LiveListScreen(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var reloadToken by remember { mutableIntStateOf(0) }
-    var focusRestored by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
     val retryRequester = remember { FocusRequester() }
-    val firstCardRequester = remember { FocusRequester() }
+    val cardRequesters = remember { mutableMapOf<String, FocusRequester>() }
+    // 从直播间返回时恢复到上次进入的房间；没有记录则落第一张卡片。
+    val restoreRoomId = remember(tab, reloadToken) { FocusMemory.last("live:${tab.name}") }
+    val focusScope = "live:${tab.name}"
 
     LaunchedEffect(tab, reloadToken) {
         loading = true
         error = null
         cards = emptyList()
-        focusRestored = false
         LiveRepository.rooms(tab)
             .onSuccess { cards = it }
             .onFailure { error = describeLiveError(it, branch) }
         loading = false
-    }
-
-    // 数据到位后把焦点交给第一张卡片，保证遥控器进入页面即可操作。
-    LaunchedEffect(cards.size) {
-        if (!focusRestored && cards.isNotEmpty()) {
-            runCatching { listState.scrollToItem(0) }
-            withFrameNanos { }
-            runCatching { firstCardRequester.requestFocus() }
-            focusRestored = true
-        }
     }
 
     // 失败 / 空态没有卡片可聚焦，把焦点交给「重试」，避免 D-pad 无处可去。
@@ -169,7 +161,10 @@ fun LiveListScreen(
             else -> LiveRoomGrid(
                 cards = cards,
                 listState = listState,
-                firstCardRequester = firstCardRequester,
+                cardRequesters = cardRequesters,
+                restoreRoomId = restoreRoomId,
+                focusScope = focusScope,
+                focusSessionKey = "${tab.name}:$reloadToken",
                 modifier = Modifier.weight(1f),
                 onOpenRoom = onOpenRoom,
             )
@@ -182,7 +177,10 @@ fun LiveListScreen(
 private fun LiveRoomGrid(
     cards: List<LiveCardUi>,
     listState: androidx.compose.foundation.lazy.LazyListState,
-    firstCardRequester: FocusRequester,
+    cardRequesters: MutableMap<String, FocusRequester>,
+    restoreRoomId: String?,
+    focusScope: String,
+    focusSessionKey: String,
     modifier: Modifier = Modifier,
     onOpenRoom: (roomId: String, webRid: String) -> Unit,
 ) {
@@ -190,6 +188,19 @@ private fun LiveRoomGrid(
         // 列数随可用宽度变化：320dp 起一列，最多 4 列（TV 常见 960dp / 1280dp 分别落 3 / 4 列）。
         val columns = (maxWidth.value / 300f).toInt().coerceIn(2, 4)
         val rows = cards.chunked(columns)
+
+        // 每次进入页面/切页签恢复一次：优先上次聚焦的房间，否则第一张卡片。
+        var restoredFor by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(cards, columns, restoreRoomId, focusSessionKey) {
+            if (cards.isEmpty() || restoredFor == focusSessionKey) return@LaunchedEffect
+            val index = cards.indexOfFirst { it.roomId == restoreRoomId }.takeIf { it >= 0 } ?: 0
+            runCatching { listState.scrollToItem(index / columns) }
+            withFrameNanos { }
+            withFrameNanos { }
+            runCatching { cardRequesters[cards[index].roomId]?.requestFocus() }
+            restoredFor = focusSessionKey
+        }
+
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -198,11 +209,14 @@ private fun LiveRoomGrid(
         ) {
             items(count = rows.size, key = { "live-row-$it" }) { rowIndex ->
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    rows[rowIndex].forEachIndexed { colIndex, card ->
+                    rows[rowIndex].forEachIndexed { _, card ->
+                        val requester = remember(card.roomId) { FocusRequester() }
+                            .also { cardRequesters[card.roomId] = it }
                         LiveRoomCard(
                             card = card,
                             modifier = Modifier.weight(1f),
-                            requester = if (rowIndex == 0 && colIndex == 0) firstCardRequester else null,
+                            requester = requester,
+                            onFocused = { FocusMemory.remember(focusScope, card.roomId) },
                             onClick = { onOpenRoom(card.roomId, card.webRid) },
                         )
                     }
@@ -220,6 +234,7 @@ private fun LiveRoomCard(
     card: LiveCardUi,
     modifier: Modifier = Modifier,
     requester: FocusRequester? = null,
+    onFocused: () -> Unit = {},
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -227,7 +242,10 @@ private fun LiveRoomCard(
         modifier = (if (requester != null) Modifier.focusRequester(requester) else Modifier)
             .then(modifier)
             .height(214.dp)
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            }
             .clip(RoundedCornerShape(12.dp))
             .background(AxTvColors.Surface)
             .focusRing(focused, RoundedCornerShape(12.dp))

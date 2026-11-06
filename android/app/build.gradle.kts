@@ -11,7 +11,7 @@ plugins {
 // 采用 sourceSets 直连而非拷贝：核心层只有一份真相，改造自动同步，
 // 不会出现「壳工程里的拷贝落后于 refactor/」的漂移。
 val refactorModules = listOf(
-    "api", "app", "live", "model", "panel", "player", "settings", "sign", "tv", "ui", "widget"
+    "api", "app", "live", "model", "panel", "player", "settings", "sign", "tv", "ui", "widget", "iptv"
 ).map { rootProject.file("../refactor/$it") }
 
 // JVM-only 实现：Android 的 android.jar 不含 java.net.http / com.sun.net.httpserver，

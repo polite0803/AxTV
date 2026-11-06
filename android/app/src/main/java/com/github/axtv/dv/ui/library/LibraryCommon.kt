@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +33,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
@@ -43,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import axtv.api.ApiException
 import axtv.model.Aweme
+import com.github.axtv.dv.ui.FocusMemory
 import axtv.model.Author
 import axtv.model.DataModels
 import axtv.ui.DetailPageSpec
@@ -263,13 +267,17 @@ internal fun AwemeRow(
     aweme: Aweme,
     onClick: (Aweme) -> Unit,
     modifier: Modifier = Modifier,
+    onFocused: () -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
     val cover = coverUrlOf(aweme)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            }
             .clickable { onClick(aweme) }
             .background(AxTvColors.Surface, RoundedCornerShape(12.dp))
             .focusRing(focused, RoundedCornerShape(12.dp))

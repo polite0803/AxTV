@@ -68,6 +68,7 @@ import axtv.settings.Settings
 import axtv.settings.SettingsTypes
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.adapter.SettingsConfigIO
+import com.github.axtv.dv.panel.PanelRuntime
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.focusRing
 import com.google.zxing.BarcodeFormat
@@ -595,5 +596,72 @@ private fun PasteField(
                 inner()
             }
         },
+    )
+}
+
+/*
+ * 来源: 新建（点赞失败时的凭据补充入口）。
+ * 原职责: 无。
+ * 重构说明: 点赞/收藏因缺互动凭据（ApiException.MISSING_CREDENTIAL / TicketGuardException）
+ *          失败时弹出的扫码对话框。手机扫码后打开的是与 Cookie 推送同一个地址（9978 /submit），
+ *          但页面上「互动安全凭据」是独立区域：用户只填 security_payload / private_key，
+ *          不必填 Cookie。因此这里不复用 Cookie 通道，只引导到互动凭据区。
+ *
+ *          与 LiveSourceQrDialog 同构，但 URL 取自 cookieSubmitUrl（与 Cookie 推送同页不同区）。
+ */
+@Composable
+internal fun InteractionCredentialQrDialog(onDismiss: () -> Unit) {
+    val url = PanelRuntime.controller?.cookieSubmitUrl().orEmpty()
+    if (url.isBlank()) {
+        SimpleMessageDialog(
+            title = "补充互动凭据",
+            message = "局域网推送服务未就绪。请在电视上打开「设置 → 互动凭据」手动粘贴，或确保面板服务已启动。",
+            onDismiss = onDismiss,
+        )
+        return
+    }
+    QrLinksDialog(
+        links = listOf(
+            QrLink(
+                title = "扫码补充互动凭据",
+                url = url,
+                hint = "手机与电视连同一网络。扫码后在「互动安全凭据」区粘贴 security_payload 与 private_key，不要填 Cookie。",
+                openable = false,
+            ),
+        ),
+        onOpen = { },
+        onDismiss = onDismiss,
+    )
+}
+
+/*
+ * 来源: 新建（电视直播功能）。
+ * 原职责: 无。
+ * 重构说明: 「添加电视台直播源」二维码对话框，照 InteractionCredentialQrDialog 同构：调用
+ * PanelRuntime.controller?.iptvSubmitUrl() 取带 token 的推送 URL；面板未启动时显式提示；
+ * 二维码由 zxing 本地编码（不依赖在线服务）。
+ */
+@Composable
+internal fun LiveSourceQrDialog(onDismiss: () -> Unit) {
+    val url = PanelRuntime.controller?.iptvSubmitUrl().orEmpty()
+    if (url.isBlank()) {
+        SimpleMessageDialog(
+            title = "添加电视台直播源",
+            message = "局域网推送服务未就绪。请在电视上打开「设置 → 电视台」或确保面板服务已启动。",
+            onDismiss = onDismiss,
+        )
+        return
+    }
+    QrLinksDialog(
+        links = listOf(
+            QrLink(
+                title = "手机扫码添加",
+                url = url,
+                hint = "手机与电视连同一网络。扫码后粘贴 URL 或整份 M3U 正文，回来重新点即可。",
+                openable = false,
+            ),
+        ),
+        onOpen = { },
+        onDismiss = onDismiss,
     )
 }

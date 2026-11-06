@@ -21,6 +21,7 @@ public final class ApiRequest {
     private final String path;
     private final LinkedHashMap<String, String> query = new LinkedHashMap<>();
     private final LinkedHashMap<String, String> form = new LinkedHashMap<>();
+    private final LinkedHashMap<String, String> extraHeaders = new LinkedHashMap<>();
 
     private String baseUrl = DouyinEndpoints.WEB_HOST;
     private String referer;
@@ -81,6 +82,12 @@ public final class ApiRequest {
 
     public ApiRequest referer(String referer) {
         this.referer = referer;
+        return this;
+    }
+
+    /** 追加请求头；buildHeaders 在默认头之后合并，可用于 secsdk CSRF 等网页侧固定头。 */
+    public ApiRequest header(String key, String value) {
+        extraHeaders.put(key, value);
         return this;
     }
 
@@ -180,6 +187,10 @@ public final class ApiRequest {
 
     public String referer() {
         return referer;
+    }
+
+    public Map<String, String> extraHeaders() {
+        return extraHeaders;
     }
 
     public SignMode signMode() {

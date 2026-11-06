@@ -119,9 +119,12 @@ public final class FeedApi {
     /**
      * 频道/模块推荐流。`/aweme/v2/web/module/feed/`
      *
-     * <p>参数逐键对齐 n11.m8031W：`module_id` 在原实现里是固定值 {@code 3003101}，
-     * 具体分区由 {@code tag_id} 决定（值来自频道设置接口的分区 key）；
-     * `presented_ids` / `pre_item_ids` 是已展示作品 id 的逗号串（原 kq5 维护最近 10 个）。
+     * <p><b>2026-11 抓包修正</b>：该 path 只接受 POST；GET 会被 Janus 网关以
+     * {@code 404 Unsupported path(Janus)} 拒绝（与身份/Cookie 无关，匿名页面同样如此）。
+     * 改为 POST 后返回 JSON（与 tab/feed 同为 FeedResponse）。参数逐键对齐当前网页版：
+     * `module_id` 固定 {@code 3003101}，具体分区由 {@code tag_id} 决定，
+     * `pull_type` 刷新 0 / 翻页 2，`pre_item_from=sati`、`use_lite_type` 首屏 2 / 后续 0。
+     * `presented_ids` / `pre_item_ids` 是已展示作品 id 的逗号串（取最近 10 个）。
      *
      * @param tagId         分区 id；空串表示「全部」，调用方应改走 {@link #tabFeed}
      * @param presentedIds  已展示作品 id，原实现取最近 10 个
@@ -131,7 +134,7 @@ public final class FeedApi {
         String joined = presentedIds == null || presentedIds.isEmpty()
                 ? ""
                 : String.join(",", presentedIds.subList(0, Math.min(10, presentedIds.size())));
-        ApiRequest request = ApiRequest.get(DouyinEndpoints.MODULE_FEED)
+        ApiRequest request = ApiRequest.postForm(DouyinEndpoints.MODULE_FEED)
                 .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("module_id", MODULE_FEED_MODULE_ID)
                 .param("count", String.valueOf(count))
@@ -142,14 +145,15 @@ public final class FeedApi {
                 .param("refer_type", "10")
                 .param("pull_type", String.valueOf(pullType))
                 .param("awemePcRecRawData",
-                        "{\"is_xigua_user\":0,\"danmaku_switch_status\":0,\"is_client\":false}")
+                        "{\"is_xigua_user\":0,\"danmaku_switch_status\":0,\"is_client\":true}")
                 .param("Seo-Flag", "0")
                 .param("install_time", String.valueOf(System.currentTimeMillis() / 1000 - 86400))
                 .param("tag_id", tagId)
-                .param("use_lite_type", "0")
+                .param("use_lite_type", refreshIndex == 1 ? "2" : "0")
                 .param("pre_log_id", "")
                 .param("pre_item_ids", joined)
                 .param("pre_room_ids", "")
+                .param("pre_item_from", "sati")
                 .param("xigua_user", "0")
                 .param("pc_libra_divert", "Windows")
                 .param("support_h265", "1")
@@ -158,8 +162,30 @@ public final class FeedApi {
                 .param("is_active_tab", "false")
                 .commonParams()
                 .sign()
-                .uifidHeader();
-        return api.callFor(request, FeedResponse.class);
+                .uifidHeader()
+                // 网页版模块流固定带此头（抓包 2026-11-06）；缺失时同一 POST 返回空推荐。
+                .header("x-secsdk-csrf-token", "DOWNGRADE")
+                .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+        byte[] raw = api.callBytes(request);
+        if (raw == null || raw.length == 0) {
+            throw ApiException.emptyBody(200);
+        }
+        if (MobileFeedProtoCodec.looksLikeJson(raw)) {
+            return api.decodeBody(new String(raw, java.nio.charset.StandardCharsets.UTF_8),
+                    FeedResponse.class, DouyinEndpoints.MODULE_FEED);
+        }
+        // 网页版同参数返回 JSON；对未被识别的身份，服务端会退回 protobuf 空体
+        // （实测 63 字节，正文「暂时没有更多了」）。有内容则照样解出来，空体明确报错，
+        // 不把它伪装成「该分区暂无内容」。
+        try {
+            FeedResponse protobuf = MobileFeedProtoCodec.decode(raw);
+            if (protobuf != null && !protobuf.flatAwemes().isEmpty()) {
+                return protobuf;
+            }
+        } catch (MobileFeedProtoException e) {
+            throw ApiException.decode(DouyinEndpoints.MODULE_FEED, e);
+        }
+        throw ApiException.apiStatus(-1, "分区接口返回空结果，当前身份未被识别，请稍后重试");
     }
 
     /** 关注流。`/aweme/v1/web/follow/feed/`（参数键对齐 n11 关注 Feed 构造点） */
@@ -179,28 +205,74 @@ public final class FeedApi {
                 .uifidHeader(), FeedResponse.class);
     }
 
+    /** 移动推荐每页条数：原版 n11.m8030V:2270 是字面量 "10"，不随调用方变化。 */
+    private static final String MOBILE_FEED_COUNT = "10";
+
+    /** 非冷启动时回传给服务端的「最近已展示 id」窗口（n11.java:2252，m8501m1 取末尾 10 个）。 */
+    private static final int MOBILE_PRESENTED_LIMIT = 10;
+
     /**
      * 移动端形态推荐流（`aweme.snssdk.com` + 移动 UA）。
      * `/aweme/v2/feed/`
      *
+     * <p>参数逐键对齐 n11.m8030V（反编译源 2257-2326 行）的 19 键 + presented_ids/filterGids。
+     * <b>没有 max_cursor</b>：翻页靠 refresh_index 自增（kq5.f12444f），
+     * cold_start=(refreshIndex==1)，pull_type=coldStart?2:0。
+     *
      * <p>响应为 protobuf（原实现 g13.m4375f），由 {@link MobileFeedProtoCodec} 零依赖解码；
      * 若服务端退回 JSON（首字节 '{'），走 {@code ModelJsonCodec} 回退——与原版一致。
+     *
+     * @param refreshIndex 刷新序号（从 1 起，每次请求后自增）
+     * @param presentedIds 最近已展示作品 id（调用方按展示顺序传入，接口层取末尾 10 个；
+     *                     冷启动时原版传空列表）
      */
-    public FeedResponse mobileFeed(int count, long maxCursor) throws ApiException {
+    public FeedResponse mobileFeed(int refreshIndex, List<String> presentedIds) throws ApiException {
+        boolean coldStart = refreshIndex <= 1;
+        List<String> recent = coldStart || presentedIds == null
+                ? List.of()
+                : presentedIds.stream().filter(id -> id != null && !id.isBlank())
+                        .toList();
+        if (recent.size() > MOBILE_PRESENTED_LIMIT) {
+            recent = recent.subList(recent.size() - MOBILE_PRESENTED_LIMIT, recent.size());
+        }
+
         Map<String, String> params = new LinkedHashMap<>();
-        params.put("count", String.valueOf(count));
-        params.put("max_cursor", String.valueOf(maxCursor));
+        params.put("device_platform", "android");
         params.put("aid", "1128");
-        params.put("device_id", api.cookies().persistentDeviceId("mobile_feed_device_id"));
-        params.put("iid", api.cookies().persistentDeviceId("mobile_feed_install_id"));
+        params.put("channel", "douyin");
+        params.put("version_code", "391000");
+        params.put("version_name", "39.10.0");
         params.put("device_type", api.device().deviceType());
         params.put("os_version", api.device().osVersion());
+        params.put("os_api", String.valueOf(api.device().sdkInt()));
+        params.put("language", "zh");
+        params.put("count", MOBILE_FEED_COUNT);
+        params.put("refresh_index", String.valueOf(refreshIndex));
+        params.put("device_id", api.cookies().persistentDeviceId("mobile_feed_device_id"));
+        params.put("install_id", api.cookies().persistentDeviceId("mobile_feed_install_id"));
+        params.put("cookie_enabled", "true");
+        params.put("downlink", "10");
+        params.put("cold_start", coldStart ? "1" : "0");
+        params.put("refer", "1");
+        params.put("pull_type", coldStart ? "2" : "0");
+        params.put("aweme_rec_raw_data", mobileRecRawData(coldStart, recent));
+        if (!recent.isEmpty()) {
+            // n11.java:2322-2326：两键同值，逗号连接。
+            String joined = String.join(",", recent);
+            params.put("filterGids", joined);
+            params.put("presented_ids", joined);
+        }
+
         byte[] body = api.callBytes(ApiRequest.get(DouyinEndpoints.MOBILE_FEED)
                 .base(DouyinEndpoints.MOBILE_HOST)
                 .params(params)
                 .mobile()
                 .sign());
         String path = DouyinEndpoints.MOBILE_FEED;
+        if (body == null || body.length == 0) {
+            // lz0.java:92：HTTP 成功但体为空 → 抛「移动推荐返回空响应」，不伪装成可播空列表。
+            throw ApiException.apiStatus(-1, "移动推荐返回空响应");
+        }
         try {
             if (MobileFeedProtoCodec.looksLikeJson(body)) {
                 return api.decodeBody(new String(body, java.nio.charset.StandardCharsets.UTF_8),
@@ -215,5 +287,23 @@ public final class FeedApi {
         } catch (MobileFeedProtoException e) {
             throw ApiException.decode(path, e);
         }
+    }
+
+    /**
+     * n11.m8030V 的 aweme_rec_raw_data（2251-2256 行）：冷启动回短 JSON；
+     * 否则把已展示 id 逗号串同时填进 videoPrefer 的 like/halfMin/min 三组。
+     */
+    private static String mobileRecRawData(boolean coldStart, List<String> recent) {
+        if (coldStart) {
+            return "{\"is_client\":false,\"ff_danmaku_status\":1,\"danmaku_switch_status\":1,"
+                    + "\"is_dash_user\":1,\"related_recommend\":1,\"is_xigua_user\":0,"
+                    + "\"live_insert_type\":0,\"insert_ads\":0}";
+        }
+        String joined = String.join(",", recent);
+        return "{\"videoPrefer\":{\"fsn\":[],\"like\":[\"" + joined + "\"],\"halfMin\":[\"" + joined
+                + "\"],\"min\":[\"" + joined + "\"],\"collected\":[],\"skip\":[],\"complete_play\":[]},"
+                + "\"is_client\":false,\"ff_danmaku_status\":1,\"danmaku_switch_status\":1,"
+                + "\"is_dash_user\":1,\"related_recommend\":1,\"is_xigua_user\":0,"
+                + "\"live_insert_type\":0,\"insert_ads\":0}";
     }
 }

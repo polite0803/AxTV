@@ -20,6 +20,20 @@ data class PlaylistItem(
     val author: String = "",
     /** 封面直链；用于桌面「正在播放」小组件，空表示无封面。 */
     val coverUrl: String = "",
+    /**
+     * 服务端作品 id；非空表示这条真的来自 aweme 接口，播放行为上报与「不喜欢」都以它为凭据。
+     * [id] 是队列槽位标识（缺 awemeId 时会兜底成 aweme_序号），两者不能混用。
+     */
+    val awemeId: String = "",
+    /** 作品类型（aweme_type），播放埋点表单字段；非真实作品为 0。 */
+    val awemeType: Int = 0,
+    /** 发布者 id（author.uid），写观看历史用的 author_id；未知为空。 */
+    val authorId: String = "",
+    /**
+     * 发布者 sec_uid（author.sec_uid），打开作者频道（aweme/post）的唯一凭据；未知为空。
+     * 为空时播放器不显示「作者」入口，而不是点了才报错。
+     */
+    val authorSecUid: String = "",
 )
 
 /**
@@ -75,6 +89,10 @@ class VideoPlaylistProvider(entries: List<Entry>) : PlaylistProvider {
      *                    为 null 时回退到码率列表 / play_addr。
      * @param author      作者昵称，供桌面「正在播放」小组件展示。
      * @param coverUrl    封面直链，供桌面「正在播放」小组件展示。
+     * @param awemeId     服务端作品 id，播放行为上报与「不喜欢」的凭据；演示数据源留空。
+     * @param awemeType   作品类型（aweme_type），埋点表单字段。
+     * @param authorId    发布者 id（author.uid），写观看历史用的 author_id。
+     * @param authorSecUid 发布者 sec_uid，打开作者频道的凭据。
      */
     data class Entry(
         val id: String,
@@ -84,6 +102,10 @@ class VideoPlaylistProvider(entries: List<Entry>) : PlaylistProvider {
         val resolvedUrl: String? = null,
         val author: String = "",
         val coverUrl: String = "",
+        val awemeId: String = "",
+        val awemeType: Int = 0,
+        val authorId: String = "",
+        val authorSecUid: String = "",
     )
 
     /**
@@ -100,6 +122,10 @@ class VideoPlaylistProvider(entries: List<Entry>) : PlaylistProvider {
                 durationMs = it.durationMs,
                 author = it.author,
                 coverUrl = it.coverUrl,
+                awemeId = it.awemeId,
+                awemeType = it.awemeType,
+                authorId = it.authorId,
+                authorSecUid = it.authorSecUid,
             )
         }
 

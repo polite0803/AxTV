@@ -62,6 +62,7 @@ import axtv.ui.ChannelListSpec
 import coil.compose.AsyncImage
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.ui.AxTvColors
+import com.github.axtv.dv.ui.FocusMemory
 import com.github.axtv.dv.ui.collection.collectionMessage
 import com.github.axtv.dv.ui.focusRing
 import kotlinx.coroutines.async
@@ -77,6 +78,9 @@ private const val MAX_STALLED_PAGES = 3
 
 private const val TEXT_PLACEHOLDER = "—"
 
+/** 分区接口不可用时的显式标注：不能把首页推荐当精选内容展示。 */
+private const val TEXT_DEGRADED = "分区内容接口不可用，当前显示的是首页推荐内容"
+
 @Composable
 fun FeaturedScreen(
     onOpenPlayer: (startIndex: Int) -> Unit,
@@ -88,6 +92,8 @@ fun FeaturedScreen(
     var pageError by remember { mutableStateOf<String?>(null) }
     var pageAttempt by remember { mutableIntStateOf(0) }
     var selectedTagId by rememberSaveable { mutableStateOf<String?>(null) }
+    // 每次成功「换一批」+1：分区内容整屏替换后，网格必须回到第一条（见 SectionContent）。
+    var refreshSeq by remember { mutableIntStateOf(0) }
 
     fun updateChannels(next: List<FeaturedChannel>) {
         channels = next
@@ -101,6 +107,8 @@ fun FeaturedScreen(
         channels.indexOfFirst { it.tagId == selectedTagId }.coerceAtLeast(0)
     }
     val selected = channels.getOrNull(selectedIndex)
+    // 再点已选中分区要发起「换一批」请求，需要页级协程作用域（SectionContent 里那个只服务它自己）。
+    val scope = rememberCoroutineScope()
 
     suspend fun loadGroup(tagId: String) {
         val index = channels.indexOfFirst { it.tagId == tagId }
@@ -160,6 +168,40 @@ fun FeaturedScreen(
             }
         }
         return grew
+    }
+
+    /**
+     * 「换一批」：再点当前分区时整屏替换该分区内容。
+     *
+     * 对位原版 i42.java:6276——重复点击已选中的分区 Tab 会提示「正在刷新精选内容」并重新请求分组，
+     * 而不是停留在旧列表；loadInitial 会因为「已有内容」短路，所以这里必须走 refresh。
+     */
+    suspend fun refreshGroup(tagId: String) {
+        val index = channels.indexOfFirst { it.tagId == tagId }
+        if (index < 0) return
+        val channel = channels[index]
+        if (channel.loading) return
+        updateChannels(
+            channels.toMutableList().also {
+                it[index] = channel.copy(loading = true, error = null)
+            },
+        )
+        try {
+            val updated = FeaturedRepository.refresh(channel)
+                .getOrElse { channel.copy(loading = false, error = it.collectionMessage()) }
+            if (updated.error == null) refreshSeq += 1
+            val at = channels.indexOfFirst { it.tagId == tagId }
+            if (at >= 0) {
+                updateChannels(channels.toMutableList().also { it[at] = updated })
+            }
+        } finally {
+            val at = channels.indexOfFirst { it.tagId == tagId }
+            if (at >= 0 && channels[at].loading) {
+                updateChannels(
+                    channels.toMutableList().also { it[at] = it[at].copy(loading = false) },
+                )
+            }
+        }
     }
 
     // 分区列表：优先复用进程内缓存；首次进入或用户点重试时才真正请求。
@@ -257,7 +299,13 @@ fun FeaturedScreen(
                 FeaturedChip(
                     label = channel.name,
                     selected = ChannelListSpec.isTabSelected(index, selectedIndex),
-                    onClick = { selectedTagId = channel.tagId },
+                    onClick = {
+                        if (channel.tagId == selectedTagId) {
+                            scope.launch { refreshGroup(channel.tagId) }
+                        } else {
+                            selectedTagId = channel.tagId
+                        }
+                    },
                     modifier = Modifier.focusRequester(requester),
                 )
             }
@@ -298,6 +346,7 @@ fun FeaturedScreen(
 
             selected != null -> SectionContent(
                 channel = selected,
+                refreshSeq = refreshSeq,
                 onOpenPlayer = { index ->
                     FeaturedRepository.cache(selected)
                     onOpenPlayer(index)
@@ -316,6 +365,7 @@ fun FeaturedScreen(
 @Composable
 private fun SectionContent(
     channel: FeaturedChannel,
+    refreshSeq: Int,
     onOpenPlayer: (Int) -> Unit,
     onRetry: suspend () -> Unit,
     onNeedMore: suspend (Int) -> Boolean,
@@ -324,8 +374,38 @@ private fun SectionContent(
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     val errorRequester = remember { FocusRequester() }
+    val videoRequesters = remember(channel.tagId) { mutableMapOf<String, FocusRequester>() }
     val lastVisibleIndex by remember(gridState) {
         derivedStateOf { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+    }
+
+    // 从播放器返回：回到该分区上次聚焦的视频；没有记忆则保持父级给的页签焦点。
+    var restoredFocus by remember(channel.tagId) { mutableStateOf(false) }
+    LaunchedEffect(channel.tagId, channel.videos.size) {
+        if (restoredFocus || channel.videos.isEmpty()) return@LaunchedEffect
+        val remembered = FocusMemory.last("featured:${channel.tagId}")
+        if (remembered != null) {
+            val index = channel.videos.indexOfFirst { it.awemeId() == remembered }
+            if (index >= 0) {
+                runCatching { gridState.scrollToItem(index) }
+                withFrameNanos { }
+                withFrameNanos { }
+                runCatching { videoRequesters[remembered]?.requestFocus() }
+            }
+        }
+        restoredFocus = true
+    }
+
+    // 「换一批」整屏替换后回到第一条：网格若停在旧批的滚动位置，新批条数更少时会被截到末尾，
+    // 用户看到的是一批随机尾部而不是刚换出来的内容。
+    LaunchedEffect(refreshSeq) {
+        if (refreshSeq == 0) return@LaunchedEffect
+        runCatching { gridState.scrollToItem(0) }
+        withFrameNanos { }
+        withFrameNanos { }
+        channel.videos.firstOrNull()?.let { first ->
+            runCatching { videoRequesters[first.awemeId()]?.requestFocus() }
+        }
     }
 
     // 同时观察“可见末项 / 已加载数量 / loading”：只看索引的话，翻页返回重复数据后
@@ -381,6 +461,14 @@ private fun SectionContent(
                 color = AxTvColors.TextSecondary,
                 style = TextStyle(fontSize = 12.sp),
             )
+            if (channel.degraded) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = TEXT_DEGRADED,
+                    color = AxTvColors.AccentWarm,
+                    style = TextStyle(fontSize = 12.sp),
+                )
+            }
             Spacer(Modifier.height(8.dp))
             LazyVerticalGrid(
                 columns = GridCells.Fixed(FEATURED_COLUMNS),
@@ -389,9 +477,16 @@ private fun SectionContent(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(channel.videos) { aweme ->
+                items(items = channel.videos, key = { it.awemeId() }) { aweme ->
+                    val id = aweme.awemeId()
+                    val requester = remember(id) { FocusRequester() }
+                        .also { videoRequesters[id] = it }
                     FeaturedVideoCard(
                         aweme = aweme,
+                        modifier = Modifier.focusRequester(requester),
+                        onFocused = {
+                            FocusMemory.remember("featured:${channel.tagId}", id)
+                        },
                         onClick = {
                             val index = channel.videos.indexOfFirst { it.awemeId() == aweme.awemeId() }
                             onOpenPlayer(index.coerceAtLeast(0))
@@ -447,12 +542,20 @@ private fun FeaturedChip(
 }
 
 @Composable
-private fun FeaturedVideoCard(aweme: Aweme, onClick: () -> Unit) {
+private fun FeaturedVideoCard(
+    aweme: Aweme,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    onFocused: () -> Unit = {},
+) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
     Column(
-        modifier = Modifier
-            .onFocusChanged { focused = it.isFocused }
+        modifier = modifier
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            }
             .focusRing(focused, shape)
             .background(AxTvColors.Surface, shape)
             .clickable(onClick = onClick)

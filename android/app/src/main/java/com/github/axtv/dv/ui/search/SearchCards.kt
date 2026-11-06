@@ -189,13 +189,20 @@ internal fun PersonRow(
 }
 
 @Composable
-internal fun MoreRow(loading: Boolean, error: String?, onLoadMore: () -> Unit) {
+internal fun MoreRow(
+    loading: Boolean,
+    hasMore: Boolean,
+    error: String?,
+    onLoadMore: () -> Unit,
+) {
     var focused by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
-            .clickable(enabled = !loading, onClick = onLoadMore)
+            // 加载中/没有更多时也保持可聚焦：否则焦点节点消失，会回落到顶栏“首页”。
+            // 没有更多时节点仍在，只是不再触发请求。
+            .clickable { if (!loading && hasMore) onLoadMore() }
             .background(AxTvColors.Surface, RoundedCornerShape(10.dp))
             .focusRing(focused, RoundedCornerShape(10.dp))
             .padding(horizontal = 18.dp, vertical = 12.dp),
@@ -205,6 +212,7 @@ internal fun MoreRow(loading: Boolean, error: String?, onLoadMore: () -> Unit) {
             text = when {
                 loading -> "正在加载更多…"
                 error != null -> "加载失败：$error（点此重试）"
+                !hasMore -> "已加载全部"
                 else -> "加载更多"
             },
             color = if (error != null) AxTvColors.AccentWarm else AxTvColors.TextPrimary,

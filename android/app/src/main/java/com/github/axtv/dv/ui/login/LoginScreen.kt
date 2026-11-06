@@ -78,6 +78,8 @@ import com.github.axtv.dv.panel.PanelRuntime
 import com.github.axtv.dv.api.SharedPrefsCookieStore
 import com.github.axtv.dv.ui.featured.FeaturedRepository
 import com.github.axtv.dv.ui.home.HomeFeedRepository
+import com.github.axtv.dv.ui.home.FollowFeedRepository
+import com.github.axtv.dv.ui.home.MobileFeedRepository
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.login.qr.AndroidQrWebViewHost
@@ -285,6 +287,8 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
                 // 必须在返回上一页之前清缓存：首页读的是进程内快照，
                 // 晚一步就会把登录前那一屏当成新推荐展示出来。
                 HomeFeedRepository.invalidate()
+                FollowFeedRepository.invalidate()
+                MobileFeedRepository.invalidate()
                 FeaturedRepository.invalidate()
                 onLoggedIn()
             }.onFailure { error ->

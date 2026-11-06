@@ -57,6 +57,15 @@ public final class SettingsKeys {
     // ─────────────── 观看记录 / 列表 ───────────────
     public static final String VIEWED_VIDEO_IDS = "viewed_video_ids";
     public static final String FEED_HISTORY_CAPACITY = "feed_history_capacity";
+    /**
+     * 首页刷新序号（默认 1）。原版 kq5.f12441c 只在进程内自增、重启回 1，
+     * 每次冷启动都发「第一页」→ 服务端稳定返回同一批；这里落盘让请求跨重启也不同。
+     */
+    public static final String FEED_REFRESH_INDEX = "feed_refresh_index";
+    /** 首页最近已展示作品 id（逗号分隔，最多 10 个），刷新时作为 videoPrefer 回传。 */
+    public static final String FEED_PRESENTED_IDS = "feed_presented_ids";
+    /** 精选分区刷新序号：每次拉分区首屏/换一批自增一次。 */
+    public static final String FEATURED_REFRESH_INDEX = "featured_refresh_index";
     public static final String OPEN_OWN_PROFILE_ON_HISTORY_TAB = "open_own_profile_on_history_tab";
     public static final String REVERSE_PLAYLIST_IN_PROFILE = "reverse_playlist_in_profile";
     public static final String MIX_PLAYLIST_PANEL_ENABLED = "mix_playlist_panel_enabled";
@@ -110,6 +119,16 @@ public final class SettingsKeys {
     // ─────────────── 设备标识（16 位纯数字，惰性生成） ───────────────
     public static final String MOBILE_FEED_DEVICE_ID = "mobile_feed_device_id";
     public static final String MOBILE_FEED_INSTALL_ID = "mobile_feed_install_id";
+
+    // ─────────────── 电视台直播 ───────────────
+    /** 用户自定义源的 JSON 数组（每个对象含 name / url / group / logoUrl / sourceId / attrs）。 */
+    public static final String IPTV_SOURCES_LIST = "iptv_sources_list";
+    /** 禁用的内置源 ID 列表（JSON 数组，格式如 ["CCTV1","CCTV-5+" ]），由设置页勾选后写入，读取时过滤。 */
+    public static final String IPTV_DISABLED_BUILTIN_IDS = "iptv_disabled_builtin_ids";
+    /** 最近一次观看的频道名（用于回归落地）。 */
+    public static final String IPTV_LAST_CHANNEL = "iptv_last_channel";
+    /** 加载超时（秒），取值对应 videoLoadTimeoutSeconds 的同一档或更小。 */
+    public static final String IPTV_SOURCE_LOAD_TIMEOUT_SECONDS = "iptv_source_load_timeout_seconds";
 
     // ─────────────── remote_config ───────────────
     public static final String LICENSE_AGREED = "license_agreed";

@@ -361,6 +361,51 @@ public final class Settings {
         store.putString(SettingsKeys.VIEWED_VIDEO_IDS, String.join(",", ids));
     }
 
+    // ════════════════════════════ 推荐流水线进度 ════════════════════════════
+
+    /**
+     * 首页刷新序号（默认 1，下限 1）。
+     *
+     * <p>原版 {@code kq5.f12441c} 是进程内计数器：每次首屏/刷新请求后 +1，但重启回 1，
+     * 于是每次冷启动都发「refresh_index=1 + 空 recentIds」这一模一样的请求，
+     * 服务端按冷启动返回同一批。这里落盘并在启动后继续自增，让请求跨重启也不再相同。
+     */
+    public int feedRefreshIndex() {
+        return Math.max(1, store.getInt(SettingsKeys.FEED_REFRESH_INDEX, 1));
+    }
+
+    public void setFeedRefreshIndex(int index) {
+        store.putInt(SettingsKeys.FEED_REFRESH_INDEX, Math.max(1, index));
+    }
+
+    /** 首页最近已展示作品 id（刷新时回传给推荐接口，原版取最后 10 个）。 */
+    public List<String> feedPresentedIds() {
+        String raw = nz(store.getString(SettingsKeys.FEED_PRESENTED_IDS, ""));
+        if (raw.isBlank()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (String part : raw.split(",")) {
+            if (!part.isBlank()) {
+                out.add(part);
+            }
+        }
+        return out;
+    }
+
+    public void setFeedPresentedIds(List<String> ids) {
+        store.putString(SettingsKeys.FEED_PRESENTED_IDS, String.join(",", ids));
+    }
+
+    /** 精选分区刷新序号（默认 1，下限 1）；任何分区每拉一次首屏/换一批自增一次。 */
+    public int featuredRefreshIndex() {
+        return Math.max(1, store.getInt(SettingsKeys.FEATURED_REFRESH_INDEX, 1));
+    }
+
+    public void setFeaturedRefreshIndex(int index) {
+        store.putInt(SettingsKeys.FEATURED_REFRESH_INDEX, Math.max(1, index));
+    }
+
     // ════════════════════════════ 界面形态 / 字体 / 主题 ════════════════════════════
 
     /** {@code ui_form_factor}，未知值回落 AUTO。 */
@@ -563,6 +608,47 @@ public final class Settings {
 
     public void setLoadTimeout(LoadTimeout timeout) {
         setVideoLoadTimeoutSeconds(timeout.seconds);
+    }
+
+    // ─────────────── 电视台直播 ───────────────
+
+    /** 用户自定义源列表（JSON 数组字符串，键 {@value #IPTV_SOURCES_LIST}）。 */
+    public String iptvSourcesList() {
+        return store.getString(SettingsKeys.IPTV_SOURCES_LIST, "");
+    }
+
+    public void setIptvSourcesList(String json) {
+        store.putString(SettingsKeys.IPTV_SOURCES_LIST, json);
+    }
+
+    /** 禁用的内置源 ID 列表（JSON 数组字符串，键 {@value #IPTV_DISABLED_BUILTIN_IDS}）。 */
+    public String iptvDisabledBuiltinIds() {
+        return store.getString(SettingsKeys.IPTV_DISABLED_BUILTIN_IDS, "");
+    }
+
+    public void setIptvDisabledBuiltinIds(String json) {
+        store.putString(SettingsKeys.IPTV_DISABLED_BUILTIN_IDS, json);
+    }
+
+    /** 最近一次观看的频道名（键 {@value #IPTV_LAST_CHANNEL}）。 */
+    public String iptvLastChannel() {
+        return store.getString(SettingsKeys.IPTV_LAST_CHANNEL, "");
+    }
+
+    public void setIptvLastChannel(String channel) {
+        store.putString(SettingsKeys.IPTV_LAST_CHANNEL, channel);
+    }
+
+    /** 加载超时（秒），默认 10 秒，取值见 {@link #LOAD_TIMEOUTS}。键 {@value #IPTV_SOURCE_LOAD_TIMEOUT_SECONDS}。 */
+    public int iptvSourceLoadTimeoutSeconds() {
+        int v = store.getInt(SettingsKeys.IPTV_SOURCE_LOAD_TIMEOUT_SECONDS, 10);
+        return LOAD_TIMEOUTS.contains(v) ? v : 10;
+    }
+
+    public void setIptvSourceLoadTimeoutSeconds(int seconds) {
+        if (LOAD_TIMEOUTS.contains(seconds)) {
+            store.putInt(SettingsKeys.IPTV_SOURCE_LOAD_TIMEOUT_SECONDS, seconds);
+        }
     }
 
     /** 渲染面类型（默认 surface_view）。 */

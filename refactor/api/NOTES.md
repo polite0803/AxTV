@@ -40,7 +40,7 @@
 | `/aweme/v1/web/aweme/favorite/` | count, cut_version, max_cursor, min_cursor, publish_video_strategy_type, sec_user_id, whale_cut_token | |
 | `/aweme/v1/web/aweme/listcollection/` | （helper 构造）**存疑** | 收藏夹 |
 | `/aweme/v1/web/aweme/collect/` | msToken, odin_tt, uifid | POST，需互动凭据 |
-| `/aweme/v2/web/aweme/stats/` | （helper 构造）**存疑** | 播放埋点 |
+| `/aweme/v2/web/aweme/stats/` | aweme_type, item_id, play_delta, source | POST 表单体（n11.java:4635）；掩码 56 只算 a_bogus |
 | `/aweme/v1/web/comment/list/` | aweme_id, count, cursor | |
 | `/aweme/v1/web/comment/list/reply/` | comment_id, count, cursor, item_id | |
 | `/aweme/v1/web/commit/item/digg/` | uifid | POST，需互动凭据 |
@@ -67,7 +67,7 @@
 | `/aweme/v1/web/series/aweme/` | count, cursor, pull_type, series_id, source | |
 | `/aweme/v1/web/danmaku/get_v2/` | app_name, authentication_token, duration, end_time, format, group_id, item_id, pc_libra_divert, start_time, support_dash, support_h265, version_code, version_name | |
 | `/aweme/v1/web/history/read/` | category, count, directory, max_cursor, status | |
-| `/aweme/v1/web/history/write/` | app_name, count, device_platform, enable_history, enter_from, filter_duration, from_group_id, is_filter_search, keyword, language, list_type, live_id, need_filter_settings, offset, publish_time, query_correct_type, search_channel, …（参数很多，helper 构造） | POST |
+| `/aweme/v1/web/history/write/` | author_id, aweme_id | POST 表单体只有两项（n11.java:620 `sv2.m10406K`）；旧记录里那一长串 enter_from/publish_time/enable_history/app_name 是从通用 helper 猜的，该端点实际不发 |
 | `/aweme/v1/web/watchlater/list/` | list_type, offset, operate_type | |
 | `/aweme/v1/web/follow/feed/` | aweme_ids, count, cursor, level, pull_type, room_ids, webcast_sdk_version, webcast_version_code | |
 | `/aweme/v1/web/emoji/list` | （helper 构造）**存疑** | |

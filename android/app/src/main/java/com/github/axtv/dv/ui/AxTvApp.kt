@@ -46,7 +46,9 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import axtv.settings.Settings
 import axtv.settings.SettingsTypes
+import axtv.ui.HomeTabsSpec
 import com.github.axtv.dv.adapter.AppRuntime
+import com.github.axtv.dv.ui.author.AuthorChannelScreen
 import com.github.axtv.dv.ui.collection.MixDetailScreen
 import com.github.axtv.dv.ui.collection.MixListScreen
 import com.github.axtv.dv.ui.detail.DetailScreen
@@ -61,14 +63,17 @@ import com.github.axtv.dv.ui.login.LoginScreen
 import com.github.axtv.dv.ui.login.qr.findActivity
 import com.github.axtv.dv.ui.nav.NavDestination
 import com.github.axtv.dv.ui.nav.NavRoutes
+import com.github.axtv.dv.ui.nav.PlayerFromAuthorScreen
 import com.github.axtv.dv.ui.nav.PlayerFromAwemeScreen
 import com.github.axtv.dv.ui.nav.PlayerFromFeaturedScreen
 import com.github.axtv.dv.ui.nav.PlayerFromFeedScreen
 import com.github.axtv.dv.ui.nav.PlayerFromMixScreen
+import com.github.axtv.dv.ui.nav.PlayerFromSearchScreen
 import com.github.axtv.dv.ui.nav.RouteRequest
 import com.github.axtv.dv.ui.profile.ProfileScreen
+import com.github.axtv.dv.ui.search.SearchPage
+import com.github.axtv.dv.ui.search.SearchPlaybackRepository
 import com.github.axtv.dv.ui.search.SearchResultsPage
-import com.github.axtv.dv.ui.search.SearchScreen
 import com.github.axtv.dv.ui.settings.SettingsScreen
 
 private data class TopTab(val label: String, val route: String)
@@ -128,12 +133,13 @@ private val RouteStackSaver = listSaver<SnapshotStateList<String>, String>(
 /**
  * 设置项『默认首页』的消费点：冷启动（无深链 / 无外部 route）时落在哪一页。
  *
- * 原版四档里「移动推荐」是另一套信息流接口，本应用未实现，按首页处理；
- * 设置页该档文案已标注这一点，避免出现"选了却静默变首页"的歧义。
+ * 四档里「移动推荐」现在是首页的一个真实标签页（第二排第 4 个），
+ * 所以不另开路由，而是让首页直接以该标签落地（`home?tab=移动推荐`）。
  */
 private fun defaultHomeRoute(): String = when (AppRuntime.settings?.defaultHomeScreen()) {
     SettingsTypes.HomeScreen.FEATURED -> NavRoutes.FEATURED
     SettingsTypes.HomeScreen.FOLLOWING -> NavRoutes.LIVE
+    SettingsTypes.HomeScreen.MOBILE_RECOMMEND -> NavRoutes.home(HomeTabsSpec.TAB_MOBILE)
     else -> NavRoutes.HOME
 }
 
@@ -162,6 +168,16 @@ fun AxTvApp(
         val normalized = NavRoutes.normalize(route)
         if (backStack.lastOrNull() == normalized) return
         backStack.add(normalized)
+    }
+
+    /** 替换栈顶：搜索结果页内重新搜索时用，避免搜索历史把 BACK 变成多级返回。 */
+    fun replaceTop(route: String) {
+        val normalized = NavRoutes.normalize(route)
+        if (backStack.isEmpty()) {
+            backStack.add(normalized)
+        } else {
+            backStack[backStack.lastIndex] = normalized
+        }
     }
 
     /** 顶栏切页：首页清空回栈底，其它页序贯压栈（BACK 逐级返回）。 */
@@ -206,6 +222,8 @@ fun AxTvApp(
         destination is NavDestination.PlayerAweme ||
         destination is NavDestination.FeaturedPlay ||
         destination is NavDestination.MixPlay ||
+        destination is NavDestination.SearchPlay ||
+        destination is NavDestination.AuthorPlay ||
         destination is NavDestination.LiveRoom
 
     AxTvTheme {
@@ -251,13 +269,14 @@ fun AxTvApp(
                 )
             }
             when (val target = destination) {
-                NavDestination.Home -> HomeFeedScreen(
+                is NavDestination.Home -> HomeFeedScreen(
                     rememberedFocusIndex = homeFocusIndex,
                     onFocusIndexChange = { homeFocusIndex = it },
                     onOpenPlayer = { startIndex ->
                         navigate(NavRoutes.player(startIndex))
                     },
                     onOpenRoute = { navigate(it) },
+                    initialTab = target.tab,
                     modifier = Modifier.weight(1f),
                 )
 
@@ -271,32 +290,75 @@ fun AxTvApp(
                     startIndex = target.startIndex,
                     onBack = { goBack() },
                     modifier = Modifier.weight(1f),
+                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
                 )
 
                 is NavDestination.Detail -> Box(modifier = Modifier.weight(1f)) {
+                    // 从搜索结果进入时把搜索队列的 id 顺序带给详情页：上一条/下一条和全屏连播都用它。
+                    val queueIds = remember(target.awemeId, target.searchIndex) {
+                        if (target.searchIndex == null) {
+                            emptyList()
+                        } else {
+                            SearchPlaybackRepository.cachedAwemes.map { it.awemeId() }
+                        }
+                    }
                     DetailScreen(
                         awemeId = target.awemeId,
                         onBack = { goBack() },
-                        onPlay = { awemeId -> navigate(NavRoutes.playerAweme(awemeId)) },
+                        onPlay = { awemeId, queueIndex ->
+                            if (queueIndex != null) {
+                                navigate(NavRoutes.searchPlay(queueIndex))
+                            } else {
+                                navigate(NavRoutes.playerAweme(awemeId))
+                            }
+                        },
+                        queueIds = queueIds,
+                        onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
                     )
                 }
+
+                is NavDestination.AuthorChannel -> Box(modifier = Modifier.weight(1f)) {
+                    AuthorChannelScreen(
+                        secUid = target.secUid,
+                        nickname = target.nickname,
+                        onBack = { goBack() },
+                        onPlay = { startAwemeId ->
+                            navigate(NavRoutes.authorPlay(target.secUid, startAwemeId))
+                        },
+                        onLogin = { navigate(NavRoutes.LOGIN) },
+                    )
+                }
+
+                is NavDestination.AuthorPlay -> PlayerFromAuthorScreen(
+                    secUid = target.secUid,
+                    awemeId = target.awemeId,
+                    onBack = { goBack() },
+                    modifier = Modifier.weight(1f),
+                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
+                )
 
                 is NavDestination.Player -> PlayerFromFeedScreen(
                     startIndex = target.startIndex,
                     onBack = { goBack() },
                     modifier = Modifier.weight(1f),
+                    source = target.source,
+                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
                 )
 
                 is NavDestination.PlayerAweme -> PlayerFromAwemeScreen(
                     awemeId = target.awemeId,
                     onBack = { goBack() },
                     modifier = Modifier.weight(1f),
+                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
                 )
 
                 NavDestination.Search -> Box(modifier = Modifier.weight(1f)) {
-                    SearchScreen(
+                    // 双路由：输入页只负责输入/热搜/联想，提交后进入独立的 search/results 路由。
+                    // 这样从详情页返回会回到结果页，而不是回到输入页重搜一次。
+                    SearchPage(
+                        query = null,
+                        onOpenResults = { keyword -> navigate(NavRoutes.searchResults(keyword)) },
                         onBack = { goBack() },
-                        onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
                     )
                 }
 
@@ -304,9 +366,22 @@ fun AxTvApp(
                     SearchResultsPage(
                         query = target.query,
                         onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
+                        onOpenVideo = { awemeId, index ->
+                            navigate(NavRoutes.detail(awemeId, index))
+                        },
+                        onSearchCommitted = { keyword ->
+                            replaceTop(NavRoutes.searchResults(keyword))
+                        },
                         onBack = { goBack() },
                     )
                 }
+
+                is NavDestination.SearchPlay -> PlayerFromSearchScreen(
+                    startIndex = target.startIndex,
+                    onBack = { goBack() },
+                    modifier = Modifier.weight(1f),
+                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
+                )
 
                 NavDestination.Live -> Box(modifier = Modifier.weight(1f)) {
                     LiveListScreen(
@@ -345,6 +420,7 @@ fun AxTvApp(
                     awemeId = target.awemeId,
                     onBack = { goBack() },
                     modifier = Modifier.weight(1f),
+                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
                 )
 
                 NavDestination.Profile -> Box(modifier = Modifier.weight(1f)) {
@@ -389,6 +465,24 @@ fun AxTvApp(
                     LoginScreen(
                         onBack = { goBack() },
                         onLoggedIn = { goBack() },
+                    )
+                }
+
+                // 电视台（IPTV）目的地已由并行工作加入 sealed 接口，对应屏幕未落地；
+                // 先占位保证 when 穷尽（不静默落首页），IptvScreen/IptvPlayScreen 就绪后替换。
+                NavDestination.Iptv -> Box(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "电视台功能开发中",
+                        color = AxTvColors.TextSecondary,
+                        style = TextStyle(fontSize = 15.sp),
+                    )
+                }
+
+                is NavDestination.IptvPlay -> Box(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "电视台功能开发中",
+                        color = AxTvColors.TextSecondary,
+                        style = TextStyle(fontSize = 15.sp),
                     )
                 }
             }

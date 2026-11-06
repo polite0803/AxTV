@@ -81,6 +81,8 @@ internal fun DetailButton(
     count: String? = null,
     active: Boolean = false,
     enabled: Boolean = true,
+    /** 紧凑内边距：详情页六个操作要挤在同一排。 */
+    compact: Boolean = false,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -91,7 +93,7 @@ internal fun DetailButton(
             .clip(RoundedCornerShape(12.dp))
             .background(if (active) AxTvColors.Accent.copy(alpha = 0.18f) else AxTvColors.Surface)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 9.dp),
+            .padding(horizontal = if (compact) 10.dp else 16.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -184,11 +186,11 @@ internal fun DetailRemoteImage(
 }
 
 @Composable
-internal fun RelatedCard(item: Aweme, onClick: () -> Unit) {
+internal fun RelatedCard(item: Aweme, onClick: () -> Unit, modifier: Modifier = Modifier) {
     var focused by remember { mutableStateOf(false) }
     val coverUrl = DetailPageSpec.coverUrl(item.video())
     Column(
-        modifier = Modifier
+        modifier = modifier
             .width(176.dp)
             .onFocusChanged { focused = it.isFocused }
             .focusRing(focused)

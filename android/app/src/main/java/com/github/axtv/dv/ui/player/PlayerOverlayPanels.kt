@@ -59,6 +59,7 @@ internal const val CLOCK_TICK_MS = 15_000L
 internal fun PlayerHeader(
     session: PlayerSession,
     clockText: String?,
+    authorName: String = "",
 ) {
     Row(
         modifier = Modifier
@@ -76,6 +77,16 @@ internal fun PlayerHeader(
             overflow = TextOverflow.Ellipsis,
             style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold),
         )
+        if (authorName.isNotBlank()) {
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = "@$authorName",
+                color = AxTvColors.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(fontSize = 13.sp),
+            )
+        }
         Spacer(Modifier.width(12.dp))
         Text(
             text = "第 ${session.playlistIndex + 1}/${session.itemCount} 条",
@@ -199,6 +210,10 @@ internal fun PlayerBottomBar(
     onToggleDanmaku: () -> Unit,
     onOpenMenu: () -> Unit,
     onOpenEpisodes: () -> Unit,
+    /** 当前条目的作者 sec_uid；为空时不出现「作者」入口（而不是点了才报错）。 */
+    authorSecUid: String = "",
+    authorName: String = "",
+    onOpenAuthor: () -> Unit = {},
 ) {
     val progress = if (session.durationMs > 0L) {
         (session.positionMs.toFloat() / session.durationMs).coerceIn(0f, 1f)
@@ -248,6 +263,17 @@ internal fun PlayerBottomBar(
             if (episodeCount > 0) {
                 OverlayAction(label = "合集（$episodeCount 集）", onClick = onOpenEpisodes)
             }
+            // 「进入发布者频道」：携带当前条目的 sec_uid，落地后可从「播放全部」连续看完作者作品。
+            if (authorSecUid.isNotBlank()) {
+                OverlayAction(
+                    label = when {
+                        authorName.isBlank() -> "作者频道"
+                        authorName.length <= 8 -> "作者：$authorName"
+                        else -> "作者：${authorName.take(7)}…"
+                    },
+                    onClick = onOpenAuthor,
+                )
+            }
         }
         // 焦点在哪一层必须写在界面上：否则用户只知道"按了没反应"，不知道要长按。
         Text(
@@ -296,7 +322,15 @@ internal fun PlayerMenuPanel(
     onSpeedSelected: (Float) -> Unit,
     danmakuOn: Boolean,
     onDanmakuToggle: () -> Unit,
+    dislikeEnabled: Boolean,
+    dislikeBusy: Boolean,
+    dislikeNotice: String,
+    onDislike: () -> Unit,
     onClose: () -> Unit,
+    /** 当前条目有 author.sec_uid 时才出现「作者频道」行。 */
+    authorEnabled: Boolean = false,
+    authorName: String = "",
+    onOpenAuthor: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -348,6 +382,24 @@ internal fun PlayerMenuPanel(
             value = if (danmakuOn) "开启" else "关闭",
             onClick = onDanmakuToggle,
         )
+        // 「不喜欢」= 负反馈，接 commit/dislike/item（文案 on5:1501，请求 n11.java:5384）。
+        // 值位三态：处理中 / 结论（已标记或失败原因）。只在当前条目真是作品接口回来的
+        // aweme 时渲染——演示数据源没有 aweme_id，留着只会按了没反应（同一不渲染「屏蔽词」的理由）。
+        if (dislikeEnabled) {
+            MenuRow(
+                label = PlayerMenuSpec.LABEL_DISLIKE,
+                value = if (dislikeBusy) PlayerMenuSpec.LABEL_PROCESSING else dislikeNotice,
+                onClick = onDislike,
+            )
+        }
+        // 「作者频道」：观看中直接进入发布者主页，落地后可「播放全部」连续看完该作者作品。
+        if (authorEnabled) {
+            MenuRow(
+                label = "作者频道",
+                value = authorName.ifBlank { "进入 ›" },
+                onClick = onOpenAuthor,
+            )
+        }
         // 原版菜单里还有「屏蔽词」「完整简介」两行（PlayerMenuSpec.LABEL_BLOCK_WORDS /
         // LABEL_FULL_DESCRIPTION）。两者都没有后端可接（屏蔽词只在弹幕过滤器里读设置，
         // 本应用没有编辑入口；完整简介要跳详情页但面板拿不到 awemeId），

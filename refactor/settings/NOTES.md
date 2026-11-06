@@ -16,7 +16,7 @@
 | `ff5.java` | — | `ReleaseJson` | 213 | GitHub Releases 响应解析（tag_name / assets[].digest …） |
 | `MyApplication` 的异常处理器 | — | `CrashHandler` | 120 | 报告格式与 500ms 自杀延迟原样保留 |
 
-## 2. 配置键全表（69 个生效键，键名字面量与原 APK 一致；`LAST_ANNOUNCEMENT_ID` 为预留未用）
+## 2. 配置键全表（键名字面量与原 APK 一致；`LAST_ANNOUNCEMENT_ID` 为预留未用。条数不在此表维护，判据是 android 侧 `SettingsKeyMappingTest`，它随 `SettingsKeys` 的声明数同步）
 
 ### 存储容器
 | key | 常量 |

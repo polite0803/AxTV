@@ -49,6 +49,7 @@ import kotlinx.coroutines.withContext
 internal class SearchState(
     private val scope: CoroutineScope,
     private val history: SearchHistoryStore,
+    initialTab: SearchTab = SearchTab.VIDEO,
 ) {
 
     private companion object {
@@ -76,7 +77,7 @@ internal class SearchState(
     var showResults by mutableStateOf(false)
         private set
 
-    var tab by mutableStateOf(SearchTab.VIDEO)
+    var tab by mutableStateOf(initialTab)
         private set
 
     // ---- 搜索前：本地搜索历史（原版 search_history / history） ----
@@ -112,6 +113,13 @@ internal class SearchState(
         private set
     var focusTab by mutableStateOf(SearchTab.VIDEO)
         private set
+
+    /**
+     * 翻页完成后要落焦的「第一条新增项」（0-based，按分栏区分）。
+     * 不参与组合；由 focusSignal 触发的页面 effect 消费一次。
+     */
+    private var pendingFocusTab: SearchTab? = null
+    private var pendingFocusIndex: Int? = null
 
     private var hotJob: Job? = null
     private var suggestJob: Job? = null
@@ -203,6 +211,8 @@ internal class SearchState(
         video.reset()
         users.reset()
         lives.reset()
+        // 新关键词：播放队列换成这一轮结果，避免点开新结果时连播到旧关键词的视频。
+        SearchPlaybackRepository.reset()
 
         loadFirst(tab)
     }
@@ -360,12 +370,21 @@ internal class SearchState(
             result.fold(
                 onSuccess = { response ->
                     if (response.statusCode() != 0) {
+                        SearchPlaybackRepository.reset()
                         video.applyFirstError(
                             statusError("", response.statusCode()),
                             diagnostic = diagnostics(response.statusCode(), 0),
                         )
                     } else {
-                        val mapped = (response.data() ?: emptyList()).mapNotNull { it.toVideoResult() }
+                        val workData = response.data() ?: emptyList()
+                        val mapped = workData.mapNotNull { it.toVideoResult() }
+                        SearchPlaybackRepository.cacheFirst(
+                            awemes = workData.mapNotNull { it.awemeInfo().takeIf { a -> a.awemeId().isNotBlank() } },
+                            keyword = keyword,
+                            searchId = response.logPb()?.imprId().orEmpty(),
+                            nextOffset = VIDEO_FIRST,
+                            hasMore = response.hasMorePages(),
+                        )
                         video.applyFirst(
                             page = mapped,
                             more = response.hasMorePages(),
@@ -378,6 +397,7 @@ internal class SearchState(
                     afterPage(SearchTab.VIDEO)
                 },
                 onFailure = {
+                    SearchPlaybackRepository.reset()
                     video.applyFirstError(
                         describeSearchError(it),
                         diagnostic = diagnostics(-1, 0),
@@ -410,7 +430,16 @@ internal class SearchState(
                     if (response.statusCode() != 0) {
                         video.applyMoreError(statusError("", response.statusCode()))
                     } else {
-                        val mapped = (response.data() ?: emptyList()).mapNotNull { it.toVideoResult() }
+                        val workData = response.data() ?: emptyList()
+                        val mapped = workData.mapNotNull { it.toVideoResult() }
+                        SearchPlaybackRepository.cacheMore(
+                            awemes = workData.mapNotNull { it.awemeInfo().takeIf { a -> a.awemeId().isNotBlank() } },
+                            keyword = keyword,
+                            searchId = response.logPb()?.imprId().orEmpty(),
+                            nextOffset = offset + VIDEO_NEXT,
+                            hasMore = response.hasMorePages(),
+                        )
+                        val firstNew = video.items.size
                         video.applyMore(
                             page = mapped,
                             more = response.hasMorePages(),
@@ -418,6 +447,7 @@ internal class SearchState(
                             nextSearchId = response.logPb()?.imprId().orEmpty(),
                             key = { it.id },
                         )
+                        focusAfterMore(SearchTab.VIDEO, firstNew)
                     }
                 },
                 onFailure = { video.applyMoreError(describeSearchError(it)) },
@@ -487,6 +517,7 @@ internal class SearchState(
                     } else {
                         val mapped = (response.userList() ?: emptyList())
                             .mapNotNull { it.userInfo().toUserResult() }
+                        val firstNew = users.items.size
                         users.applyMore(
                             page = mapped,
                             more = response.hasMorePages(),
@@ -494,6 +525,7 @@ internal class SearchState(
                             nextSearchId = response.logPb()?.imprId().orEmpty(),
                             key = { it.id },
                         )
+                        focusAfterMore(SearchTab.USER, firstNew)
                     }
                 },
                 onFailure = { users.applyMoreError(describeSearchError(it, SearchUiSpec.CHANNEL_USER)) },
@@ -563,6 +595,7 @@ internal class SearchState(
                     } else {
                         val mapped = (response.data() ?: emptyList())
                             .mapNotNull { it.lives()?.toLiveResult() }
+                        val firstNew = lives.items.size
                         lives.applyMore(
                             page = mapped,
                             more = response.hasMorePages(),
@@ -570,6 +603,7 @@ internal class SearchState(
                             nextSearchId = response.logPb()?.imprId().orEmpty(),
                             key = { it.id },
                         )
+                        focusAfterMore(SearchTab.LIVE, firstNew)
                     }
                 },
                 onFailure = { lives.applyMoreError(describeSearchError(it, SearchUiSpec.CHANNEL_LIVE)) },
@@ -584,6 +618,26 @@ internal class SearchState(
             focusTab = target
             focusSignal++
         }
+    }
+
+    /** 翻页成功：把焦点落到第一条新增项（页面 effect 消费一次）。 */
+    private fun focusAfterMore(target: SearchTab, firstNewIndex: Int) {
+        if (!showResults || tab != target) {
+            return
+        }
+        focusTab = target
+        pendingFocusTab = target
+        pendingFocusIndex = firstNewIndex
+        focusSignal++
+    }
+
+    /** 页面消费一次「翻页落焦」；没有待处理目标时返回 null。 */
+    fun consumePendingFocus(): Pair<SearchTab, Int>? {
+        val tab = pendingFocusTab ?: return null
+        val index = pendingFocusIndex ?: return null
+        pendingFocusTab = null
+        pendingFocusIndex = null
+        return tab to index
     }
 
     private fun api(): SearchApi =

@@ -67,13 +67,18 @@ object PlaybackUrlResolver {
  *
  * @param startIndex 首页点击的条目序号：把该条目旋转到队首，保证「点哪条先播哪条」，
  *                   连播仍按原列表顺序；不改变 PlayerSession 的换档/续播/兜底逻辑。
+ * @param wrap false 时从 startIndex 播到队尾为止（合集「从这一集连播」不应回到第 1 集）。
  */
-fun awemePlaylistProvider(awemes: List<Aweme>, startIndex: Int = 0): PlaylistProvider {
+fun awemePlaylistProvider(
+    awemes: List<Aweme>,
+    startIndex: Int = 0,
+    wrap: Boolean = true,
+): PlaylistProvider {
     val ordered = if (awemes.isEmpty()) {
         emptyList()
     } else {
         val start = startIndex.coerceIn(0, awemes.lastIndex)
-        awemes.drop(start) + awemes.take(start)
+        if (wrap) awemes.drop(start) + awemes.take(start) else awemes.drop(start)
     }
     val entries = ordered.mapIndexed { index, aweme -> awemePlaylistEntry(aweme, index) }
     return VideoPlaylistProvider(entries).also {
@@ -103,5 +108,12 @@ fun awemePlaylistEntry(aweme: Aweme, index: Int = 0): VideoPlaylistProvider.Entr
                 ?.takeIf { it.isNotEmpty() }
                 ?: video.originCover()?.firstUrl()?.orEmpty()
             ).orEmpty(),
+        // 播放行为上报（stats / history/write）与播放器「不喜欢」都要用这三项；
+        // 缺 awemeId 时 id 会兜底成 aweme_序号，那时 awemeId 仍为空 ⇒ 不上报，不会把假 id 打给服务端。
+        awemeId = aweme.awemeId(),
+        awemeType = aweme.awemeType(),
+        authorId = aweme.author().uid(),
+        // 播放器「作者」入口的唯一凭据；接口没回 sec_uid 时留空，按钮不出现。
+        authorSecUid = aweme.author().secUid(),
     )
 }

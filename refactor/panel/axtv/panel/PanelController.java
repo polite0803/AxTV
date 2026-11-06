@@ -12,6 +12,9 @@ package axtv.panel;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import axtv.iptv.IptvSourceHandler;
+import axtv.iptv.IptvRoutes;
+
 /**
  * 面板服务的装配与生命周期。
  *
@@ -31,9 +34,11 @@ public final class PanelController implements AutoCloseable {
 
     private final CookiePushHandler cookieHandler;
     private final SearchInputHandler searchHandler;
+    private final IptvSourceHandler iptvHandler;
     private final LogcatExportHandler logcatHandler;
 
     private final PanelServer cookieServer;
+    private PanelServer iptvServer;
     private PanelServer searchPageServer;
     private SearchSocketServer searchSocketServer;
 
@@ -64,9 +69,12 @@ public final class PanelController implements AutoCloseable {
         this.logcatHandler = new LogcatExportHandler(logcatSource);
         this.cookieHandler = new CookiePushHandler(this.renderer, authStore, state,
                 () -> DeviceAddressResolver.deviceName(identity), this.logcatHandler, auth);
+        this.iptvHandler = new IptvSourceHandler(this.renderer, authStore, state::authPushed, auth);
         this.searchHandler = new SearchInputHandler(this.renderer, state, auth);
         this.cookieServer = new PanelServer("CookieServer", CookiePushHandler.PORT,
                 this.cookieHandler.routes(), false, 8, transportFactory);
+        this.iptvServer = new PanelServer("IptvServer", IptvRoutes.PORT,
+                this.iptvHandler.routes(), false, 8, transportFactory);
     }
 
     public PanelState state() {
@@ -92,6 +100,15 @@ public final class PanelController implements AutoCloseable {
     public String searchPanelUrl() {
         return this.auth.appendTo(DeviceAddressResolver.url(
                 DeviceAddressResolver.localAddress(), SearchInputHandler.PORT, ""));
+    }
+
+    /**
+     * 手机端要打开的电视台直播源推送地址（与 Cookie 推送共用 9978 端口），
+     * 已带访问令牌。手机打开后看到的是直播源输入页（/iptv），不是 Cookie 推送页。
+     */
+    public String iptvSubmitUrl() {
+        return this.auth.appendTo(DeviceAddressResolver.url(
+                DeviceAddressResolver.localAddress(), CookiePushHandler.PORT, IptvRoutes.PATH_SUBMIT));
     }
 
     /** Cookie 服务启动；失败只记日志，不影响应用其它功能。 */
@@ -184,16 +201,39 @@ public final class PanelController implements AutoCloseable {
         }
     }
 
-    /** 应用启动：Cookie 推送与搜索输入都启动（两者都要求令牌）。 */
+    /** 应用启动：Cookie 推送与搜索输入与电视台直播均启动（两者都要求令牌）。 */
     public void startAll() {
         startCookieServer();
         startSearchServer();
+        startIptvServer();
     }
 
     /** 应用退出：两台都停。 */
     public void stopAll() {
         stopSearchServer();
         stopCookieServer();
+        stopIptvServer();
+    }
+
+    private synchronized void startIptvServer() {
+        try {
+            if (this.iptvServer.isRunning()) {
+                return;
+            }
+            this.iptvServer.start();
+            this.log.log(Level.INFO, "IPTV 服务器启动: " + iptvSubmitUrl());
+        } catch (Exception e) {
+            this.log.log(Level.SEVERE, "IPTV 服务器启动失败", e);
+        }
+    }
+
+    private synchronized void stopIptvServer() {
+        try {
+            this.iptvServer.stop();
+            this.log.log(Level.INFO, "IPTV 服务器已停止");
+        } catch (Exception e) {
+            this.log.log(Level.SEVERE, "IPTV 服务器停止失败", e);
+        }
     }
 
     @Override

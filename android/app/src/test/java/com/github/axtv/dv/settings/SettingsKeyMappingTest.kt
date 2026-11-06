@@ -12,7 +12,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 真实 JUnit（纯 JVM）：验证 72 键声明、SettingsBinder 键映射、读写闭环与默认值回退。 */
+/** 真实 JUnit（纯 JVM）：验证 79 键声明、SettingsBinder 键映射、读写闭环与默认值回退。 */
 class SettingsKeyMappingTest {
 
     private val store = MapSettingsStore()
@@ -20,11 +20,11 @@ class SettingsKeyMappingTest {
     private val binder = SettingsBinder(settings)
 
     @Test
-    fun settingsKeysDeclareExactlySeventyTwoKeys() {
+    fun settingsKeysDeclareExactlySeventyNineKeys() {
         val count = SettingsKeys::class.java.declaredFields.count {
             java.lang.reflect.Modifier.isStatic(it.modifiers) && it.type == String::class.java
         }
-        assertEquals("SettingsKeys 应声明 72 个配置键", 72, count)
+        assertEquals("SettingsKeys 应声明 79 个配置键", 79, count)
     }
 
     @Test

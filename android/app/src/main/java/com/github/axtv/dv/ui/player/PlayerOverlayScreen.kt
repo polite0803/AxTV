@@ -49,6 +49,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -73,6 +74,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.tv.material3.Text
+import axtv.api.InteractionApi
 import axtv.player.PlaybackError
 import axtv.player.PlayerState
 import axtv.settings.Settings
@@ -88,7 +90,10 @@ import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.widget.WidgetPlaybackItem
 import com.github.axtv.dv.widget.WidgetRuntime
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Calendar
 import java.util.Locale
 import kotlin.math.abs
@@ -132,6 +137,13 @@ fun PlayerOverlayScreen(
     /** 当前集 id；用于分集面板的选中态。 */
     mixCurrentEpisodeId: String = "",
     onMixEpisodeSelected: (CollectionEpisode) -> Unit = {},
+    /** 当前播放条目变化（连播自动切条也会回调）：合集播放页用它同步面板高亮/追更。 */
+    onCurrentItemChanged: (itemId: String) -> Unit = {},
+    /**
+     * 「进入发布者频道」回调，参数为当前条目的 author.sec_uid。
+     * 为空或当前条目没有 sec_uid 时，底部控制栏不出现该入口。
+     */
+    onOpenAuthor: ((secUid: String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val settings = AppRuntime.settings
@@ -211,6 +223,10 @@ fun PlayerOverlayScreen(
             else -> defaultCommentDanmakuLoader
         }
     val currentItemId = provider.items().getOrNull(session.playlistIndex)?.id
+    val latestOnCurrentItemChanged by rememberUpdatedState(onCurrentItemChanged)
+    LaunchedEffect(currentItemId) {
+        currentItemId?.let { latestOnCurrentItemChanged(it) }
+    }
     // 桌面「正在播放」小组件：只上报当前条目的元数据，不影响播放/换档逻辑。
     val currentItem = provider.items().getOrNull(session.playlistIndex)
     LaunchedEffect(
@@ -234,6 +250,26 @@ fun PlayerOverlayScreen(
             ),
         )
     }
+    // 「越看越准」：真正出过画面（firstFrameRendered）才算看过，才上报 stats + 观看历史。
+    // 去重在核心层 PlaybackFeedbackReporter 里按作品 id 做进程内判定（对齐 kq5.f12447i），
+    // 同一条来回切换不会重复打网络；失败只写日志，不打断播放。
+    // awemeId 为空的是演示数据源，不上报（否则会把 demo-1 这种假 id 发给服务端）。
+    LaunchedEffect(currentItem?.awemeId, session.firstFrameRendered) {
+        val item = currentItem?.takeIf { it.awemeId.isNotEmpty() } ?: return@LaunchedEffect
+        if (!session.firstFrameRendered) return@LaunchedEffect
+        val reporter = AppRuntime.playbackFeedback ?: return@LaunchedEffect
+        val outcome = withContext(Dispatchers.IO) {
+            reporter.reportWatched(item.awemeId, item.awemeType, item.authorId)
+        }
+        if (outcome.hasFailure()) {
+            android.util.Log.w(
+                "AxTV_Feedback",
+                "aweme=" + item.awemeId +
+                    " stats=" + outcome.statsError + " history=" + outcome.historyError,
+            )
+        }
+    }
+
     val latestDanmakuLoader = rememberUpdatedState(activeDanmakuLoader)
     var loadedDanmakuComments by remember { mutableStateOf(emptyList<DanmakuComment>()) }
     LaunchedEffect(currentItemId, session.durationMs, activeDanmakuLoader != null, danmakuOn) {
@@ -272,6 +308,48 @@ fun PlayerOverlayScreen(
         onDispose {
             lifecycleOwner?.lifecycle?.removeObserver(observer)
             session.release()
+        }
+    }
+
+    // 播放器内的「不喜欢」：负反馈喂给推荐接口。commit/dislike/item 只需要 aweme_id，
+    // 不要求互动凭据（与点赞/收藏不同，见 InteractionApi.dislike）。状态按条目重建，
+    // 避免上一条视频的结论落到新视频上。
+    val interactionApi = remember { AppRuntime.api?.let { InteractionApi(it) } }
+    val feedbackScope = rememberCoroutineScope()
+    var disliked by remember(currentItem?.awemeId) { mutableStateOf(false) }
+    var busyDislike by remember(currentItem?.awemeId) { mutableStateOf(false) }
+    var dislikeNotice by remember(currentItem?.awemeId) { mutableStateOf("") }
+
+    fun markDisliked() {
+        val awemeId = currentItem?.awemeId.orEmpty()
+        if (awemeId.isEmpty() || busyDislike || disliked) return
+        val api = interactionApi
+        if (api == null) {
+            dislikeNotice = "应用尚未初始化，无法标记"
+            return
+        }
+        busyDislike = true
+        feedbackScope.launch {
+            val failure = try {
+                val result = withContext(Dispatchers.IO) { api.dislike(awemeId) }
+                if (result.statusCode() == 0) {
+                    null
+                } else {
+                    result.statusMsg().ifBlank { "标记失败（${result.statusCode()}）" }
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                e.message ?: "标记失败"
+            } finally {
+                busyDislike = false
+            }
+            if (failure == null) {
+                disliked = true
+                dislikeNotice = "已标记不喜欢"
+            } else {
+                dislikeNotice = failure
+            }
         }
     }
 
@@ -391,11 +469,16 @@ fun PlayerOverlayScreen(
         }
     }
 
-    // 播放失败时焦点交给“重试”，保证遥控器可达。
+    // 播放失败时焦点交给“重试”，保证遥控器可达；错误清除后把焦点还给画面层，
+    // 否则「重试」按钮随错误卡片一起消失，焦点会掉到顶栏/焦点空洞。
     LaunchedEffect(session.error) {
-        if (session.error != null) {
-            withFrameNanos { }
-            runCatching { errorRetryRequester.requestFocus() }
+        withFrameNanos { }
+        runCatching {
+            if (session.error != null) {
+                errorRetryRequester.requestFocus()
+            } else {
+                surfaceFocusRequester.requestFocus()
+            }
         }
     }
 
@@ -468,7 +551,9 @@ fun PlayerOverlayScreen(
         }
 
         Column(modifier = Modifier.fillMaxSize()) {
-            if (chromeVisible && !inPip) PlayerHeader(session, clockText)
+            if (chromeVisible && !inPip) {
+                PlayerHeader(session, clockText, authorName = currentItem?.author.orEmpty())
+            }
 
             Box(
                 modifier = Modifier.fillMaxWidth().weight(1f),
@@ -512,6 +597,12 @@ fun PlayerOverlayScreen(
                     onToggleDanmaku = ::toggleDanmaku,
                     onOpenMenu = { menuOpen = true },
                     onOpenEpisodes = { mixPanelOpen = true },
+                    authorSecUid = currentItem?.authorSecUid.orEmpty(),
+                    authorName = currentItem?.author.orEmpty(),
+                    onOpenAuthor = {
+                        val secUid = currentItem?.authorSecUid.orEmpty()
+                        if (secUid.isNotBlank()) onOpenAuthor?.invoke(secUid)
+                    },
                 )
             }
         }
@@ -541,7 +632,20 @@ fun PlayerOverlayScreen(
                 onSpeedSelected = session::applySpeed,
                 danmakuOn = danmakuOn,
                 onDanmakuToggle = ::toggleDanmaku,
+                dislikeEnabled = currentItem?.awemeId?.isNotEmpty() == true,
+                dislikeBusy = busyDislike,
+                dislikeNotice = dislikeNotice,
+                onDislike = ::markDisliked,
                 onClose = { menuOpen = false },
+                authorEnabled = currentItem?.authorSecUid?.isNotBlank() == true,
+                authorName = currentItem?.author.orEmpty(),
+                onOpenAuthor = {
+                    val secUid = currentItem?.authorSecUid.orEmpty()
+                    if (secUid.isNotBlank()) {
+                        menuOpen = false
+                        onOpenAuthor?.invoke(secUid)
+                    }
+                },
             )
         }
 

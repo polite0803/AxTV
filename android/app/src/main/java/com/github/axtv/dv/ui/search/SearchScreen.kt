@@ -77,6 +77,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import com.github.axtv.dv.ui.AxTvColors
+import com.github.axtv.dv.ui.FocusMemory
 import com.github.axtv.dv.ui.focusRing
 import kotlinx.coroutines.launch
 
@@ -90,6 +91,7 @@ private const val VIDEO_COLUMNS = 3
 fun SearchScreen(
     onBack: () -> Unit,
     onOpenDetail: (String) -> Unit,
+    onOpenVideo: (awemeId: String, index: Int) -> Unit = { awemeId, _ -> onOpenDetail(awemeId) },
     modifier: Modifier = Modifier,
 ) {
     SearchPageContent(
@@ -100,6 +102,7 @@ fun SearchScreen(
         onSubmitQuery = null,
         onBack = onBack,
         onOpenDetail = onOpenDetail,
+        onOpenVideo = onOpenVideo,
         modifier = modifier,
     )
 }
@@ -123,6 +126,7 @@ fun SearchPage(
         onSubmitQuery = onOpenResults,
         onBack = onBack,
         onOpenDetail = { },
+        onOpenVideo = { _, _ -> },
         modifier = modifier,
     )
 }
@@ -135,17 +139,25 @@ fun SearchPage(
 fun SearchResultsPage(
     query: String,
     onOpenDetail: (awemeId: String) -> Unit,
+    onOpenVideo: (awemeId: String, index: Int) -> Unit = { awemeId, _ -> onOpenDetail(awemeId) },
+    /**
+     * 页面内重新搜索时上抛关键词：导航层用它替换当前 search/results 路由，
+     * 保证从详情返回时看到的是最后一次搜索，而不是路由里最早的关键词。
+     * 不接线时退回页内直接搜索。
+     */
+    onSearchCommitted: ((String) -> Unit)? = null,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     SearchPageContent(
         initialQuery = query,
         autoSearch = true,
-        submitToExternal = false,
+        submitToExternal = onSearchCommitted != null,
         resultsBackToPrevious = true,
-        onSubmitQuery = null,
+        onSubmitQuery = onSearchCommitted,
         onBack = onBack,
         onOpenDetail = onOpenDetail,
+        onOpenVideo = onOpenVideo,
         modifier = modifier,
     )
 }
@@ -160,12 +172,20 @@ private fun SearchPageContent(
     onSubmitQuery: ((String) -> Unit)?,
     onBack: () -> Unit,
     onOpenDetail: (String) -> Unit,
+    onOpenVideo: (awemeId: String, index: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val historyStore = remember(context) { SearchHistoryStore(context) }
-    val state = remember { SearchState(scope, historyStore) }
+    // 路由 query 变化（页内重新搜索替换路由）时整体换一份状态机，避免沿用上一轮结果。
+    // 分栏也按关键词恢复：从详情返回时回到上次看的视频/用户/直播 tab。
+    val state = remember(initialQuery, autoSearch) {
+        val rememberedTab = FocusMemory.last("search-tab:${initialQuery.orEmpty()}")
+            ?.let { name -> SearchTab.entries.firstOrNull { it.name == name } }
+            ?: SearchTab.VIDEO
+        SearchState(scope, historyStore, rememberedTab)
+    }
     val focusManager = LocalFocusManager.current
 
     val searchRequester = remember { FocusRequester() }
@@ -193,10 +213,23 @@ private fun SearchPageContent(
     val userRequesters = remember { mutableMapOf<Int, FocusRequester>() }
     val liveRequesters = remember { mutableMapOf<Int, FocusRequester>() }
 
+    /** 焦点记忆作用域：同一关键词 + 分栏下，从详情返回时回到上次浏览的位置。 */
+    fun searchFocusScope(target: SearchTab): String = "search:${state.committedKeyword}:${target.name}"
+
+    // 每个分栏首次出结果时套用一次记忆；后续翻页/重试沿用当前焦点状态。
+    val focusMemoryAppliedTabs = remember { mutableSetOf<SearchTab>() }
+
     // 热搜词/联想词点击回填后，把文本同步回输入框（光标放末尾）。
     LaunchedEffect(state.query) {
         if (fieldValue.text != state.query) {
             fieldValue = TextFieldValue(state.query, TextRange(state.query.length))
+        }
+    }
+
+    // 分栏切换也记一次：返回结果页时恢复到最后看的 tab。
+    LaunchedEffect(state.tab, state.committedKeyword) {
+        if (state.committedKeyword.isNotBlank()) {
+            FocusMemory.remember("search-tab:${state.committedKeyword}", state.tab.name)
         }
     }
 
@@ -214,7 +247,7 @@ private fun SearchPageContent(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(state) {
         initialQuery?.let { state.initialize(it, autoSearch) }
         state.loadHistory()
         state.loadHot()
@@ -236,18 +269,27 @@ private fun SearchPageContent(
     }
 
     // 首屏数据落地 / 切到已加载分栏时复位焦点；空态与错误态则把焦点交给面板按钮。
+    // 翻页完成后优先落到第一条新增项，避免焦点留在消失的「加载更多」上回溯到顶栏。
     LaunchedEffect(state.focusSignal) {
         if (state.focusSignal == 0L) {
             return@LaunchedEffect
         }
+        val pending = state.consumePendingFocus()
+        val currentTab = state.focusTab
+        val remembered = if (focusMemoryAppliedTabs.add(currentTab)) {
+            FocusMemory.last(searchFocusScope(currentTab))?.toIntOrNull()
+        } else {
+            null
+        }
         withFrameNanos { }
-        when (state.focusTab) {
+        when (currentTab) {
             SearchTab.VIDEO -> {
                 val items = state.video.items
                 if (items.isEmpty()) {
                     runCatching { contentActionRequester.requestFocus() }
                 } else {
-                    val target = videoFocus.coerceIn(0, items.size - 1)
+                    val target = (pending?.takeIf { it.first == SearchTab.VIDEO }?.second ?: remembered ?: videoFocus)
+                        .coerceIn(0, items.size - 1)
                     runCatching { videoListState.scrollToItem(target / VIDEO_COLUMNS) }
                     withFrameNanos { }
                     withFrameNanos { }
@@ -260,7 +302,8 @@ private fun SearchPageContent(
                 if (items.isEmpty()) {
                     runCatching { contentActionRequester.requestFocus() }
                 } else {
-                    val target = userFocus.coerceIn(0, items.size - 1)
+                    val target = (pending?.takeIf { it.first == SearchTab.USER }?.second ?: remembered ?: userFocus)
+                        .coerceIn(0, items.size - 1)
                     runCatching { userListState.scrollToItem(target) }
                     withFrameNanos { }
                     withFrameNanos { }
@@ -273,7 +316,8 @@ private fun SearchPageContent(
                 if (items.isEmpty()) {
                     runCatching { contentActionRequester.requestFocus() }
                 } else {
-                    val target = liveFocus.coerceIn(0, items.size - 1)
+                    val target = (pending?.takeIf { it.first == SearchTab.LIVE }?.second ?: remembered ?: liveFocus)
+                        .coerceIn(0, items.size - 1)
                     runCatching { liveListState.scrollToItem(target) }
                     withFrameNanos { }
                     withFrameNanos { }
@@ -402,8 +446,14 @@ private fun SearchPageContent(
                                                     item = item,
                                                     modifier = Modifier.weight(1f),
                                                     requester = requester,
-                                                    onFocused = { videoFocus = flatIndex },
-                                                    onClick = { onOpenDetail(item.id) },
+                                                    onFocused = {
+                                                        videoFocus = flatIndex
+                                                        FocusMemory.remember(
+                                                            searchFocusScope(SearchTab.VIDEO),
+                                                            flatIndex.toString(),
+                                                        )
+                                                    },
+                                                    onClick = { onOpenVideo(item.id, flatIndex) },
                                                 )
                                             }
                                             repeat(VIDEO_COLUMNS - row.size) {
@@ -411,14 +461,13 @@ private fun SearchPageContent(
                                             }
                                         }
                                     }
-                                    if (results.hasMore || results.loadingMore || results.loadMoreError != null) {
-                                        item(key = "video-more") {
-                                            MoreRow(
-                                                loading = results.loadingMore,
-                                                error = results.loadMoreError,
-                                                onLoadMore = { state.loadMore(SearchTab.VIDEO) },
-                                            )
-                                        }
+                                    item(key = "video-more") {
+                                        MoreRow(
+                                            loading = results.loadingMore,
+                                            hasMore = results.hasMore,
+                                            error = results.loadMoreError,
+                                            onLoadMore = { state.loadMore(SearchTab.VIDEO) },
+                                        )
                                     }
                                 }
                             }
@@ -471,19 +520,24 @@ private fun SearchPageContent(
                                         // 他人主页不可达，因此明确做成「不可点」视觉。
                                         trailing = "主页暂不可进入",
                                         requester = requester,
-                                        onFocused = { userFocus = index },
+                                        onFocused = {
+                                            userFocus = index
+                                            FocusMemory.remember(
+                                                searchFocusScope(SearchTab.USER),
+                                                index.toString(),
+                                            )
+                                        },
                                         onClick = { },
                                         clickable = false,
                                     )
                                 }
-                                if (results.hasMore || results.loadingMore || results.loadMoreError != null) {
-                                    item(key = "user-more") {
-                                        MoreRow(
-                                            loading = results.loadingMore,
-                                            error = results.loadMoreError,
-                                            onLoadMore = { state.loadMore(SearchTab.USER) },
-                                        )
-                                    }
+                                item(key = "user-more") {
+                                    MoreRow(
+                                        loading = results.loadingMore,
+                                        hasMore = results.hasMore,
+                                        error = results.loadMoreError,
+                                        onLoadMore = { state.loadMore(SearchTab.USER) },
+                                    )
                                 }
                             }
                         }
@@ -533,19 +587,24 @@ private fun SearchPageContent(
                                         subtitle = "直播间",
                                         trailing = "直播中",
                                         requester = requester,
-                                        onFocused = { liveFocus = index },
+                                        onFocused = {
+                                            liveFocus = index
+                                            FocusMemory.remember(
+                                                searchFocusScope(SearchTab.LIVE),
+                                                index.toString(),
+                                            )
+                                        },
                                         onClick = { onOpenDetail(item.id) },
                                         clickable = true,
                                     )
                                 }
-                                if (results.hasMore || results.loadingMore || results.loadMoreError != null) {
-                                    item(key = "live-more") {
-                                        MoreRow(
-                                            loading = results.loadingMore,
-                                            error = results.loadMoreError,
-                                            onLoadMore = { state.loadMore(SearchTab.LIVE) },
-                                        )
-                                    }
+                                item(key = "live-more") {
+                                    MoreRow(
+                                        loading = results.loadingMore,
+                                        hasMore = results.hasMore,
+                                        error = results.loadMoreError,
+                                        onLoadMore = { state.loadMore(SearchTab.LIVE) },
+                                    )
                                 }
                             }
                         }

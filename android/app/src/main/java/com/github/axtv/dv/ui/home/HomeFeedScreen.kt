@@ -65,6 +65,9 @@ import com.github.axtv.dv.ui.appearance.AmbientBackdrop
 import com.github.axtv.dv.ui.appearance.AxAppearance
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.nav.NavRoutes
+import com.github.axtv.dv.ui.nav.PLAYER_SOURCE_FOLLOW
+import com.github.axtv.dv.ui.nav.PLAYER_SOURCE_MOBILE
+import com.github.axtv.dv.ui.nav.PLAYER_SOURCE_RECOMMEND
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -84,6 +87,13 @@ private const val MAX_STALLED_PAGES = 3
 /** 首屏至少先备这么多条：服务端偶尔只回 2 条时，不至于让整页看起来只有两个视频。 */
 private const val MIN_FEED_BUFFER = 10
 
+/** 可作为「落地标签」的取值（route `?tab=` 只接受这几个，其余静默回推荐）。 */
+private val HOME_TAB_LABELS = setOf(
+    HomeTabsSpec.TAB_RECOMMEND,
+    HomeTabsSpec.TAB_FOLLOW,
+    HomeTabsSpec.TAB_MOBILE,
+)
+
 /**
  * 信息流条目的组合键：必须与 items(key=) 用同一个函数。
  * 之前 requester 是 remember { FocusRequester() }（无 key），LazyColumn 回收槽位时
@@ -99,26 +109,59 @@ fun HomeFeedScreen(
     onOpenPlayer: (startIndex: Int) -> Unit,
     onOpenRoute: (route: String) -> Unit = {},
     modifier: Modifier = Modifier,
+    /** 落地时选中的标签；来自 route 的 `?tab=`（设置项「默认首页 → 移动推荐」）。 */
+    initialTab: String? = null,
 ) {
-    var activeTab by rememberSaveable { mutableStateOf(HomeTabsSpec.TAB_RECOMMEND) }
+    var activeTab by rememberSaveable {
+        mutableStateOf(initialTab?.takeIf { it in HOME_TAB_LABELS } ?: HomeTabsSpec.TAB_RECOMMEND)
+    }
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val retryRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
 
-    var feedItems by remember { mutableStateOf(HomeFeedRepository.cachedAwemes) }
+    // 初始快照跟随 activeTab（rememberSaveable 恢复时可能停在关注/移动推荐）。
+    var feedItems by remember {
+        mutableStateOf(
+            when (activeTab) {
+                HomeTabsSpec.TAB_FOLLOW -> FollowFeedRepository.cachedAwemes
+                HomeTabsSpec.TAB_MOBILE -> MobileFeedRepository.cachedAwemes
+                else -> HomeFeedRepository.cachedAwemes
+            },
+        )
+    }
     var loading by remember { mutableStateOf(feedItems.isEmpty()) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var loadingMore by remember { mutableStateOf(false) }
     var loadMoreError by remember { mutableStateOf<String?>(null) }
-    var nextCursor by remember { mutableStateOf(HomeFeedRepository.cachedNextCursor) }
-    var hasMore by remember { mutableStateOf(HomeFeedRepository.cachedHasMore) }
+    // nextCursor 的含义按标签走：推荐=已加载页数；关注=服务端游标；移动推荐=refresh_index。
+    var nextCursor by remember {
+        mutableStateOf(
+            when (activeTab) {
+                HomeTabsSpec.TAB_FOLLOW -> FollowFeedRepository.cachedCursor
+                HomeTabsSpec.TAB_MOBILE -> MobileFeedRepository.cachedNextIndex.toLong()
+                else -> HomeFeedRepository.cachedNextCursor
+            },
+        )
+    }
+    var hasMore by remember {
+        mutableStateOf(
+            when (activeTab) {
+                HomeTabsSpec.TAB_FOLLOW -> FollowFeedRepository.cachedAwemes.isNotEmpty()
+                HomeTabsSpec.TAB_MOBILE -> MobileFeedRepository.cachedHasMore
+                else -> HomeFeedRepository.cachedHasMore
+            },
+        )
+    }
     var focusRestored by remember { mutableStateOf(false) }
     // 每次加载结束 +1：即使这一页没有带来新条目，也要重新判断一次「是否已经接近末尾」，
     // 否则第一页加载更多返回重复数据后，焦点卡在最后一条就再也不会触发下一页。
     var pagingTick by remember { mutableIntStateOf(0) }
     var stalledPages by remember { mutableIntStateOf(0) }
+    // 刷新（已在看列表时再点一次「推荐」）：不把整页打成错误态，只在标题下提示一行。
+    var refreshing by remember { mutableStateOf(false) }
+    var refreshMessage by remember { mutableStateOf<String?>(null) }
     var backdropCoverUrl by remember { mutableStateOf("") }
 
     /** 列表变动后清掉已消失条目的焦点请求器：残留条目会让 requestFocus() 甩到远端。 */
@@ -128,27 +171,78 @@ fun HomeFeedScreen(
     }
 
     suspend fun loadFirstPage() {
-        loading = true
+        // 已有内容时是「刷新」（保留列表 + 标题下提示一行），否则是首屏加载（走加载/错误态）。
+        val firstLoad = feedItems.isEmpty()
+        if (firstLoad) loading = true else refreshing = true
         errorMessage = null
         loadMoreError = null
-        val result = HomeFeedRepository.load(0L)
-        result.fold(
-            onSuccess = { page ->
-                feedItems = page.awemes.distinctBy { it.awemeId() }
-                HomeFeedRepository.cache(feedItems, 1L, page.hasMore)
-                nextCursor = 1L
-                hasMore = page.hasMore
-                stalledPages = 0
-                focusRestored = false
-                pruneRequesters()
-            },
-            onFailure = { errorMessage = describeFeedError(it) },
-        )
-        loading = false
+        refreshMessage = null
+        try {
+            when (activeTab) {
+                HomeTabsSpec.TAB_FOLLOW -> {
+                    val r = FollowFeedRepository.refresh()
+                    r.fold(
+                        onSuccess = { fp ->
+                            feedItems = fp.awemes.distinctBy { it.awemeId() }
+                            FollowFeedRepository.cache(feedItems, fp.nextCursor)
+                            nextCursor = fp.nextCursor
+                            hasMore = feedItems.isNotEmpty() || fp.nextCursor > 0
+                            stalledPages = 0
+                            focusRestored = false
+                            pruneRequesters()
+                        },
+                        onFailure = { t ->
+                            if (firstLoad) errorMessage = describeFeedError(t)
+                            else refreshMessage = "刷新失败：${describeFeedError(t)}"
+                        },
+                    )
+                }
+                HomeTabsSpec.TAB_MOBILE -> {
+                    val r = MobileFeedRepository.load(1)
+                    r.fold(
+                        onSuccess = { fp ->
+                            feedItems = fp.awemes.distinctBy { it.awemeId() }
+                            MobileFeedRepository.cache(feedItems, 2, fp.hasMore)
+                            nextCursor = 2L
+                            hasMore = fp.hasMore
+                            stalledPages = 0
+                            focusRestored = false
+                            pruneRequesters()
+                        },
+                        onFailure = { t ->
+                            if (firstLoad) errorMessage = describeFeedError(t)
+                            else refreshMessage = "刷新失败：${describeFeedError(t)}"
+                        },
+                    )
+                }
+                else -> {
+                    val r = HomeFeedRepository.refresh()
+                    r.fold(
+                        onSuccess = { hp ->
+                            feedItems = hp.awemes.distinctBy { it.awemeId() }
+                            HomeFeedRepository.cache(feedItems, hp.nextCursor, hp.hasMore)
+                            nextCursor = hp.nextCursor
+                            hasMore = hp.hasMore
+                            stalledPages = 0
+                            focusRestored = false
+                            pruneRequesters()
+                        },
+                        onFailure = { t ->
+                            if (firstLoad) errorMessage = describeFeedError(t)
+                            else refreshMessage = "刷新失败：${describeFeedError(t)}"
+                        },
+                    )
+                }
+            }
+        } finally {
+            loading = false
+            refreshing = false
+        }
     }
 
     suspend fun loadNextPage() {
-        if (loading || loadingMore || !hasMore) return
+        // refreshing 也要挡：刷新请求在途时，「补到 MIN_FEED_BUFFER」那条会自动翻页会和刷新同时发请求。
+        if (loading || loadingMore || !hasMore || refreshing) return
         loadingMore = true
         loadMoreError = null
         val beforeSize = feedItems.size
@@ -156,24 +250,88 @@ fun HomeFeedScreen(
             .takeLast(RECENT_ID_LIMIT)
             .mapNotNull { it.awemeId().takeIf(String::isNotEmpty) }
         try {
-            val result = HomeFeedRepository.load(nextCursor, recentIds)
-            result.fold(
-                onSuccess = { page ->
-                    val merged = (feedItems + page.awemes).distinctBy { it.awemeId() }
-                    feedItems = merged
-                    nextCursor += 1
-                    hasMore = page.hasMore
-                    stalledPages = if (merged.size > beforeSize) 0 else stalledPages + 1
-                    if (stalledPages >= MAX_STALLED_PAGES) hasMore = false
-                    HomeFeedRepository.cache(merged, nextCursor, hasMore)
-                    pruneRequesters()
-                },
-                onFailure = { loadMoreError = describeFeedError(it) },
-            )
+            when (activeTab) {
+                HomeTabsSpec.TAB_FOLLOW -> {
+                    val r = FollowFeedRepository.load(nextCursor)
+                    r.fold(
+                        onSuccess = { fp ->
+                            val merged = (feedItems + fp.awemes).distinctBy { it.awemeId() }
+                            feedItems = merged
+                            nextCursor = fp.nextCursor
+                            hasMore = fp.nextCursor > 0
+                            stalledPages = if (merged.size > beforeSize) 0 else stalledPages + 1
+                            if (stalledPages >= MAX_STALLED_PAGES) hasMore = false
+                            FollowFeedRepository.cache(merged, nextCursor)
+                            pruneRequesters()
+                        },
+                        onFailure = { loadMoreError = describeFeedError(it) },
+                    )
+                }
+                HomeTabsSpec.TAB_MOBILE -> {
+                    val r = MobileFeedRepository.load(nextCursor.toInt())
+                    r.fold(
+                        onSuccess = { fp ->
+                            val merged = (feedItems + fp.awemes).distinctBy { it.awemeId() }
+                            feedItems = merged
+                            nextCursor += 1
+                            hasMore = fp.hasMore
+                            stalledPages = if (merged.size > beforeSize) 0 else stalledPages + 1
+                            if (stalledPages >= MAX_STALLED_PAGES) hasMore = false
+                            MobileFeedRepository.cache(merged, nextCursor.toInt(), hasMore)
+                            pruneRequesters()
+                        },
+                        onFailure = { loadMoreError = describeFeedError(it) },
+                    )
+                }
+                else -> {
+                    val r = HomeFeedRepository.load(nextCursor, recentIds)
+                    r.fold(
+                        onSuccess = { hp ->
+                            val merged = (feedItems + hp.awemes).distinctBy { it.awemeId() }
+                            feedItems = merged
+                            nextCursor = hp.nextCursor
+                            hasMore = hp.hasMore
+                            stalledPages = if (merged.size > beforeSize) 0 else stalledPages + 1
+                            if (stalledPages >= MAX_STALLED_PAGES) hasMore = false
+                            HomeFeedRepository.cache(merged, nextCursor, hasMore)
+                            pruneRequesters()
+                        },
+                        onFailure = { loadMoreError = describeFeedError(it) },
+                    )
+                }
+            }
         } finally {
             loadingMore = false
             pagingTick += 1
         }
+    }
+
+    suspend fun selectTab(tab: String) {
+        if (tab == activeTab) return
+        activeTab = tab
+        // 切换标签：用该标签的缓存瞬间填充，再按需拉首屏。
+        feedItems = when (tab) {
+            HomeTabsSpec.TAB_FOLLOW -> FollowFeedRepository.cachedAwemes
+            HomeTabsSpec.TAB_MOBILE -> MobileFeedRepository.cachedAwemes
+            else -> HomeFeedRepository.cachedAwemes
+        }
+        nextCursor = when (tab) {
+            HomeTabsSpec.TAB_FOLLOW -> FollowFeedRepository.cachedCursor
+            HomeTabsSpec.TAB_MOBILE -> MobileFeedRepository.cachedNextIndex.toLong()
+            else -> HomeFeedRepository.cachedNextCursor
+        }
+        hasMore = when (tab) {
+            HomeTabsSpec.TAB_FOLLOW -> FollowFeedRepository.cachedAwemes.isNotEmpty()
+            HomeTabsSpec.TAB_MOBILE -> MobileFeedRepository.cachedHasMore
+            else -> HomeFeedRepository.cachedHasMore
+        }
+        loading = feedItems.isEmpty()
+        errorMessage = null
+        loadMoreError = null
+        refreshMessage = null
+        focusRestored = false
+        pruneRequesters()
+        if (feedItems.isEmpty()) loadFirstPage()
     }
 
     // 有缓存就直接复用：从播放器/详情页返回时不再重拉首屏，也不会把已翻出来的列表打回第一页。
@@ -193,6 +351,7 @@ fun HomeFeedScreen(
     // loadingMore 不能进 key：loadNextPage 自己会把它置 true，key 变化会取消正在执行的请求，
     // 导致 loadingMore 永久卡在 true（首页再也翻不了页）。这里只保留会改变「是否需要翻页」的输入。
     LaunchedEffect(
+        activeTab,
         rememberedFocusIndex,
         scrolledNearEnd,
         feedItems.size,
@@ -255,6 +414,24 @@ fun HomeFeedScreen(
             color = AxTvColors.TextPrimary,
             style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold),
         )
+        // 文案逐字取 HomeTabsSpec（i42.m5308P）：原版各 tab 的刷新提示并不都是「刷新…内容」。
+        val statusText = when {
+            refreshing -> when (activeTab) {
+                HomeTabsSpec.TAB_FOLLOW -> HomeTabsSpec.REFRESH_FOLLOW
+                HomeTabsSpec.TAB_MOBILE -> HomeTabsSpec.REFRESH_MOBILE
+                else -> HomeTabsSpec.REFRESH_HOME
+            }
+            refreshMessage != null -> refreshMessage
+            else -> null
+        }
+        if (statusText != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = statusText,
+                color = AxTvColors.TextSecondary,
+                style = TextStyle(fontSize = 14.sp),
+            )
+        }
         Spacer(Modifier.height(14.dp))
 
         // 首页快捷入口：把无内部回调的页面（历史/收藏/稍后再看/登录）接到统一路由。
@@ -300,11 +477,17 @@ fun HomeFeedScreen(
                     label = tab,
                     selected = tab == activeTab,
                     onClick = {
-                        // 「精选」是真入口：跳到独立精选页；「关注」「移动推荐」保持占位，本轮不动。
+                        // 「精选」是真入口：跳到独立精选页；关注/移动推荐 切标签拉取各自数据流。
                         if (tab == HomeTabsSpec.TAB_FEATURED) {
                             onOpenRoute(NavRoutes.FEATURED)
+                        } else if (tab == activeTab) {
+                            // 对齐原版 i42.m5308P：同 Tab 再触发 → 提示刷新文案并刷新该 Tab。
+                            // 已在加载中/已在刷新就忽略，避免连按攒出多个并发请求互相覆盖。
+                            if (!loading && !refreshing) {
+                                scope.launch { loadFirstPage() }
+                            }
                         } else {
-                            activeTab = tab
+                            scope.launch { selectTab(tab) }
                         }
                     },
                 )
@@ -315,7 +498,7 @@ fun HomeFeedScreen(
         when {
             loading -> FeedStatePanel(
                 title = "加载中…",
-                detail = "正在请求首页推荐流（FeedDataSource.loadFeed）",
+                detail = "正在请求${activeTab}（FeedDataSource.loadFeed）",
             )
 
             errorMessage != null && feedItems.isEmpty() -> FeedStatePanel(
@@ -328,7 +511,11 @@ fun HomeFeedScreen(
 
             feedItems.isEmpty() -> FeedStatePanel(
                 title = "暂无内容",
-                detail = "接口返回成功但这一页没有作品，可稍后重试。",
+                detail = when (activeTab) {
+                    HomeTabsSpec.TAB_FOLLOW -> FollowFeedRepository.EMPTY_MESSAGE
+                    HomeTabsSpec.TAB_MOBILE -> "移动推荐暂无内容"
+                    else -> "接口返回成功但这一页没有作品，可稍后重试。"
+                },
                 actionLabel = "重试",
                 actionRequester = retryRequester,
                 onAction = { scope.launch { loadFirstPage() } },
@@ -336,6 +523,11 @@ fun HomeFeedScreen(
 
             else -> {
                 val related = feedItems.take(RELATED_LIMIT)
+                val playerSource = when (activeTab) {
+                    HomeTabsSpec.TAB_FOLLOW -> PLAYER_SOURCE_FOLLOW
+                    HomeTabsSpec.TAB_MOBILE -> PLAYER_SOURCE_MOBILE
+                    else -> PLAYER_SOURCE_RECOMMEND
+                }
                 // 本地「已看」集合：整页都看过时（原版会退回未过滤列表）用它标出重复条目。
                 val viewedIds = remember(feedItems) { ViewedVideoTracker.viewedIds() }
                 Text(
@@ -355,14 +547,26 @@ fun HomeFeedScreen(
                         RelatedCard(
                             item = related[index],
                             viewed = related[index].awemeId() in viewedIds,
-                            onClick = { onOpenPlayer(index) },
+                            onClick = {
+                                // 非推荐标签也走队列播放：PlayerFromFeedScreen 按 source 选该标签的仓储续页，
+                                // 只播单条会让「到末尾自动翻页」在这两个标签上失效。
+                                if (playerSource == PLAYER_SOURCE_RECOMMEND) {
+                                    onOpenPlayer(index)
+                                } else {
+                                    onOpenRoute(NavRoutes.player(index, playerSource))
+                                }
+                            },
                         )
                     }
                 }
 
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "推荐信息流",
+                    text = when (activeTab) {
+                        HomeTabsSpec.TAB_FOLLOW -> "关注信息流"
+                        HomeTabsSpec.TAB_MOBILE -> "移动推荐"
+                        else -> "推荐信息流"
+                    },
                     color = AxTvColors.TextPrimary,
                     style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
                 )
@@ -387,7 +591,15 @@ fun HomeFeedScreen(
                             viewed = feedItems[index].awemeId() in viewedIds,
                             requester = requester,
                             onFocused = { onFocusIndexChange(index) },
-                            onClick = { onOpenPlayer(index) },
+                            onClick = {
+                                // 非推荐标签也走队列播放：PlayerFromFeedScreen 按 source 选该标签的仓储续页，
+                                // 只播单条会让「到末尾自动翻页」在这两个标签上失效。
+                                if (playerSource == PLAYER_SOURCE_RECOMMEND) {
+                                    onOpenPlayer(index)
+                                } else {
+                                    onOpenRoute(NavRoutes.player(index, playerSource))
+                                }
+                            },
                         )
                     }
                     item(key = "feed_footer") {

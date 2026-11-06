@@ -83,8 +83,7 @@ class SettingsBinder(private val settings: Settings) {
     fun enumLabels(key: String): List<String>? = when (key) {
         "live_danmaku_style" -> listOf("滚动样式", "列表样式")
         "app_font_scale" -> listOf("标准", "大", "特大", "超大")
-        // 第 4 档「移动推荐」是原版另一套信息流接口，本应用未实现，冷启动按首页处理（见 AxTvApp.defaultHomeRoute）。
-        "default_home" -> listOf("推荐", "精选", "直播", "移动推荐（未实现·落首页）")
+        "default_home" -> listOf("推荐", "精选", "直播", "移动推荐")
         "client_identity_branch" -> ClientIdentityBranch.values().map { it.displayName }
         "theme_mode" -> listOf("自动", "浅色", "暗色")
         "player_surface_type" -> listOf("SurfaceView", "TextureView", "GL SurfaceView")

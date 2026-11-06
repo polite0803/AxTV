@@ -37,6 +37,10 @@ public final class FeedDataSource {
     /** 加载更多要回传的「最近已展示作品」条数（原版取 10 个）。 */
     private static final int RECENT_ID_LIMIT = 10;
 
+    /** 关注流固定条数与层级（kq5.java:1109 `m8022N(j, 20, 1, …)`）。 */
+    private static final int FOLLOW_PAGE_SIZE = 20;
+    private static final String FOLLOW_LEVEL = "1";
+
     private final FeedApi feedApi;
 
     public FeedDataSource(FeedApi feedApi) {
@@ -70,15 +74,30 @@ public final class FeedDataSource {
         boolean firstPage = cursor <= 0;
         int refreshIndex = firstPage ? 1 : (int) Math.min((long) Integer.MAX_VALUE - 1, cursor + 1);
         int pullType = firstPage ? 0 : 2;
-        List<String> recent = recentAwemeIds == null
-                ? List.of()
-                : recentAwemeIds.stream()
-                        .filter(id -> id != null && !id.isBlank())
-                        .toList();
-        if (recent.size() > RECENT_ID_LIMIT) {
-            recent = recent.subList(recent.size() - RECENT_ID_LIMIT, recent.size());
-        }
-        FeedResponse response = feedApi.tabFeed(DEFAULT_PAGE_SIZE, refreshIndex, pullType, recent);
+        return fetch(refreshIndex, pullType, recentAwemeIds);
+    }
+
+    /**
+     * 刷新首屏/换一批（pull_type=0），并允许调用方指定任意 {@code refresh_index>1}。
+     *
+     * <p>原版首屏与「再点一次推荐」走同一条路（kq5.m7271g → n11.m8021M → m7995c0），
+     * 其中 {@code refresh_index} 取 kq5.f12441c 并在每次请求后自增、最近已展示 id 也一起回传。
+     * {@link #loadFeed(long)} 把 refresh_index 钉在 1，只适合「第一次打开」；
+     * 刷新必须走本方法，否则服务端每次都按冷启动第一页返回同一批。
+     *
+     * @param refreshIndex   刷新序号（从 1 起，每次刷新 +1）；{@code view_count} 由接口层按
+     *                       {@code (refreshIndex-1)*count} 推导
+     * @param recentAwemeIds 最近已展示作品 id（按展示顺序，取最后 10 个）
+     * @throws ApiException 任一错误分支
+     */
+    public FeedPage refresh(int refreshIndex, List<String> recentAwemeIds) throws ApiException {
+        int index = Math.max(1, refreshIndex);
+        return fetch(index, 0, recentAwemeIds);
+    }
+
+    private FeedPage fetch(int refreshIndex, int pullType, List<String> recentAwemeIds) throws ApiException {
+        FeedResponse response = feedApi.tabFeed(
+                DEFAULT_PAGE_SIZE, refreshIndex, pullType, trimRecent(recentAwemeIds));
         requireSuccess(response.statusCode());
         List<Aweme> awemes = response.flatAwemes();
         // has_more 可能以布尔/数字/字符串多种形态返回，模型层（ModelJsonCodec）已按
@@ -88,11 +107,96 @@ public final class FeedDataSource {
         return new FeedPage(awemes, resolvedHasMore || !awemes.isEmpty());
     }
 
+    private static List<String> trimRecent(List<String> recentAwemeIds) {
+        List<String> recent = recentAwemeIds == null
+                ? List.of()
+                : recentAwemeIds.stream()
+                        .filter(id -> id != null && !id.isBlank())
+                        .toList();
+        if (recent.size() > RECENT_ID_LIMIT) {
+            return recent.subList(recent.size() - RECENT_ID_LIMIT, recent.size());
+        }
+        return recent;
+    }
+
     /** 一页信息流：作品 + 是否还有下一页。 */
     public record FeedPage(List<Aweme> awemes, boolean hasMore) {
         public FeedPage {
             awemes = awemes == null ? List.of() : List.copyOf(awemes);
         }
+    }
+
+    /**
+     * 关注流一页：作品 + 下一页游标。
+     *
+     * @param nextCursor 原版 hj1.f9139l：{@code cursor > 0 ? cursor : maxCursor}（kq5.m7272j 尾部）
+     */
+    public record FollowFeedPage(List<Aweme> awemes, long nextCursor) {
+        public FollowFeedPage {
+            awemes = awemes == null ? List.of() : List.copyOf(awemes);
+        }
+    }
+
+    /**
+     * 关注流一页（原版 kq5.m7272j → n11.m8022N：count=20、level=1 固定）。
+     *
+     * <p>取数规则逐字对齐 kq5.java:1125-1146：{@code data[].aweme} 非空优先，
+     * 否则用 {@code filterPrimaryPlayableAwemes(aweme_list)}。
+     * 错误文案对齐 n11.java:1556-1563（8=未登录、2154=限频、其余=服务器返回错误 (N)）。
+     * id 去重与横屏过滤属页面级本地状态，原版在 hj1.java:112-139 完成，不在本层。
+     *
+     * @param cursor 上一页返回的 nextCursor；首屏传 0
+     */
+    public FollowFeedPage loadFollow(long cursor) throws ApiException {
+        FeedResponse response = feedApi.followFeed(FOLLOW_PAGE_SIZE, cursor, FOLLOW_LEVEL);
+        if (response.statusCode() == 0) {
+            // kq5.java:1125-1146：data[].aweme 非空直接用（不做可播过滤）；
+            // 否则退回 filterPrimaryPlayableAwemes(aweme_list)。
+            List<Aweme> awemes = response.data() == null
+                    ? List.of()
+                    : response.data().stream()
+                            .map(axtv.model.FeedDataItem::aweme)
+                            .filter(java.util.Objects::nonNull)
+                            .toList();
+            if (awemes.isEmpty()) {
+                awemes = axtv.model.DataModels.filterPrimaryPlayableAwemes(response.awemeList());
+            }
+            long nextCursor = response.cursor() > 0 ? response.cursor() : response.maxCursor();
+            return new FollowFeedPage(awemes, nextCursor);
+        }
+        if (response.statusCode() == 8) {
+            throw ApiException.loginRequired();
+        }
+        if (response.statusCode() == 2154) {
+            throw ApiException.rateLimited();
+        }
+        throw ApiException.apiStatus(response.statusCode(),
+                "服务器返回错误 (" + response.statusCode() + ")");
+    }
+
+    /**
+     * 移动推荐一页（原版 kq5.m7280r → n11.m8030V）。
+     *
+     * <p>翻页不靠游标：refreshIndex 每次请求后自增（kq5.f12444f），冷启动 = refreshIndex==1。
+     * 本方法只做原版在加载器里的取数过滤（aweme_id 非空 + isPrimaryAweme，kq5.java:1503-1510）；
+     * id 去重（LRU 50）与 presented_ids 维护属页面级状态，由调用方承担。
+     *
+     * @param refreshIndex 刷新序号，从 1 起
+     * @param presentedIds 最近已展示 id（原版取末尾 10 个；冷启动传空）
+     */
+    public FeedPage loadMobile(int refreshIndex, List<String> presentedIds) throws ApiException {
+        FeedResponse response = feedApi.mobileFeed(refreshIndex, presentedIds);
+        if (response.statusCode() != 0) {
+            throw ApiException.apiStatus(response.statusCode(),
+                    "移动推荐返回 status_code=" + response.statusCode());
+        }
+        List<Aweme> kept = new java.util.ArrayList<>();
+        for (Aweme aweme : response.flatAwemes()) {
+            if (!aweme.awemeId().isBlank() && axtv.model.DataModels.isPrimaryAweme(aweme)) {
+                kept.add(aweme);
+            }
+        }
+        return new FeedPage(kept, response.hasMore());
     }
 
     private static void requireSuccess(int statusCode) throws ApiException {
