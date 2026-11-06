@@ -469,6 +469,16 @@ internal class LivePlaybackController(context: Context) {
         engine.play()
     }
 
+    /** 音量（0..1）。电视台播放页用 ←/→ 调节；直播间沿用系统音量，不受影响。 */
+    private var volumeLevel = 1f
+
+    fun adjustVolume(delta: Float) {
+        volumeLevel = (volumeLevel + delta).coerceIn(0f, 1f)
+        engine.setVolume(volumeLevel)
+    }
+
+    fun volume(): Float = volumeLevel
+
     fun attachSurface(host: Any?) = engine.setVideoSurface(host)
 
     fun release() {

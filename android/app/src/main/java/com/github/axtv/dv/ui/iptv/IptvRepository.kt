@@ -163,6 +163,10 @@ object IptvRepository {
 
     fun channelName(channelId: String): String =
         cached?.channelIndex?.get(channelId)?.name ?: channelId
+
+    /** 按列表展示顺序（分组顺序 + 组内顺序）的扁平频道表，且仅保留有可播候选的频道——用于播放页换台。 */
+    fun orderedChannels(): List<IptvChannel> =
+        cached?.groups?.flatMap { it.channels }?.filter { it.candidates.isNotEmpty() } ?: emptyList()
 }
 
 /** 内部中间态：一个源解析后的展示名、是否内置、解析结果。 */
