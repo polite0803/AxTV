@@ -42,8 +42,11 @@
         </intent>
     </queries>
 
-    <!-- 局域网面板（9978/9979）走 HTTP，故 usesCleartextTraffic 保留为 true；
-         面板请求仍需 PanelAuth 令牌，且仅在电视与手机同一局域网时可用。 -->
+    <!-- 必须允许明文流量：
+         1) 局域网面板（9978/9979）走 HTTP；
+         2) 抖音直播的 flv/hls 拉流地址大量是 http://，禁止后会直接变成
+            ExoPlayer 的「Source error」（0.1.2 曾误关，直播全部进不去）。
+         network_security_config 的 base-config 与这里保持一致。 -->
     <application
         android:name=".MyApplication"
         android:label="AxTV"
@@ -52,7 +55,7 @@
         android:theme="@style/Theme.AxTV"
         android:allowBackup="false"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="false"
+        android:usesCleartextTraffic="true"
         android:enableOnBackInvokedCallback="true"
         android:networkSecurityConfig="@xml/network_security_config">
 

@@ -360,7 +360,10 @@ internal class SearchState(
             result.fold(
                 onSuccess = { response ->
                     if (response.statusCode() != 0) {
-                        video.applyFirstError(statusError("", response.statusCode()))
+                        video.applyFirstError(
+                            statusError("", response.statusCode()),
+                            diagnostic = diagnostics(response.statusCode(), 0),
+                        )
                     } else {
                         val mapped = (response.data() ?: emptyList()).mapNotNull { it.toVideoResult() }
                         video.applyFirst(
@@ -369,12 +372,16 @@ internal class SearchState(
                             nextOffset = VIDEO_FIRST,
                             nextSearchId = response.logPb()?.imprId().orEmpty(),
                             key = { it.id },
+                            diagnostic = diagnostics(response.statusCode(), mapped.size),
                         )
                     }
                     afterPage(SearchTab.VIDEO)
                 },
                 onFailure = {
-                    video.applyFirstError(describeSearchError(it))
+                    video.applyFirstError(
+                        describeSearchError(it),
+                        diagnostic = diagnostics(-1, 0),
+                    )
                     afterPage(SearchTab.VIDEO)
                 },
             )
@@ -432,7 +439,10 @@ internal class SearchState(
             result.fold(
                 onSuccess = { response ->
                     if (response.statusCode() != 0) {
-                        users.applyFirstError(statusError(SearchUiSpec.CHANNEL_USER, response.statusCode()))
+                        users.applyFirstError(
+                            statusError(SearchUiSpec.CHANNEL_USER, response.statusCode()),
+                            diagnostic = diagnostics(response.statusCode(), 0),
+                        )
                     } else {
                         val mapped = (response.userList() ?: emptyList())
                             .mapNotNull { it.userInfo().toUserResult() }
@@ -442,12 +452,16 @@ internal class SearchState(
                             nextOffset = USER_COUNT,
                             nextSearchId = response.logPb()?.imprId().orEmpty(),
                             key = { it.id },
+                            diagnostic = diagnostics(response.statusCode(), mapped.size),
                         )
                     }
                     afterPage(SearchTab.USER)
                 },
                 onFailure = {
-                    users.applyFirstError(describeSearchError(it, SearchUiSpec.CHANNEL_USER))
+                    users.applyFirstError(
+                        describeSearchError(it, SearchUiSpec.CHANNEL_USER),
+                        diagnostic = diagnostics(-1, 0),
+                    )
                     afterPage(SearchTab.USER)
                 },
             )
@@ -501,7 +515,10 @@ internal class SearchState(
             result.fold(
                 onSuccess = { response ->
                     if (response.statusCode() != 0) {
-                        lives.applyFirstError(statusError(SearchUiSpec.CHANNEL_LIVE, response.statusCode()))
+                        lives.applyFirstError(
+                            statusError(SearchUiSpec.CHANNEL_LIVE, response.statusCode()),
+                            diagnostic = diagnostics(response.statusCode(), 0),
+                        )
                     } else {
                         val mapped = (response.data() ?: emptyList())
                             .mapNotNull { it.lives()?.toLiveResult() }
@@ -511,12 +528,16 @@ internal class SearchState(
                             nextOffset = LIVE_FIRST,
                             nextSearchId = response.logPb()?.imprId().orEmpty(),
                             key = { it.id },
+                            diagnostic = diagnostics(response.statusCode(), mapped.size),
                         )
                     }
                     afterPage(SearchTab.LIVE)
                 },
                 onFailure = {
-                    lives.applyFirstError(describeSearchError(it, SearchUiSpec.CHANNEL_LIVE))
+                    lives.applyFirstError(
+                        describeSearchError(it, SearchUiSpec.CHANNEL_LIVE),
+                        diagnostic = diagnostics(-1, 0),
+                    )
                     afterPage(SearchTab.LIVE)
                 },
             )
@@ -580,4 +601,20 @@ internal class SearchState(
 
     private fun statusError(prefix: String, code: Int): String =
         SearchUiSpec.errorLabel(prefix, code.toString(), "")
+
+    /**
+     * 搜索诊断：空态/失败面板会直接展示，同时写一条 logcat。
+     * 能区分「服务端拒绝（status_code）」「确实没有结果」和「请求没带登录态」三类问题。
+     */
+    private fun diagnostics(statusCode: Int, returned: Int): String {
+        val jar = AppRuntime.api?.cookies()?.cookies().orEmpty()
+        val runtimeLoggedIn = jar["sessionid"]?.isNotBlank() == true ||
+            jar["sessionid_ss"]?.isNotBlank() == true
+        val settingsLoggedIn = AppRuntime.settings?.isLoggedIn == true
+        val line = "status_code=$statusCode，返回 $returned 条；" +
+            "请求 Cookie sessionid=${if (runtimeLoggedIn) "有" else "无"}；" +
+            "设置登录态=${if (settingsLoggedIn) "有" else "无"}"
+        android.util.Log.i("AxTV_SEARCH", "kw=$committedKeyword $line")
+        return line
+    }
 }

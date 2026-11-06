@@ -221,6 +221,9 @@ internal fun AccountManagementDialog(
                     modifier = if (index == 0) Modifier.focusRequester(firstRequester) else Modifier,
                     onClick = {
                         AppRuntime.settings?.switchAccount(account.id())
+                        // 切换账号只改了 axtv_settings；请求读的是 douyin_auth，
+                        // 不同步会把旧账号的 Cookie 继续发出去（表现为搜不到/身份错乱）。
+                        AppRuntime.syncCookieToRuntimeStore(context)
                         onChanged()
                         version += 1
                     },
@@ -263,6 +266,7 @@ private fun deleteAccount(context: Context, accountId: String) {
     if (settings.currentAccountId() != accountId) return
     if (remaining.isNotEmpty()) {
         settings.switchAccount(remaining.first().id())
+        AppRuntime.syncCookieToRuntimeStore(context)
     } else {
         settings.setCurrentAccountId("")
         settings.setCookie("")

@@ -76,7 +76,8 @@ public final class SearchApi {
         return api.callFor(ApiRequest.get(DouyinEndpoints.SEARCH_ITEM)
                 .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .params(params)
-                .referer(DouyinEndpoints.searchReferer(keyword, "general"))
+                // 原 m8067w0 传的是 m7996d(str, "video")，不是 general。
+                .referer(DouyinEndpoints.searchReferer(keyword, "video"))
                 .sign()
                 .uifidHeader(), SearchVideoWorkResponse.class);
     }

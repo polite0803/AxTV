@@ -27,7 +27,7 @@
  * 取流链路（未改）：
  *   LiveApi.enterRoom(webRid) → LiveRoomEnterResponse.firstRoom() → LiveRoom.streamUrl()
  *   → LiveStreamResolver.resolveWithFallback(..., AUTO) 得到首选地址
- *   → flv/hls 全部取值兜底，失败时自动切下一个地址（只重试一次）→ 仍失败出错误卡片。
+ *   → flv/hls 全部取值兜底，失败时按顺序切换下一个地址（直到候选耗尽）→ 仍失败出错误卡片。
  *   没有 webRid 或进房拿不到房间时，退回 LiveApi.roomInfoByScene(roomId)
  *   （scene 固定 aweme_video_feed_pc）。
  *
@@ -156,7 +156,7 @@ fun LiveRoomScreen(
     var loadError by remember { mutableStateOf<String?>(null) }
     var playFailure by remember { mutableStateOf<String?>(null) }
     var candidates by remember { mutableStateOf<List<String>>(emptyList()) }
-    var usedBackup by remember { mutableStateOf(false) }
+    var candidateIndex by remember { mutableIntStateOf(0) }
     var reloadToken by remember { mutableIntStateOf(0) }
 
     var comments by remember { mutableStateOf<List<LiveCommentUi>>(emptyList()) }
@@ -205,7 +205,7 @@ fun LiveRoomScreen(
         loadError = null
         playFailure = null
         candidates = emptyList()
-        usedBackup = false
+        candidateIndex = 0
         room = null
         comments = emptyList()
         onlineCount = null
@@ -222,6 +222,7 @@ fun LiveRoomScreen(
                     room = loaded
                     val urls = loaded.streamCandidates()
                     candidates = urls
+                    candidateIndex = 0
                     if (urls.isEmpty()) {
                         playFailure = "该房间没有返回可用推流地址（可能未开播）"
                     } else {
@@ -233,14 +234,20 @@ fun LiveRoomScreen(
         loading = false
     }
 
-    // 首个推流地址失败时切备用地址，只重试一次；再失败就落到错误卡片。
+    // 首个推流地址失败时按顺序切下一个候选，直到候选耗尽；再失败就落到错误卡片。
+    // （flv / hls / 不同档位各自可能失效，只重试一次会漏掉后续可用地址。）
     LaunchedEffect(controller.playerError) {
         val error = controller.playerError ?: return@LaunchedEffect
-        if (!usedBackup && candidates.size > 1) {
-            usedBackup = true
-            controller.play(candidates[1])
+        val nextIndex = candidateIndex + 1
+        if (nextIndex < candidates.size) {
+            candidateIndex = nextIndex
+            android.util.Log.w(
+                "AxTV_LIVE",
+                "播放失败，切换候选地址 #$nextIndex/${candidates.size}：${describePlaybackError(error)}",
+            )
+            controller.play(candidates[nextIndex])
         } else {
-            playFailure = error.message()
+            playFailure = describePlaybackError(error)
         }
     }
 
@@ -407,7 +414,7 @@ fun LiveRoomScreen(
                 retryRequester = retryRequester,
                 onRetry = {
                     if (candidates.isNotEmpty()) {
-                        usedBackup = false
+                        candidateIndex = 0
                         playFailure = null
                         controller.play(candidates.first())
                     } else {
@@ -426,3 +433,12 @@ fun LiveRoomScreen(
  * TV 端本来就是全屏，这一步不产生视觉变化；手机/平板上则是「播放窗口真的占满屏幕」的关键，
  * 也是本页从「带顶栏的分栏页」改成播放窗口的前提。
  */
+
+/**
+ * 播放失败的可读文案：ExoPlayer 对 IO/数据源错误只给「Source error」，
+ * 真正原因（403、明文被拦、DNS 等）在 cause 里，不带出来就完全无法排查。
+ */
+internal fun describePlaybackError(error: PlaybackError): String {
+    val cause = error.cause()?.message?.takeIf { it.isNotBlank() && it != error.message() }
+    return if (cause != null) "${error.message()}：$cause" else error.message()
+}

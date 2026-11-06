@@ -40,6 +40,13 @@ object AppRuntime {
         this.signer = signer
         val settings = Settings(SharedPrefsSettingsStore(application), settingsDevice)
         this.settings = settings
+        // 启动时对账：运行时 CookieStore 没有 sessionid、但设置里保存了登录态时补写一次。
+        // 历史版本/设置导入可能只写了 axtv_settings，请求读的却是 douyin_auth，
+        // 表现为「设置里显示已登录，搜索始终为空」。运行时已有登录态时不覆盖，
+        // 避免丢掉请求过程中新下发的设备 cookie。
+        if (!Settings.hasSessionId(cookieStore.cookieHeader()) && settings.isLoggedIn) {
+            cookieStore.setCookieHeader(settings.cookie())
+        }
         // 未登录也要能取到公开数据：装配时开启设备级匿名身份（ttwid）引导。
         this.api = ApiAssembler.create(
             signer,

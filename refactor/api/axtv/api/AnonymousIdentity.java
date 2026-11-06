@@ -195,6 +195,11 @@ public final class AnonymousIdentity {
      * n11.m8071z + m8069y：GET https://www.douyin.com/?recommend=1，从响应体提取
      * {@code user_unique_id} 回写 CookieStore（顺带收 Set-Cookie 里的 msToken/odin_tt 等）。
      *
+     * <p><b>必须带上现有 Cookie</b>（原实现用 linkedHashMap 拼 Cookie 头）：否则这次匿名首页
+     * 请求会拿到一套全新的设备身份，回写时把已登录用户的 ttwid/UIFID 覆盖成匿名值，
+     * 服务端随后把登录态当成无效，表现为「设置里已登录、搜索却始终为空」。
+     * 同样的原因，Set-Cookie 只补缺失键，不覆盖已有值。
+     *
      * <p>原版在缺 msToken / odin_tt / user_unique_id 时触发，最多跟 5 次重定向；
      * 这里简化为：仅当 {@code userUniqueId()} 为空时发一次 GET（跟随重定向），
      * body 里两段正则各试一次——与 m8069y 的顺序一致（先转义形态再普通形态）。
@@ -210,15 +215,26 @@ public final class AnonymousIdentity {
         headers.put("User-Agent", REGISTER_USER_AGENT);
         headers.put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
         headers.put("Accept-Language", "zh-CN,zh;q=0.9");
+        String cookieHeader = cookies.cookieHeader();
+        if (!Texts.isBlank(cookieHeader)) {
+            headers.put("Cookie", cookieHeader);
+        }
         try {
             // 原版跟重定向且每次回填 Set-Cookie（m8071z 循环），这里交给 followRedirects=true。
             ApiResponse response = engine.execute("GET", HOME_RECOMMEND_URL, headers, null, null, true);
+            Map<String, String> current = cookies.cookies();
+            Map<String, String> missing = new LinkedHashMap<>();
             for (String raw : response.headers("Set-Cookie")) {
                 Map.Entry<String, String> pair = SetCookie.parse(raw);
-                if (pair != null && !Texts.isBlank(pair.getValue())) {
-                    cookies.putAll(Collections.singletonMap(pair.getKey(), pair.getValue()));
+                if (pair == null || Texts.isBlank(pair.getValue())) {
+                    continue;
+                }
+                // 只补缺失键：已有 ttwid / UIFID / sessionid 等绝不覆盖。
+                if (Texts.isBlank(current.get(pair.getKey()))) {
+                    missing.put(pair.getKey(), pair.getValue());
                 }
             }
+            cookies.putAll(missing);
             String body = response.bodyText();
             if (body == null || body.isEmpty()) {
                 ApiLog.w(ApiLog.TAG_LIVE_WS,
