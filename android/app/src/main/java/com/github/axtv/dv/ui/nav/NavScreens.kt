@@ -43,6 +43,7 @@ import com.github.axtv.dv.ui.featured.FeaturedRepository
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.home.HomeFeedRepository
 import com.github.axtv.dv.ui.player.PlayerOverlayScreen
+import com.github.axtv.dv.ui.player.VideoPlaylistProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -114,9 +115,18 @@ private fun NavAction(
     }
 }
 
+/** 播放器续页时回传给推荐接口的最近作品 id 上限（与首页一致）。 */
+private const val PLAYER_RECENT_ID_LIMIT = 10
+
+/** 连续这么多页没有新增作品就停止续页，避免服务端重复返回时无限请求。 */
+private const val PLAYER_MAX_STALLED_PAGES = 3
+
 /**
  * 首页队列播放：直接用 [HomeFeedRepository.cachedAwemes]（首页已加载过的真实列表）。
  * 若从小组件/深链直接进入播放器、首页尚未加载，则先拉首屏补齐队列。
+ *
+ * 队列只有当前已加载的几条时（例如首页首屏被过滤到 2 条），播放到队尾会按
+ * [HomeFeedRepository.load] 的分页继续追加，不会卡在最后一条。
  */
 @Composable
 fun PlayerFromFeedScreen(
@@ -129,6 +139,16 @@ fun PlayerFromFeedScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var attempt by remember { mutableIntStateOf(0) }
 
+    // 播放器内续页状态：游标 / 是否还有更多 / 已追加的 id / 兜底序号。
+    var nextCursor by remember { mutableStateOf(HomeFeedRepository.cachedNextCursor) }
+    var hasMore by remember { mutableStateOf(HomeFeedRepository.cachedHasMore) }
+    var stalledPages by remember { mutableIntStateOf(0) }
+    var entrySeq by remember { mutableIntStateOf(queue.size) }
+    val knownIds = remember {
+        queue.mapNotNull { it.awemeId().takeIf(String::isNotEmpty) }
+            .toMutableSet()
+    }
+
     LaunchedEffect(attempt) {
         if (queue.isNotEmpty()) {
             loading = false
@@ -138,12 +158,54 @@ fun PlayerFromFeedScreen(
         error = null
         HomeFeedRepository.load(0L).fold(
             onSuccess = { page ->
-                queue = page
-                HomeFeedRepository.cache(page)
+                queue = page.awemes
+                HomeFeedRepository.cache(page.awemes, 1L, page.hasMore)
+                nextCursor = 1L
+                hasMore = page.hasMore
+                stalledPages = 0
+                knownIds.clear()
+                knownIds.addAll(
+                    page.awemes.mapNotNull { it.awemeId().takeIf(String::isNotEmpty) },
+                )
+                entrySeq = page.awemes.size
             },
             onFailure = { error = it.message ?: it.javaClass.simpleName },
         )
         loading = false
+    }
+
+    val loadMore: suspend () -> List<VideoPlaylistProvider.Entry> = {
+        if (!hasMore) {
+            emptyList()
+        } else {
+            val recentIds = knownIds.toList().takeLast(PLAYER_RECENT_ID_LIMIT)
+            HomeFeedRepository.load(nextCursor, recentIds).fold(
+                onSuccess = { page ->
+                    nextCursor += 1
+                    hasMore = page.hasMore
+                    val fresh = page.awemes.filter { aweme ->
+                        val id = aweme.awemeId()
+                        id.isNotEmpty() && knownIds.add(id)
+                    }
+                    stalledPages = if (fresh.isEmpty()) stalledPages + 1 else 0
+                    if (stalledPages >= PLAYER_MAX_STALLED_PAGES) {
+                        hasMore = false
+                    }
+                    if (fresh.isNotEmpty()) {
+                        // 同步回仓储：从播放器返回首页时，列表已经包含续页内容。
+                        HomeFeedRepository.cache(
+                            HomeFeedRepository.cachedAwemes + fresh,
+                            nextCursor,
+                            hasMore,
+                        )
+                    }
+                    val base = entrySeq
+                    entrySeq += fresh.size
+                    fresh.mapIndexed { index, aweme -> awemePlaylistEntry(aweme, base + index) }
+                },
+                onFailure = { emptyList() },
+            )
+        }
     }
 
     when {
@@ -152,6 +214,7 @@ fun PlayerFromFeedScreen(
             playlistProvider = remember(queue, startIndex) {
                 awemePlaylistProvider(queue, startIndex)
             },
+            playlistMore = loadMore,
         )
 
         loading -> NavMessageScreen(
@@ -173,8 +236,10 @@ fun PlayerFromFeedScreen(
 }
 
 /**
- * 精选队列播放：队列来自 FeaturedScreen 点击条目时写入的 [FeaturedRepository.cachedAwemes]。
+ * 精选队列播放：队列来自 FeaturedScreen 点击条目时写入的 [FeaturedRepository.cachedPlaybackQueue]。
  * 无队列（例如直接从外部 route 进入 featured/play）时只提示返回，不再拉数据。
+ *
+ * 播放到队尾时会按缓存的分区上下文继续翻页（与首页播放器同一条续页链路）。
  */
 @Composable
 fun PlayerFromFeaturedScreen(
@@ -183,12 +248,52 @@ fun PlayerFromFeaturedScreen(
     modifier: Modifier = Modifier,
 ) {
     val queue = FeaturedRepository.cachedAwemes
+    val snapshot = remember { FeaturedRepository.cachedPlaybackQueue }
+
+    var channel by remember { mutableStateOf(snapshot?.channel) }
+    var stalledPages by remember { mutableIntStateOf(0) }
+    var entrySeq by remember { mutableIntStateOf(queue.size) }
+    val knownIds = remember {
+        queue.mapNotNull { it.awemeId().takeIf(String::isNotEmpty) }
+            .toMutableSet()
+    }
+
+    val loadMore: (suspend () -> List<VideoPlaylistProvider.Entry>)? = snapshot?.let {
+        {
+            val current = channel
+            if (current == null || !current.hasMore) {
+                emptyList()
+            } else {
+                FeaturedRepository.loadMore(current, current.videos.size - 1).fold(
+                    onSuccess = { next ->
+                        channel = next
+                        val fresh = next.videos.filter { aweme ->
+                            val id = aweme.awemeId()
+                            id.isNotEmpty() && knownIds.add(id)
+                        }
+                        stalledPages = if (fresh.isEmpty()) stalledPages + 1 else 0
+                        if (stalledPages >= PLAYER_MAX_STALLED_PAGES) {
+                            channel = next.copy(hasMore = false)
+                        }
+                        val base = entrySeq
+                        entrySeq += fresh.size
+                        fresh.mapIndexed { index, aweme ->
+                            awemePlaylistEntry(aweme, base + index)
+                        }
+                    },
+                    onFailure = { emptyList() },
+                )
+            }
+        }
+    }
+
     when {
         queue.isNotEmpty() -> PlayerOverlayScreen(
             modifier = modifier,
             playlistProvider = remember(queue, startIndex) {
                 awemePlaylistProvider(queue, startIndex)
             },
+            playlistMore = loadMore,
         )
 
         else -> NavMessageScreen(

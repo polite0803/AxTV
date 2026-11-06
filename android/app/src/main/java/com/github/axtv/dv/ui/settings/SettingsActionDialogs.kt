@@ -37,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,6 +65,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.Text
 import axtv.panel.InteractionSecurityParser
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.adapter.SettingsConfigIO
 import com.github.axtv.dv.ui.AxTvColors
@@ -263,6 +265,9 @@ private fun deleteAccount(accountId: String) {
     } else {
         settings.setCurrentAccountId("")
         settings.setCookie("")
+        // 同步清运行时 CookieStore（douyin_auth/cookie_header），否则删除当前账号后
+        // 请求仍带着旧 cookie（LibraryCommon.kt:75 缺口的反方向遗留）。
+        AppRuntime.syncCookieToRuntimeStore(LocalContext.current)
         settings.clearInteraction()
     }
 }
@@ -296,7 +301,7 @@ internal fun CredentialActionsDialog(
             } else {
                 settings.setInteraction(
                     config.rawPayload,
-                    Settings.Interaction(
+                    SettingsTypes.Interaction(
                         config.rawPayload,
                         config.ticket,
                         config.tsSign,
@@ -418,6 +423,9 @@ internal fun ConfigIODialog(
                             val count = SettingsConfigIO.import(context, file)
                             // 导入后重建 Settings：核心层缓存了 accounts_list，旧实例读不到新账号表。
                             AppRuntime.refreshSettings(context)
+                            // 设置仓库的 cookie 同步进运行时 CookieStore（douyin_auth），
+                            // 否则搜索等请求仍读不到登录态（LibraryCommon.kt:75 缺口）。
+                            AppRuntime.syncCookieToRuntimeStore(context)
                             "已导入 $count 项配置。"
                         }.fold({ it }, { "导入失败：${it.message}" })
                         pendingImport = null

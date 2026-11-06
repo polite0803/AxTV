@@ -35,11 +35,12 @@ import androidx.media3.ui.PlayerView
 import axtv.player.VideoScaleMatrix
 import axtv.player.VideoSize
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 
 @Composable
 fun PlayerSurface(
     session: PlayerSession,
-    surfaceType: Settings.SurfaceType,
+    surfaceType: SettingsTypes.SurfaceType,
     surfaceBufferAlign: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -48,7 +49,7 @@ fun PlayerSurface(
     val lastApplied = remember { mutableStateOf<Triple<Int, Int, Boolean>?>(null) }
 
     when (surfaceType) {
-        Settings.SurfaceType.TEXTURE_VIEW -> {
+        SettingsTypes.SurfaceType.TEXTURE_VIEW -> {
             AndroidView(
                 modifier = modifier,
                 factory = { context ->

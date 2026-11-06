@@ -167,12 +167,13 @@ class WidgetRealDataProvider(context: Context) : WidgetDataProvider {
         val api = LiveApi(AppRuntime.api ?: return emptyList())
         val response = api.followFeed(LIVE_FOLLOW_SCENE)
         val items = response.data()?.data().orEmpty()
-            .mapNotNull { it?.room() }
-            .filter { it.status() == 2 }
+            // 与列表页同口径：web_rid 取自外层条目，房间对象自身通常不带。
+            .mapNotNull { item -> item?.room()?.let { room -> item.webRid() to room } }
+            .filter { it.second.status() == 2 }
             .take(MAX_LIVES)
-            .map { room ->
+            .map { (webRid, room) ->
                 WidgetLiveItem(
-                    roomId = room.effectiveWebRid(),
+                    roomId = webRid.ifBlank { room.effectiveWebRid() },
                     author = room.owner().nickname(),
                     title = room.title(),
                     viewers = room.userCount(),

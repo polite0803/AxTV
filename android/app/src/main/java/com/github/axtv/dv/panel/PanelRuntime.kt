@@ -23,6 +23,7 @@ import axtv.panel.PanelServer
 import axtv.panel.PanelState
 import axtv.panel.ThemeRenderer
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import com.github.axtv.dv.adapter.AppRuntime
 
 /** 面板凭据存储：与 App 其它模块共用 douyin_auth，并同步 axtv_settings 的登录态。 */
@@ -68,7 +69,7 @@ private class AndroidAuthStore(private val context: Context) : AuthStore {
         // 设置页/播放器读的是 axtv_settings 里的互动凭据，这里同步一份。
         AppRuntime.settings?.setInteraction(
             payload,
-            Settings.Interaction(
+            SettingsTypes.Interaction(
                 payload,
                 config.ticket(),
                 config.tsSign(),

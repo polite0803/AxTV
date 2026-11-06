@@ -130,6 +130,9 @@ SearchResultsPage(query = q, onOpenDetail = { id -> /* 打开详情/播放页 */
   - 用户每页 `count=10`，`filter_search=false`、`fan_filter_json=""`。
   - 直播首屏 `count=15`，之后 `count=10`。
 - 业务 `status_code != 0` 按 `SearchUiSpec.errorLabel` 展示；网络异常按 `ApiException.Kind` 分支给可读文案。
+- 服务端现要求登录后才能搜索：未登录请求 `search/item` / `live/search` / `general/search/single`
+  返回 `status_code=2483`（`status_msg`「请先登录，再继续搜索吧」），联想与热搜仍可匿名使用。
+  未登录时 `SearchState` 在发起结果请求前直接展示「搜索需要登录」提示；登录态失效时 2483 也映射到同一文案。
 
 ## 未验证项与可信度
 

@@ -22,16 +22,30 @@ public final class PanelAuth {
     public static final String HEADER = "X-AxTV-Token";
     public static final String QUERY_PARAM = "token";
 
+    private static final long TOKEN_VALID_MS = 30L * 60L * 1000L;
+
     private final String token;
+    private final long issuedAt;
 
     public PanelAuth(String token) {
         if (token == null || token.isBlank()) {
             throw new IllegalArgumentException("面板令牌不能为空");
         }
         this.token = token;
+        // 兼容旧调用点（测试/外部注入）：无签发时间时按「刚签发」处理，保持令牌可用。
+        // 生产路径一律走 {@link #random()}，自带真实签发时间。
+        this.issuedAt = System.currentTimeMillis();
     }
 
-    /** 生成 128 位随机令牌（32 位十六进制）。 */
+    public PanelAuth(String token, long issuedAt) {
+        if (token == null || token.isBlank()) {
+            throw new IllegalArgumentException("面板令牌不能为空");
+        }
+        this.token = token;
+        this.issuedAt = issuedAt;
+    }
+
+    /** 生成 128 位随机令牌（32 位十六进制）以及其有效期戳。 */
     public static PanelAuth random() {
         byte[] bytes = new byte[16];
         new SecureRandom().nextBytes(bytes);
@@ -42,16 +56,27 @@ public final class PanelAuth {
             hex[i * 2] = digits[value >>> 4];
             hex[i * 2 + 1] = digits[value & 0x0F];
         }
-        return new PanelAuth(new String(hex));
+        long issuedAt = System.currentTimeMillis();
+        return new PanelAuth(new String(hex), issuedAt);
     }
 
     public String token() {
         return this.token;
     }
 
+    public long issuedAt() {
+        return this.issuedAt;
+    }
+
+    public boolean isExpired() {
+        return System.currentTimeMillis() - this.issuedAt > TOKEN_VALID_MS;
+    }
+
     /** 校验一次 HTTP 请求。 */
     public boolean allows(PanelRoutes.Request request) {
-        return request != null && allows(request.query(), request.header(HEADER));
+        if (request == null) return false;
+        if (isExpired()) return false;
+        return allows(request.query(), request.header(HEADER));
     }
 
     /** 校验 WebSocket 握手（查询串 + 请求头；请求头优先）。 */
@@ -63,6 +88,7 @@ public final class PanelAuth {
         if (supplied == null) {
             return false;
         }
+        if (isExpired()) return false;
         return MessageDigest.isEqual(
                 this.token.getBytes(StandardCharsets.UTF_8),
                 supplied.trim().getBytes(StandardCharsets.UTF_8));
@@ -90,5 +116,4 @@ public final class PanelAuth {
         }
         return null;
     }
-
 }

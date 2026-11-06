@@ -34,9 +34,29 @@ class AnonymousIdentityTest {
         FakeCookies cookies = new FakeCookies();
         cookies.jar.put("ttwid", TTWID);
         cookies.jar.put("UIFID_TEMP", UIFID_TEMP);
+        cookies.uniqueId = "1000000000000001";
 
         assertTrue(AnonymousIdentity.ensure(http, cookies));
-        assertEquals(0, http.calls.size(), "jar 里已有 ttwid + UIFID_TEMP 时不应再发任何请求");
+        assertEquals(0, http.calls.size(), "jar 里已有 ttwid + UIFID_TEMP + 全数字 user_unique_id 时不应再发任何请求");
+    }
+
+    @Test
+    void completeIdentityStillFetchesMissingUniqueId() {
+        FakeHttp http = new FakeHttp();
+        http.route("www.douyin.com", new ApiResponse(200,
+                ("<html><script>\"user_unique_id\":\"7300000000000000009\"</script></html>")
+                        .getBytes(StandardCharsets.UTF_8), Map.of()));
+        FakeCookies cookies = new FakeCookies();
+        cookies.jar.put("ttwid", TTWID);
+        cookies.jar.put("UIFID_TEMP", UIFID_TEMP);
+
+        assertTrue(AnonymousIdentity.ensure(http, cookies));
+        // ttwid / UIFID_TEMP 已齐，但 user_unique_id 缺失：仍要发一次 GET 首页（m8071z）。
+        assertEquals(1, http.calls.size());
+        assertEquals("GET", http.calls.get(0).method);
+        assertEquals("https://www.douyin.com/?recommend=1", http.calls.get(0).url);
+        assertTrue(http.calls.get(0).followRedirects, "首页取 user_unique_id 跟随重定向（m8071z 循环）");
+        assertEquals("7300000000000000009", cookies.lastSetUniqueId);
     }
 
     @Test
@@ -56,7 +76,8 @@ class AnonymousIdentityTest {
         assertTrue(AnonymousIdentity.ensure(http, cookies));
         assertEquals(TTWID, cookies.jar.get("ttwid"));
         assertEquals(UIFID_TEMP, cookies.jar.get("UIFID_TEMP"));
-        assertEquals(2, http.calls.size());
+        // 0=ttwid 注册，1=首页 HEAD 取 UIFID_TEMP，2=首页 GET 取 user_unique_id。
+        assertEquals(3, http.calls.size());
         assertEquals("POST", http.calls.get(0).method);
         assertEquals("https://ttwid.bytedance.com/ttwid/union/register/", http.calls.get(0).url);
         assertTrue(http.calls.get(0).headers.get("User-Agent").contains("Chrome/147"),
@@ -65,6 +86,8 @@ class AnonymousIdentityTest {
         assertEquals("HEAD", http.calls.get(1).method);
         assertEquals("https://www.douyin.com/", http.calls.get(1).url);
         assertFalse(http.calls.get(1).followRedirects, "首页取 UIFID_TEMP 用不跟随重定向的客户端");
+        assertEquals("GET", http.calls.get(2).method);
+        assertEquals("https://www.douyin.com/?recommend=1", http.calls.get(2).url);
     }
 
     @Test
@@ -76,7 +99,7 @@ class AnonymousIdentityTest {
         cookies.jar.put("ttwid", TTWID);
 
         assertTrue(AnonymousIdentity.ensure(http, cookies));
-        assertEquals(1, http.calls.size(), "ttwid 已存在时只补 UIFID_TEMP");
+        assertEquals(2, http.calls.size(), "ttwid 已存在时只补 UIFID_TEMP 与 user_unique_id");
         assertEquals("HEAD", http.calls.get(0).method);
         assertEquals(UIFID_TEMP, cookies.jar.get("UIFID_TEMP"));
     }
@@ -166,6 +189,8 @@ class AnonymousIdentityTest {
 
     private static final class FakeCookies implements CookieStore {
         final Map<String, String> jar = new LinkedHashMap<>();
+        String uniqueId = "";
+        String lastSetUniqueId = null;
 
         @Override
         public String cookieHeader() {
@@ -206,11 +231,13 @@ class AnonymousIdentityTest {
 
         @Override
         public String userUniqueId() {
-            return "";
+            return uniqueId;
         }
 
         @Override
         public void setUserUniqueId(String value) {
+            lastSetUniqueId = value;
+            uniqueId = value == null ? "" : value;
         }
 
         @Override

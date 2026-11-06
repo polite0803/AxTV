@@ -41,3 +41,6 @@ docs/logs/
 out/
 .cxx/
 .DS_Store
+
+# Hermes 技能目录（本地工具文件，误入仓库则忽略）
+.hermes_skills/

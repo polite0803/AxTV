@@ -52,8 +52,9 @@
         android:theme="@style/Theme.AxTV"
         android:allowBackup="false"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="true"
-        android:enableOnBackInvokedCallback="true">
+        android:usesCleartextTraffic="false"
+        android:enableOnBackInvokedCallback="true"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <activity
             android:name=".MainActivity"

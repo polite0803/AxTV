@@ -68,8 +68,8 @@ android {
         // 会导致所有接口数据解码失败，故抬到 26（Android 8.0）。见 ModelJsonCodec。
         minSdk = 26
         targetSdk = 36       // 原版 37（compileSdk 37 / Android 17 预览），档 2 构建用 36
-        versionCode = 5        // 0.1.1: Phase 3 文件拆分 + CI/ProGuard/测试门禁收尾
-        versionName = "0.1.1"
+        versionCode = 6        // 0.1.2: 修复设置导入后搜索登录态缺失（Cookie 同步接线）
+        versionName = "0.1.2"
     }
 
     signingConfigs {

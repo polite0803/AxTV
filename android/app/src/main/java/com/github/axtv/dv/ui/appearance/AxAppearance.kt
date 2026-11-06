@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import androidx.palette.graphics.Palette
 import coil.imageLoader
 import coil.request.ImageRequest
@@ -50,8 +51,8 @@ internal object AxAppearance {
 
     /** theme_mode=自动 时按系统 uiMode 判深浅；其余按显式档位。 */
     fun resolveDark(settings: Settings?, uiMode: Int): Boolean = when (settings?.themeMode()) {
-        Settings.ThemeMode.LIGHT -> false
-        Settings.ThemeMode.DARK -> true
+        SettingsTypes.ThemeMode.LIGHT -> false
+        SettingsTypes.ThemeMode.DARK -> true
         else -> (uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
     }
 
@@ -60,9 +61,9 @@ internal object AxAppearance {
         val settings = AppRuntime.settings
         return AxPaletteEngine.compute(
             dark = resolveDark(settings, uiMode),
-            contrast = settings?.colorContrast() ?: Settings.ColorContrast.STANDARD,
-            style = settings?.colorStyle() ?: Settings.ColorStyle.BY_SCENE,
-            source = settings?.colorSource() ?: Settings.ColorSource.BRAND,
+            contrast = settings?.colorContrast() ?: SettingsTypes.ColorContrast.STANDARD,
+            style = settings?.colorStyle() ?: SettingsTypes.ColorStyle.BY_SCENE,
+            source = settings?.colorSource() ?: SettingsTypes.ColorSource.BRAND,
             seedArgb = seedArgb.intValue,
         )
     }
@@ -84,7 +85,7 @@ internal object AxAppearance {
     /** 画面取色：Coil 拉封面小尺寸位图 → Palette 取鲜艳主色 → 落种子并持久化。 */
     suspend fun sampleCoverSeed(context: Context, url: String) {
         val settings = AppRuntime.settings ?: return
-        if (settings.colorSource() != Settings.ColorSource.CONTENT || url.isBlank()) return
+        if (settings.colorSource() != SettingsTypes.ColorSource.CONTENT || url.isBlank()) return
         val bitmap = withContext(Dispatchers.IO) {
             runCatching {
                 val request = ImageRequest.Builder(context)
@@ -109,7 +110,7 @@ internal object AxAppearance {
     /** 设备取色：系统壁纸主色；TV 上多数 ROM 无壁纸服务数据，null/异常一律回落品牌色。 */
     fun sampleDeviceSeed(context: Context) {
         val settings = AppRuntime.settings ?: return
-        if (settings.colorSource() != Settings.ColorSource.DEVICE) return
+        if (settings.colorSource() != SettingsTypes.ColorSource.DEVICE) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
             // getWallpaperColors 需要 API 27（minSdk 24）：低版本明确告知回落，不装作取到色。
             applySeed(0, "设备取色不可用（系统低于 8.1），回落品牌色")
@@ -150,12 +151,12 @@ internal object AxAppearance {
         // 连带 SettingsBinder 的外观同步分支一起红。
         // 这里按「非显式浅色就先用暗色基线」占位，AxTvTheme 组合期会用
         // LocalConfiguration.current.uiMode 立刻算出真值。
-        val dark = settings?.themeMode() != Settings.ThemeMode.LIGHT
+        val dark = settings?.themeMode() != SettingsTypes.ThemeMode.LIGHT
         return AxPaletteEngine.compute(
             dark = dark,
-            contrast = settings?.colorContrast() ?: Settings.ColorContrast.STANDARD,
-            style = settings?.colorStyle() ?: Settings.ColorStyle.BY_SCENE,
-            source = settings?.colorSource() ?: Settings.ColorSource.BRAND,
+            contrast = settings?.colorContrast() ?: SettingsTypes.ColorContrast.STANDARD,
+            style = settings?.colorStyle() ?: SettingsTypes.ColorStyle.BY_SCENE,
+            source = settings?.colorSource() ?: SettingsTypes.ColorSource.BRAND,
             seedArgb = seedArgb.intValue,
         )
     }

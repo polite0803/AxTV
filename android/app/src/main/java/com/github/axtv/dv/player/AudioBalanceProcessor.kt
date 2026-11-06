@@ -3,7 +3,7 @@
  *
  * 证据（原版语义不是左右声道 balance，而是**响度对齐**）：
  * - src/app/p000/rs2.java：`extends BaseAudioProcessor`，构造入参就是 `EnumC0642fr`
- *   （= axtv.settings.Settings.AudioBalance，见 refactor/settings/.../Settings.java:1315），
+ *   （= axtv.settings.SettingsTypes.AudioBalance，见 refactor/settings/.../Settings.java:1315），
  *   OFF 时整段直通；
  * - src/app/p000/os2.java:56-155：四档参数表 + dB→线性 + 一阶平滑系数；
  * - src/app/p000/qs2.java：参数容器，toString 给出字段名
@@ -29,6 +29,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import com.github.axtv.dv.adapter.AppRuntime
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -68,8 +69,8 @@ private fun smoothingCoeff(elapsedSec: Double, timeConstantSec: Double): Double 
  */
 class AudioBalanceProcessor : BaseAudioProcessor() {
 
-    private var level: Settings.AudioBalance = AppRuntime.settings?.audioBalance()
-        ?: Settings.AudioBalance.OFF
+    private var level: SettingsTypes.AudioBalance = AppRuntime.settings?.audioBalance()
+        ?: SettingsTypes.AudioBalance.OFF
     private var params: Params = Params.of(level)
     private var appliedGain: Float = params.startupGainLinear
     private var calibrationElapsedSec: Double = 0.0
@@ -101,7 +102,7 @@ class AudioBalanceProcessor : BaseAudioProcessor() {
         }
         val output = replaceOutputBuffer(input.remaining()).order(ByteOrder.nativeOrder())
         refreshLevel()
-        if (level == Settings.AudioBalance.OFF || !isActive()) {
+        if (level == SettingsTypes.AudioBalance.OFF || !isActive()) {
             output.put(input)
             output.flip()
             return
@@ -202,7 +203,7 @@ class AudioBalanceProcessor : BaseAudioProcessor() {
 
     private fun resetState() {
         params = Params.of(level)
-        appliedGain = if (level == Settings.AudioBalance.OFF) 1f else params.startupGainLinear
+        appliedGain = if (level == SettingsTypes.AudioBalance.OFF) 1f else params.startupGainLinear
         calibrationElapsedSec = 0.0
         energyAccumulator = 0.0
         calibratedSamples = 0L
@@ -216,7 +217,7 @@ class AudioBalanceProcessor : BaseAudioProcessor() {
             return
         }
         lastLevelCheckMs = now
-        val next = AppRuntime.settings?.audioBalance() ?: Settings.AudioBalance.OFF
+        val next = AppRuntime.settings?.audioBalance() ?: SettingsTypes.AudioBalance.OFF
         if (next != level) {
             level = next
             resetState()
@@ -262,11 +263,11 @@ class AudioBalanceProcessor : BaseAudioProcessor() {
         val minGainLinear: Float = dbToLinear(minGainDb)
 
         companion object {
-            fun of(level: Settings.AudioBalance): Params = when (level) {
-                Settings.AudioBalance.OFF -> Params(0.0, 0.0, 0.0, -120.0, 0.0, 0.0, 0.05, 1.2)
-                Settings.AudioBalance.LOW -> Params(-0.5, 1.0, -8.0, -55.0, 2.5, 10.0, 3.0, 8.0)
-                Settings.AudioBalance.MEDIUM -> Params(-1.5, 2.0, -12.0, -58.0, 2.0, 8.0, 2.0, 8.0)
-                Settings.AudioBalance.HIGH -> Params(-3.0, 2.5, -16.0, -60.0, 1.5, 6.0, 1.5, 8.0)
+            fun of(level: SettingsTypes.AudioBalance): Params = when (level) {
+                SettingsTypes.AudioBalance.OFF -> Params(0.0, 0.0, 0.0, -120.0, 0.0, 0.0, 0.05, 1.2)
+                SettingsTypes.AudioBalance.LOW -> Params(-0.5, 1.0, -8.0, -55.0, 2.5, 10.0, 3.0, 8.0)
+                SettingsTypes.AudioBalance.MEDIUM -> Params(-1.5, 2.0, -12.0, -58.0, 2.0, 8.0, 2.0, 8.0)
+                SettingsTypes.AudioBalance.HIGH -> Params(-3.0, 2.5, -16.0, -60.0, 1.5, 6.0, 1.5, 8.0)
             }
         }
     }

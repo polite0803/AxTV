@@ -21,10 +21,14 @@ public final class SearchUiSpec {
     public static final String CODE_NEED_LOGIN = "web_need_login";
     /** 风控拦截码。 */
     public static final String CODE_VERIFY_CHECK = "verify_check";
+    /** 未登录搜索码（服务端 2026-11 起对搜索接口强制登录，status_msg「请先登录，再继续搜索吧」）。 */
+    public static final String CODE_NEED_LOGIN_STATUS = "2483";
 
     // ---- 文案（逐字） ----
     public static final String MSG_PARAMS_CHECK = "搜索参数校验失败";
     public static final String MSG_NEED_LOGIN = "搜索需要登录态，请更新 Cookie";
+    /** 2483 的可操作文案：应用内已有扫码/粘贴 Cookie 登录，不再只提示「更新 Cookie」。 */
+    public static final String MSG_NEED_LOGIN_STATUS = "搜索需要登录，请先在设置中登录账号后重试";
     public static final String MSG_VERIFY_CHECK = "搜索被风控校验拦截，请稍后重试";
     /** 空结果文案（670/788/880）。 */
     public static final String EMPTY_VIDEO = "未找到相关视频";
@@ -43,7 +47,7 @@ public final class SearchUiSpec {
      * 错误文案，逐分支还原 m12087y（ye4:264-286）。
      *
      * @param channelPrefix   频道前缀（"" / "用户" / "直播"）
-     * @param businessCode    rc4 业务码；{@code null} 表示非业务异常（走 fallbackMessage）
+     * @param businessCode    rc4 业务码或数字 status_code；{@code null} 表示非业务异常（走 fallbackMessage）
      * @param fallbackMessage 非业务异常的 {@code getMessage()}
      */
     public static String errorLabel(String channelPrefix, String businessCode, String fallbackMessage) {
@@ -55,6 +59,8 @@ public final class SearchUiSpec {
                 return MSG_PARAMS_CHECK;
             case CODE_NEED_LOGIN:
                 return MSG_NEED_LOGIN;
+            case CODE_NEED_LOGIN_STATUS:
+                return MSG_NEED_LOGIN_STATUS;
             case CODE_VERIFY_CHECK:
                 return MSG_VERIFY_CHECK;
             default:

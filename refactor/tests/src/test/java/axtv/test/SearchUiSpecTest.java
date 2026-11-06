@@ -22,6 +22,13 @@ class SearchUiSpecTest {
     }
 
     @Test
+    void loginRequiredStatus2483UsesActionableMessage() {
+        assertEquals(SearchUiSpec.MSG_NEED_LOGIN_STATUS, SearchUiSpec.errorLabel("", "2483", null));
+        assertEquals(SearchUiSpec.MSG_NEED_LOGIN_STATUS, SearchUiSpec.errorLabel("用户", "2483", null));
+        assertEquals(SearchUiSpec.MSG_NEED_LOGIN_STATUS, SearchUiSpec.errorLabel("直播", "2483", null));
+    }
+
+    @Test
     void channelPrefixConcatenation() {
         assertEquals("用户搜索失败: x", SearchUiSpec.errorLabel("用户", null, "x"));
         assertEquals("直播搜索异常: y", SearchUiSpec.channelErrorLabel(false, "y"));

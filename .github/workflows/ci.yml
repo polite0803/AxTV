@@ -1,21 +1,29 @@
-name: android
+name: ci
 
-# android 模块把 refactor/ 作为 sourceSets 直接编译，两边任一改动都要跑本门禁。
+# 统一 CI：android 模块 + refactor 模块 + 两侧交叉编译检查
 on:
   push:
     paths:
       - "android/**"
       - "refactor/**"
+      - ".github/workflows/ci.yml"
       - ".github/workflows/android.yml"
+      - ".github/workflows/refactor-tests.yml"
+      - "*.gradle"
+      - "gradle/**"
   pull_request:
     paths:
       - "android/**"
       - "refactor/**"
+      - ".github/workflows/ci.yml"
       - ".github/workflows/android.yml"
+      - ".github/workflows/refactor-tests.yml"
+      - "*.gradle"
+      - "gradle/**"
   workflow_dispatch:
 
 jobs:
-  build:
+  android:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,3 +60,34 @@ jobs:
             android/app/build/reports/tests/testDebugUnitTest
             android/app/build/test-results/testDebugUnitTest
             android/app/build/reports/lint-results-debug.html
+
+  refactor-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Make gradlew executable
+        working-directory: refactor
+        run: chmod +x gradlew
+
+      - name: Setup Gradle (cache)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run JUnit 5 tests
+        working-directory: refactor
+        run: ./gradlew :tests:test --no-daemon
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            refactor/tests/build/reports/tests/test
+            refactor/tests/build/test-results/test

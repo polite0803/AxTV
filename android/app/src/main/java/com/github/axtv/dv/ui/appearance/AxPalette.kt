@@ -23,6 +23,7 @@ package com.github.axtv.dv.ui.appearance
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 
 /** 一套完整可绘制的调色板；dark 标记供 TV Material3 选 dark/light colorScheme。 */
 internal data class AxPalette(
@@ -69,9 +70,9 @@ internal object AxPaletteEngine {
 
     fun compute(
         dark: Boolean,
-        contrast: Settings.ColorContrast,
-        style: Settings.ColorStyle,
-        source: Settings.ColorSource,
+        contrast: SettingsTypes.ColorContrast,
+        style: SettingsTypes.ColorStyle,
+        source: SettingsTypes.ColorSource,
         seedArgb: Int,
     ): AxPalette {
         val textPrimary = if (dark) DARK_TEXT else LIGHT_TEXT
@@ -83,7 +84,7 @@ internal object AxPaletteEngine {
         var accentWarm = BRAND_ACCENT_WARM
 
         // 种子只在非品牌来源且已取到色（0 = 未设置，见 Settings.globalSeedArgb 注释）时参与推导。
-        val seed = if (source != Settings.ColorSource.BRAND && seedArgb != 0) argbToColor(seedArgb) else null
+        val seed = if (source != SettingsTypes.ColorSource.BRAND && seedArgb != 0) argbToColor(seedArgb) else null
         if (seed != null) {
             val hsl = seed.toHsl()
             val tintS = (hsl[1] * 0.22f).coerceAtMost(0.16f)
@@ -92,7 +93,7 @@ internal object AxPaletteEngine {
             surfaceHigh = hslToColor(hsl[0], tintS * 1.3f, if (dark) 0.15f else 0.92f)
             divider = hslToColor(hsl[0], tintS * 1.6f, if (dark) 0.22f else 0.85f)
             when (style) {
-                Settings.ColorStyle.FIDELITY -> {
+                SettingsTypes.ColorStyle.FIDELITY -> {
                     accent = seed
                     accentWarm = seed
                 }
@@ -104,28 +105,28 @@ internal object AxPaletteEngine {
         }
 
         when (style) {
-            Settings.ColorStyle.VIBRANT -> {
+            SettingsTypes.ColorStyle.VIBRANT -> {
                 accent = accent.boostSaturation(1.35f)
                 accentWarm = accentWarm.boostSaturation(1.35f)
             }
-            Settings.ColorStyle.SOFT -> {
+            SettingsTypes.ColorStyle.SOFT -> {
                 accent = accent.softenOnto(surface)
                 accentWarm = accentWarm.softenOnto(surface)
             }
             // BY_SCENE 的「整理」已经发生在梯度推导里；FIDELITY 语义即不加工，此处不再动。
-            Settings.ColorStyle.BY_SCENE, Settings.ColorStyle.FIDELITY -> Unit
+            SettingsTypes.ColorStyle.BY_SCENE, SettingsTypes.ColorStyle.FIDELITY -> Unit
         }
 
         // 对比度三档：抬高次要文字的不透明度与分隔线向正文色的混合比，三档肉眼可分。
         val secondaryAlpha = when (contrast) {
-            Settings.ColorContrast.STANDARD -> if (dark) 0.70f else 0.62f
-            Settings.ColorContrast.MEDIUM -> if (dark) 0.84f else 0.80f
-            Settings.ColorContrast.HIGH -> if (dark) 0.96f else 0.94f
+            SettingsTypes.ColorContrast.STANDARD -> if (dark) 0.70f else 0.62f
+            SettingsTypes.ColorContrast.MEDIUM -> if (dark) 0.84f else 0.80f
+            SettingsTypes.ColorContrast.HIGH -> if (dark) 0.96f else 0.94f
         }
         val dividerMix = when (contrast) {
-            Settings.ColorContrast.STANDARD -> 0f
-            Settings.ColorContrast.MEDIUM -> 0.35f
-            Settings.ColorContrast.HIGH -> 0.60f
+            SettingsTypes.ColorContrast.STANDARD -> 0f
+            SettingsTypes.ColorContrast.MEDIUM -> 0.35f
+            SettingsTypes.ColorContrast.HIGH -> 0.60f
         }
         return AxPalette(
             dark = dark,
@@ -141,11 +142,11 @@ internal object AxPaletteEngine {
     }
 
     /** 未取色时的品牌色回退（source=BRAND 或种子为 0）。 */
-    fun brand(dark: Boolean, contrast: Settings.ColorContrast): AxPalette = compute(
+    fun brand(dark: Boolean, contrast: SettingsTypes.ColorContrast): AxPalette = compute(
         dark = dark,
         contrast = contrast,
-        style = Settings.ColorStyle.BY_SCENE,
-        source = Settings.ColorSource.BRAND,
+        style = SettingsTypes.ColorStyle.BY_SCENE,
+        source = SettingsTypes.ColorSource.BRAND,
         seedArgb = 0,
     )
 

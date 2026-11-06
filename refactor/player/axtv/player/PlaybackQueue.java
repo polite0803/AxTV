@@ -75,6 +75,29 @@ public final class PlaybackQueue {
         notifyChanged();
     }
 
+    /**
+     * 在队尾追加条目（信息流在播放器内继续翻页），按 id 去重且不移动游标。
+     *
+     * @return 实际追加的条数
+     */
+    public synchronized int append(List<Item> newItems) {
+        if (newItems == null || newItems.isEmpty()) {
+            return 0;
+        }
+        java.util.HashSet<String> known = new java.util.HashSet<>();
+        for (Item item : items) {
+            known.add(item.id());
+        }
+        int added = 0;
+        for (Item item : newItems) {
+            if (item != null && known.add(item.id())) {
+                items.add(item);
+                added++;
+            }
+        }
+        return added;
+    }
+
     public synchronized List<Item> items() {
         return Collections.unmodifiableList(items);
     }

@@ -29,12 +29,11 @@ public final class UserApi {
 
     /** 我的主页。`/aweme/v1/web/user/profile/self/` */
     public UserProfileResponse profileSelf() throws ApiException {
+        // 原版 m8047j0：m8002r(..., 252) —— a_bogus + 公共参数，不带 uifid 头/ secsdk 签名。
         return api.callFor(ApiRequest.get(DouyinEndpoints.USER_PROFILE_SELF)
                 .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .commonParams()
-                .sign()
-                .uifidHeader()
-                .userCenterSignChain(), UserProfileResponse.class);
+                .sign(), UserProfileResponse.class);
     }
 
     /** 他人主页。`/aweme/v1/web/user/profile/other/` */
@@ -63,9 +62,10 @@ public final class UserApi {
                 .param("publish_video_strategy_type", "2")
                 .param("show_live_replay_strategy", "1")
                 .param("whale_cut_token", "")
+                // aweme/post 与 profile/self 不同：服务端要求用户中心签名链
+                // （a_bogus + uifid + timestamp + x-secsdk-web-signature）。
                 .commonParams()
-                .sign()
-                .uifidHeader(), UserWorksResponse.class);
+                .userCenterSignChain(), UserWorksResponse.class);
     }
 
     /** 用户"喜欢"列表。`/aweme/v1/web/aweme/favorite/` */
@@ -78,9 +78,10 @@ public final class UserApi {
                 .param("count", String.valueOf(count))
                 .param("publish_video_strategy_type", "2")
                 .param("cut_version", "1")
+                .param("whale_cut_token", "")
+                // 收藏列表同样先走用户中心签名链；失败分支再退回无签名（见仓库层重试）。
                 .commonParams()
-                .sign()
-                .uifidHeader(), UserWorksResponse.class);
+                .userCenterSignChain(), UserWorksResponse.class);
     }
 
     /** 关注列表。`/aweme/v1/web/user/following/list/` */

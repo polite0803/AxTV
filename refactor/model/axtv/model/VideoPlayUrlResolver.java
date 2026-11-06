@@ -203,7 +203,7 @@ public final class VideoPlayUrlResolver {
         if (!playAddr265.hasUrls()) {
             playAddr265 = video.playAddr265();
         }
-        Video source = awemeVideo.bitRate().isEmpty() ? video : awemeVideo;
+        Video source = video != null ? (awemeVideo.bitRate().isEmpty() ? video : awemeVideo) : awemeVideo;
         return selectBestPlayUrl(
                 selectCandidateUrls(playAddr, playAddr265, source.bitRate(), resolveTargetResolution(target), false));
     }

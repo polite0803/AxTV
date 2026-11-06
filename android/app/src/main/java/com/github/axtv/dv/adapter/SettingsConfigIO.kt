@@ -30,11 +30,12 @@ object SettingsConfigIO {
     private const val FORMAT_VERSION = 1
 
     /**
-     * 凭据类键：导出时剔除、导入时忽略。
-     * 账号表里含 cookie / privateKey / ticket，明文写外部目录等于把登录态拱手送人。
+     * 凭据类键：导出时剔除、导入时忽略（明文写外部目录等于把登录态拱手送人）。
+     * 注意：COOKIE_STRING 不在其列——导入需恢复登录态到 axtv_settings，且导入后由调用方
+     * 同步进运行时 CookieStore（douyin_auth），否则搜索等请求仍读不到 Cookie。
+     * 导出侧仍剔除 COOKIE_STRING（见 export() 的 SENSITIVE 处理），避免明文落盘泄露。
      */
     private val SENSITIVE_KEYS = setOf(
-        SettingsKeys.COOKIE_STRING,
         SettingsKeys.ACCOUNTS_LIST,
         SettingsKeys.CURRENT_ACCOUNT_ID,
         SettingsKeys.INTERACTION_SECURITY_PAYLOAD,
@@ -62,7 +63,8 @@ object SettingsConfigIO {
             .getSharedPreferences(SharedPrefsSettingsStore.PREFS_NAME, Context.MODE_PRIVATE)
         val values = JSONObject()
         prefs.all.forEach { (key, value) ->
-            if (key in SENSITIVE_KEYS) return@forEach
+            // COOKIE_STRING 始终不导出：明文落外部目录等于泄露登录态（其它敏感键见 SENSITIVE_KEYS）。
+            if (key in SENSITIVE_KEYS || key == SettingsKeys.COOKIE_STRING) return@forEach
             values.put(key, JSONObject().apply {
                 when (value) {
                     is Boolean -> { put("t", "b"); put("v", value) }

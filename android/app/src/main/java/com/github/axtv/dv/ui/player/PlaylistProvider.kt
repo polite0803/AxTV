@@ -65,7 +65,10 @@ interface PlaylistProvider {
  *
  * <p>调用方只需把接口返回的作品数据填进 [Entry]，无需在此发起网络请求。
  */
-class VideoPlaylistProvider(private val entries: List<Entry>) : PlaylistProvider {
+class VideoPlaylistProvider(entries: List<Entry>) : PlaylistProvider {
+
+    /** 条目按播放顺序保存；播放器内继续翻页时会追加（见 [appendEntries]）。 */
+    private val entries = ArrayList(entries)
 
     /**
      * @param resolvedUrl 已解析好的主直链（如走 VideoPlayUrlResolver 的结果）；
@@ -99,6 +102,22 @@ class VideoPlaylistProvider(private val entries: List<Entry>) : PlaylistProvider
                 coverUrl = it.coverUrl,
             )
         }
+
+    /**
+     * 在队尾追加条目（信息流在播放器里继续翻页）；按 id 去重。
+     *
+     * @return 真正新增的条目；播放器只把它们同步进 PlaybackQueue。
+     */
+    @Synchronized
+    fun appendEntries(newEntries: List<Entry>): List<Entry> {
+        if (newEntries.isEmpty()) {
+            return emptyList()
+        }
+        val known = entries.mapTo(HashSet()) { it.id }
+        val added = newEntries.filter { known.add(it.id) }
+        entries.addAll(added)
+        return added
+    }
 
     @Synchronized
     override fun adoptDetail(itemId: String, video: Video) {

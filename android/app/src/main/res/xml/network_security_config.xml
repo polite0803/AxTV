@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 默认禁止明文流量 -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- 仅允许 localhost/127.0.0.1 用于面板通信 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
+
+    <!-- 允许局域网 IPv4（10.0.0.0/8）用于电话与电视同局域网面板 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.0.0/8</domain>
+    </domain-config>
+
+    <!-- 禁用明文流量的其余所有域名 -->
+</network-security-config>

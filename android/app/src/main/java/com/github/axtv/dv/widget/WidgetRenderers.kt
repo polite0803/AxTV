@@ -554,7 +554,8 @@ internal object WidgetRenderers {
             )
         return PendingIntent.getActivity(
             context,
-            route.hashCode(),
+            // salt 防止 hashCode 碰撞导致 PendingIntent 覆盖（Kotlin 异或用 xor，等价 Java 的 ^ 0xABCD1234）
+            route.hashCode().xor(-1412623820),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )

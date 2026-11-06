@@ -213,9 +213,11 @@ public final class LiveWebSocketClient {
             listener.onDisconnected("reconnect-exhausted");
             return;
         }
+        // 指数退避：5s, 10s, 20s, 40s... 上限 60s
+        long delayMs = Math.min(RECONNECT_DELAY_MS * (1L << (current - 1)), 60_000L);
         log.w(LiveLog.TAG_LIVE_WS, "scheduling websocket reconnect: source=" + source
-                + ", attempt=" + current + "/" + MAX_RECONNECT_ATTEMPTS + ", delayMs=" + RECONNECT_DELAY_MS);
-        scheduler.schedule(this::open, RECONNECT_DELAY_MS, TimeUnit.MILLISECONDS);
+                + ", attempt=" + current + "/" + MAX_RECONNECT_ATTEMPTS + ", delayMs=" + delayMs);
+        scheduler.schedule(this::open, delayMs, TimeUnit.MILLISECONDS);
     }
 
     // ------------------------------------------------------------------ 帧处理

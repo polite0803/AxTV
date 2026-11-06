@@ -43,10 +43,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -67,10 +64,16 @@ import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.collection.collectionMessage
 import com.github.axtv.dv.ui.focusRing
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 /** 本页固定列数：布局枚举 ww5 未移植，取 ordinal=2 对应值（ChannelListSpec.columnCount:205-213）。 */
 private const val FEATURED_COLUMNS = 2
+
+/** 连续这么多页没有新增作品就停止自动续页，避免服务端重复返回时无限请求。 */
+private const val MAX_STALLED_PAGES = 3
 
 private const val TEXT_PLACEHOLDER = "—"
 
@@ -80,11 +83,16 @@ fun FeaturedScreen(
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var channels by remember { mutableStateOf<List<FeaturedChannel>>(emptyList()) }
-    var channelsLoaded by remember { mutableStateOf(false) }
+    var channels by remember { mutableStateOf(FeaturedRepository.cachedChannels) }
+    var channelsLoaded by remember { mutableStateOf(channels.isNotEmpty()) }
     var pageError by remember { mutableStateOf<String?>(null) }
     var pageAttempt by remember { mutableIntStateOf(0) }
     var selectedTagId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    fun updateChannels(next: List<FeaturedChannel>) {
+        channels = next
+        FeaturedRepository.rememberChannels(next)
+    }
 
     val visible = remember(channels) {
         channels.filter { it.videos.isNotEmpty() || it.loading }
@@ -99,58 +107,78 @@ fun FeaturedScreen(
         if (index < 0) return
         val channel = channels[index]
         if (!ChannelListSpec.canInitialLoad(channel.toSpecGroup())) return
-        channels = channels.toMutableList().also {
-            it[index] = channel.copy(loading = true, error = null)
-        }
-        val updated = FeaturedRepository.loadInitial(channel)
-            .getOrElse { channel.copy(loading = false, error = it.collectionMessage()) }
-        val at = channels.indexOfFirst { it.tagId == tagId }
-        if (at >= 0) {
-            channels = channels.toMutableList().also { it[at] = updated }
-        }
-    }
-
-    suspend fun loadMore(tagId: String, lastVisibleIndex: Int) {
-        val index = channels.indexOfFirst { it.tagId == tagId }
-        if (index < 0) return
-        val channel = channels[index]
-        if (channel.loading) return
-        channels = channels.toMutableList().also {
-            it[index] = channel.copy(loading = true, error = null)
-        }
+        updateChannels(
+            channels.toMutableList().also {
+                it[index] = channel.copy(loading = true, error = null)
+            },
+        )
         try {
-            val updated = FeaturedRepository.loadMore(channel, lastVisibleIndex)
+            val updated = FeaturedRepository.loadInitial(channel)
                 .getOrElse { channel.copy(loading = false, error = it.collectionMessage()) }
             val at = channels.indexOfFirst { it.tagId == tagId }
             if (at >= 0) {
-                channels = channels.toMutableList().also { it[at] = updated }
+                updateChannels(channels.toMutableList().also { it[at] = updated })
+            }
+        } finally {
+            // 协程被取消（切页/返回）时也要把 loading 复位，否则缓存里该分区永远停在“加载中”。
+            val at = channels.indexOfFirst { it.tagId == tagId }
+            if (at >= 0 && channels[at].loading) {
+                updateChannels(
+                    channels.toMutableList().also { it[at] = it[at].copy(loading = false) },
+                )
+            }
+        }
+    }
+
+    /** @return 这次翻页是否真的带来了新作品（用于停滞保护）。 */
+    suspend fun loadMore(tagId: String, lastVisibleIndex: Int): Boolean {
+        val index = channels.indexOfFirst { it.tagId == tagId }
+        if (index < 0) return false
+        val channel = channels[index]
+        if (channel.loading) return false
+        updateChannels(
+            channels.toMutableList().also {
+                it[index] = channel.copy(loading = true, error = null)
+            },
+        )
+        var grew = false
+        try {
+            val updated = FeaturedRepository.loadMore(channel, lastVisibleIndex)
+                .getOrElse { channel.copy(loading = false, error = it.collectionMessage()) }
+            grew = updated.videos.size > channel.videos.size
+            val at = channels.indexOfFirst { it.tagId == tagId }
+            if (at >= 0) {
+                updateChannels(channels.toMutableList().also { it[at] = updated })
             }
         } finally {
             // 协程被取消时也要把 loading 复位，否则该分区永远停在“加载中”。
             val at = channels.indexOfFirst { it.tagId == tagId }
             if (at >= 0 && channels[at].loading) {
-                channels = channels.toMutableList().also { it[at] = it[at].copy(loading = false) }
+                updateChannels(
+                    channels.toMutableList().also { it[at] = it[at].copy(loading = false) },
+                )
             }
         }
+        return grew
     }
 
-    // 分区列表：首屏 + 当前分区起 3 个分组的预取（q30 case1）。
+    // 分区列表：优先复用进程内缓存；首次进入或用户点重试时才真正请求。
     LaunchedEffect(pageAttempt) {
+        if (pageAttempt == 0 && channels.isNotEmpty()) {
+            channelsLoaded = true
+            if (selectedTagId == null) selectedTagId = channels.first().tagId
+            return@LaunchedEffect
+        }
         channelsLoaded = false
         pageError = null
-        channels = emptyList()
+        updateChannels(emptyList())
         selectedTagId = null
         FeaturedRepository.loadChannels().fold(
             onSuccess = { list ->
-                channels = list
+                updateChannels(list)
                 channelsLoaded = true
                 if (list.isEmpty()) return@fold
                 selectedTagId = list.first().tagId
-                val start = ChannelListSpec.prefetchStartIndex(0, list.size)
-                if (start >= 0) {
-                    val end = ChannelListSpec.prefetchEndIndexExclusive(start, list.size)
-                    for (i in start until end) loadGroup(list[i].tagId)
-                }
             },
             onFailure = {
                 channelsLoaded = true
@@ -159,14 +187,17 @@ fun FeaturedScreen(
         )
     }
 
-    // 切分区：补齐当前分区与其后 3 个分组。
-    LaunchedEffect(selectedTagId, channelsLoaded) {
-        val tagId = selectedTagId ?: return@LaunchedEffect
+    // 切分区：并行补齐当前分区与其后 3 个分组。串行请求会让首屏多等 2 个 RTT。
+    LaunchedEffect(selected?.tagId, channelsLoaded) {
+        val tagId = selected?.tagId ?: return@LaunchedEffect
         if (!channelsLoaded) return@LaunchedEffect
         val start = channels.indexOfFirst { it.tagId == tagId }
         if (start < 0) return@LaunchedEffect
         val end = ChannelListSpec.prefetchEndIndexExclusive(start, channels.size)
-        for (i in start until end) loadGroup(channels[i].tagId)
+        val tags = (start until end).map { channels[it].tagId }
+        coroutineScope {
+            tags.map { tag -> async { loadGroup(tag) } }.awaitAll()
+        }
     }
 
     // 『精选自动播放』消费点：分区首次拉到内容就直接起播第一条。
@@ -176,7 +207,7 @@ fun FeaturedScreen(
         val channel = selected ?: return@LaunchedEffect
         if (channel.videos.isEmpty()) return@LaunchedEffect
         if (!FeaturedRepository.claimAutoPlay(channel.tagId)) return@LaunchedEffect
-        FeaturedRepository.cache(channel.videos)
+        FeaturedRepository.cache(channel)
         onOpenPlayer(0)
     }
 
@@ -268,7 +299,7 @@ fun FeaturedScreen(
             selected != null -> SectionContent(
                 channel = selected,
                 onOpenPlayer = { index ->
-                    FeaturedRepository.cache(selected.videos)
+                    FeaturedRepository.cache(selected)
                     onOpenPlayer(index)
                 },
                 // 分区 ERROR 重试：按规格重新拉取该分区（m9520c 重试 → 重新请求分组），不是翻页。
@@ -287,7 +318,7 @@ private fun SectionContent(
     channel: FeaturedChannel,
     onOpenPlayer: (Int) -> Unit,
     onRetry: suspend () -> Unit,
-    onNeedMore: suspend (Int) -> Unit,
+    onNeedMore: suspend (Int) -> Boolean,
 ) {
     val spec = channel.toSpecGroup()
     val gridState = rememberLazyGridState()
@@ -297,19 +328,36 @@ private fun SectionContent(
         derivedStateOf { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
     }
 
-    // lastVisibleIndex 不能进 key：加载中插入 footer 会改变可见末项索引，key 变化会取消
-    // 正在执行的 onNeedMore，channel.loading 永久卡 true。用 snapshotFlow + 独立 scope
-    // 只负责“发现需要翻页”，请求本身不随索引变化被取消。
+    // 同时观察“可见末项 / 已加载数量 / loading”：只看索引的话，翻页返回重复数据后
+    // 索引不再变化，loading 从 true 回到 false 也不会重新触发，列表就卡在末尾不动了。
     val latestChannel by rememberUpdatedState(channel)
-    LaunchedEffect(channel.tagId) {
-        snapshotFlow { lastVisibleIndex }
-            .distinctUntilChanged()
-            .collect { index ->
-                val current = latestChannel
-                if (current.videos.isEmpty() || current.loading) return@collect
-                if (!ChannelListSpec.shouldRequestLoadMore(index, current.videos.size)) return@collect
-                scope.launch { onNeedMore(index) }
+    var requestInFlight by remember(channel.tagId) { mutableStateOf(false) }
+    var stalledPages by remember(channel.tagId) { mutableIntStateOf(0) }
+    LaunchedEffect(
+        channel.tagId,
+        channel.videos.size,
+        channel.loading,
+        channel.error,
+        lastVisibleIndex,
+        requestInFlight,
+    ) {
+        val current = latestChannel
+        if (requestInFlight || current.videos.isEmpty() || current.loading || current.error != null) {
+            return@LaunchedEffect
+        }
+        if (!ChannelListSpec.shouldRequestLoadMore(lastVisibleIndex, current.videos.size)) {
+            return@LaunchedEffect
+        }
+        if (stalledPages >= MAX_STALLED_PAGES) return@LaunchedEffect
+        requestInFlight = true
+        scope.launch {
+            try {
+                val grew = onNeedMore(lastVisibleIndex)
+                stalledPages = if (grew) 0 else stalledPages + 1
+            } finally {
+                requestInFlight = false
             }
+        }
     }
 
     when (ChannelListSpec.sectionState(spec)) {

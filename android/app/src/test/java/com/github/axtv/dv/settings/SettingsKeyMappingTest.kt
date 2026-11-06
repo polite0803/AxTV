@@ -2,6 +2,7 @@ package com.github.axtv.dv.settings
 
 import axtv.settings.MapSettingsStore
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import axtv.settings.SettingsKeys
 import axtv.ui.SettingsPageSpec
 import axtv.ui.SettingsPageSpec.ControlType
@@ -15,7 +16,7 @@ import org.junit.Test
 class SettingsKeyMappingTest {
 
     private val store = MapSettingsStore()
-    private val settings = Settings(store, Settings.DeviceProfile.of(33, false))
+    private val settings = Settings(store, SettingsTypes.DeviceProfile.of(33, false))
     private val binder = SettingsBinder(settings)
 
     @Test

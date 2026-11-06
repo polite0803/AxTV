@@ -22,7 +22,10 @@ import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.github.axtv.dv.ui.AxTvColors
 
 private val HAS_BLUR = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -31,10 +34,19 @@ private val HAS_BLUR = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 internal fun AmbientBackdrop(coverUrl: String, modifier: Modifier = Modifier) {
     // 开关关 / 无封面：完全不绘制，宿主页面保持纯色背景。
     if (coverUrl.isEmpty() || !AxAppearance.ambientEnabled()) return
+    val context = LocalContext.current
+    // 背景要再做 90px 高斯模糊，原图尺寸没有意义；限制解码尺寸能省掉每次换封面时的全尺寸解码。
+    val request = remember(coverUrl) {
+        ImageRequest.Builder(context)
+            .data(coverUrl)
+            .size(480)
+            .crossfade(false)
+            .build()
+    }
     Box(modifier = modifier.fillMaxSize()) {
         if (HAS_BLUR) {
             AsyncImage(
-                model = coverUrl,
+                model = request,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

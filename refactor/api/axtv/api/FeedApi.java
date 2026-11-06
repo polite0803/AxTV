@@ -39,7 +39,7 @@ public final class FeedApi {
      *
      * @param count        拉取条数（原实现默认 10~20，由页面决定）
      * @param refreshIndex 翻页序号，首页首次为 1
-     * @param pullType     1=刷新 2=加载更多（原实现两个分支）
+     * @param pullType     0=刷新 2=加载更多（n11.m7995c0 / kq5.m7281s 的取值）
      */
     public FeedResponse tabFeed(int count, int refreshIndex, int pullType) throws ApiException {
         return tabFeed(count, refreshIndex, pullType, List.of());

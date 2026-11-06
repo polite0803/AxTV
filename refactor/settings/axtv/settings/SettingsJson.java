@@ -12,7 +12,7 @@ import java.util.List;
  * 配置层需要的极简 JSON 能力。
  *
  * <p>原文用 {@code org.json.JSONArray} 处理两个键：
- * {@code danmaku_block_words}（字符串数组）、{@code accounts_list}（对象数组，见 {@link Settings.Account}）。
+ * {@code danmaku_block_words}（字符串数组）、{@code accounts_list}（对象数组，见 {@link SettingsTypes.Account}）。
  * Android 侧可用 {@code org.json} 实现本接口；纯 Java 侧用 {@link SimpleSettingsJson}。
  */
 public interface SettingsJson {
@@ -24,10 +24,10 @@ public interface SettingsJson {
     String writeStringArray(List<String> values);
 
     /** 解析账号数组；非法输入抛异常，由调用方降级为空列表（与原 try/catch 一致）。 */
-    List<Settings.Account> parseAccounts(String json);
+    List<SettingsTypes.Account> parseAccounts(String json);
 
     /** 序列化账号数组，字段名与原文 {@code m4215x} 完全一致。 */
-    String writeAccounts(List<Settings.Account> accounts);
+    String writeAccounts(List<SettingsTypes.Account> accounts);
 }
 
 /** 纯 JDK 实现：不追求通用，只覆盖原文产生的两种形态。 */
@@ -73,12 +73,12 @@ final class SimpleSettingsJson implements SettingsJson {
     }
 
     @Override
-    public List<Settings.Account> parseAccounts(String json) {
+    public List<SettingsTypes.Account> parseAccounts(String json) {
         if (json == null || json.isBlank()) {
             return List.of();
         }
         Reader r = new Reader(json);
-        List<Settings.Account> out = new ArrayList<>();
+        List<SettingsTypes.Account> out = new ArrayList<>();
         r.skipWs();
         r.expect('[');
         r.skipWs();
@@ -131,18 +131,15 @@ final class SimpleSettingsJson implements SettingsJson {
                 }
             }
             // 原文：id 为空则退化为 name，再为空则 "account_" + index
-            String accountId = id;
-            if (accountId.isBlank()) {
-                accountId = name;
-            }
-            if (name.isBlank()) {
-                if (accountId.isBlank()) {
-                    accountId = "account_" + out.size();
+            String accountId = id != null && !id.isBlank() ? id : (name != null && !name.isBlank() ? name : "account_" + out.size());
+            // 确保账户ID唯一：若生成的 ID 与已有账户冲突，在末尾追加 UUID 片段
+            for (SettingsTypes.Account existing : out) {
+                if (existing.id().equals(accountId)) {
+                    accountId = accountId + "_" + java.util.UUID.randomUUID().toString().substring(0, 4);
+                    break;
                 }
-            } else {
-                accountId = name;
             }
-            out.add(new Settings.Account(accountId, cookie, payload, ticket, tsSign,
+            out.add(new SettingsTypes.Account(accountId, cookie, payload, ticket, tsSign,
                     privateKey, pinHash, pinSalt, userId, serverCert));
             r.skipWs();
             if (r.consume(',')) {
@@ -154,13 +151,13 @@ final class SimpleSettingsJson implements SettingsJson {
     }
 
     @Override
-    public String writeAccounts(List<Settings.Account> accounts) {
+    public String writeAccounts(List<SettingsTypes.Account> accounts) {
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < accounts.size(); i++) {
             if (i > 0) {
                 sb.append(',');
             }
-            Settings.Account a = accounts.get(i);
+            SettingsTypes.Account a = accounts.get(i);
             sb.append('{');
             field(sb, "id", a.id()).append(',');
             field(sb, "name", a.id()).append(',');

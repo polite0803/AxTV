@@ -10,6 +10,7 @@ import android.content.res.Configuration
 import android.os.Build
 import axtv.api.DeviceProfile
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 
 object AndroidDeviceProfile {
 
@@ -18,13 +19,13 @@ object AndroidDeviceProfile {
         DeviceProfile(Build.VERSION.RELEASE, Build.MODEL, Build.VERSION.SDK_INT)
 
     /** settings 层 TV 判定（原 sp0.f20095a：UI_MODE_TYPE_TELEVISION 或 FEATURE_LEANBACK）。 */
-    fun settingsProfile(context: Context): Settings.DeviceProfile {
+    fun settingsProfile(context: Context): SettingsTypes.DeviceProfile {
         val packageManager = context.packageManager
         val configuration = context.resources.configuration
         val isTelevision =
             (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
                 Configuration.UI_MODE_TYPE_TELEVISION ||
                 packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
-        return Settings.DeviceProfile.of(Build.VERSION.SDK_INT, isTelevision)
+        return SettingsTypes.DeviceProfile.of(Build.VERSION.SDK_INT, isTelevision)
     }
 }

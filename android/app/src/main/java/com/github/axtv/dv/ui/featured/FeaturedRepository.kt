@@ -9,7 +9,8 @@
  * 参数取值来源（反编译侧）：
  *   - channel 固定 "channel_pc_web"           src/app/p000/n11.java:877
  *   - 加载更多 pull_type = 2                  src/app/p000/n11.java:2414
- *   - refresh_index：首屏取 1、翻页取页序号    与 FeedDataSource 的 tab/feed 用法一致
+ *   - 刷新 pull_type = 0                      原版 tab/feed 首屏（n11.m7995c0）
+ *   - refresh_index：首屏取 1、翻页取页序号 + 1
  */
 package com.github.axtv.dv.ui.featured
 
@@ -17,7 +18,6 @@ import axtv.api.ApiException
 import axtv.api.CollectionApi
 import axtv.api.DouyinApi
 import axtv.api.FeedApi
-import axtv.app.FeedDataSource
 import axtv.model.Aweme
 import axtv.model.ChannelConfigItem
 import axtv.ui.ChannelListSpec
@@ -58,12 +58,12 @@ object FeaturedRepository {
     /** n11.java:877 的固定 channel 参数。 */
     private const val CHANNEL_SETTING_PARAM = "channel_pc_web"
 
-    /** 与首页一致的每页条数（FeedDataSource.DEFAULT_PAGE_SIZE；Java 常量不能用于 const val）。 */
-    private val PAGE_SIZE = FeedDataSource.DEFAULT_PAGE_SIZE
+    /** 原版分区内容每页条数：非空 tag 传 10（a40 / C1887zj）。 */
+    private const val PAGE_SIZE = 10
 
     /** 首屏 refresh_index / pull_type；翻页 pull_type 见 FILE_HEAD 注释。 */
     private const val FIRST_REFRESH_INDEX = 1
-    private const val PULL_TYPE_REFRESH = 1
+    private const val PULL_TYPE_REFRESH = 0
     private const val PULL_TYPE_LOAD_MORE = 2
 
     private const val STATUS_LOGIN_REQUIRED = 8
@@ -103,8 +103,39 @@ object FeaturedRepository {
     var cachedAwemes by mutableStateOf<List<Aweme>>(emptyList())
         private set
 
+    /**
+     * 进入播放器时的分区上下文：播放队列 + 继续翻页所需的 tagId/游标/已展示 id。
+     * 只缓存列表的话，播放器到队尾时无法知道该从哪个分区、哪一页继续拉。
+     */
+    data class PlaybackQueue(val channel: FeaturedChannel, val awemes: List<Aweme>)
+
+    var cachedPlaybackQueue by mutableStateOf<PlaybackQueue?>(null)
+        private set
+
+    /** 分区列表 + 已加载内容的进程内快照：返回精选页时直接复用，不重新拉频道/首屏。 */
+    var cachedChannels by mutableStateOf<List<FeaturedChannel>>(emptyList())
+        private set
+
+    fun rememberChannels(channels: List<FeaturedChannel>) {
+        cachedChannels = channels.toList()
+    }
+
     fun cache(items: List<Aweme>) {
         cachedAwemes = items.toList()
+        cachedPlaybackQueue = null
+    }
+
+    /** 清空分区与内容缓存，供登录/登出/换账号后强制重拉。 */
+    fun invalidate() {
+        cachedAwemes = emptyList()
+        cachedChannels = emptyList()
+        cachedPlaybackQueue = null
+    }
+
+    /** 从分区网格进入播放器：同时记下分区上下文，供播放器内续页。 */
+    fun cache(channel: FeaturedChannel) {
+        cache(channel.videos)
+        cachedPlaybackQueue = PlaybackQueue(channel, channel.videos)
     }
 
     /**
@@ -155,13 +186,13 @@ object FeaturedRepository {
                     if (isAllTag(channel.tagId)) "" else channel.tagId,
                 )
                 requireSuccess(response.statusCode(), "分区「${channel.name}」")
-                val videos = response.flatAwemes()
+                val videos = response.flatAwemes().distinctBy { it.awemeId() }
                 Result.success(
                     channel.copy(
                         videos = videos,
                         loading = false,
                         error = null,
-                        hasMore = response.hasMore(),
+                        hasMore = response.hasMore() || videos.isNotEmpty(),
                         nextPageIndex = FIRST_REFRESH_INDEX + 1,
                         presentedIds = videos.map { it.awemeId() },
                     ),
@@ -182,7 +213,8 @@ object FeaturedRepository {
     suspend fun loadMore(channel: FeaturedChannel, lastVisibleIndex: Int): Result<FeaturedChannel> =
         withContext(Dispatchers.IO) {
             if (!ChannelListSpec.repoAcceptsLoadMore(lastVisibleIndex, channel.toSpecGroup())) {
-                return@withContext Result.success(channel)
+                // 虽然仓储拒绝加载更多，但仍需查询以更新 hasMore 状态，防止 UI 卡死显示加载指示器
+                return@withContext Result.success(channel.copy(hasMore = false))
             }
             val page = channel.nextPageIndex
             try {
@@ -195,13 +227,13 @@ object FeaturedRepository {
                 )
                 requireSuccess(response.statusCode(), "分区「${channel.name}」")
                 val added = response.flatAwemes()
-                val videos = channel.videos + added
+                val videos = (channel.videos + added).distinctBy { it.awemeId() }
                 Result.success(
                     channel.copy(
                         videos = videos,
                         loading = false,
                         error = null,
-                        hasMore = response.hasMore(),
+                        hasMore = response.hasMore() || added.isNotEmpty(),
                         nextPageIndex = page + 1,
                         presentedIds = videos.map { it.awemeId() }.takeLast(PRESENTED_ID_LIMIT),
                     ),

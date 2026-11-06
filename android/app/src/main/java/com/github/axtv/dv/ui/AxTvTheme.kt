@@ -26,6 +26,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 import androidx.tv.material3.lightColorScheme
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.ui.appearance.AxAppearance
 import com.github.axtv.dv.ui.appearance.AxPalette
@@ -69,12 +70,12 @@ fun AxTvTheme(content: @Composable () -> Unit) {
     LaunchedEffect(target) {
         AxAppearance.animateTo(
             target = target,
-            animate = settings?.colorTransition() == Settings.ColorTransition.AUTO,
+            animate = settings?.colorTransition() == SettingsTypes.ColorTransition.AUTO,
         )
     }
     // color_source=设备取色：来源或外观设置变化后重读系统壁纸色（不可用时内部回落品牌色）。
     LaunchedEffect(settings?.colorSource(), version) {
-        if (settings?.colorSource() == Settings.ColorSource.DEVICE) {
+        if (settings?.colorSource() == SettingsTypes.ColorSource.DEVICE) {
             AxAppearance.sampleDeviceSeed(context)
         }
     }

@@ -15,7 +15,7 @@
 | `search` | — | `SearchScreen(onBack, onOpenDetail, modifier)` | 弹栈 |
 | `search/results` | `query` | `SearchResultsPage(query, onOpenDetail, onBack, modifier)` | 弹栈 |
 | `live` | — | `LiveListScreen(onBack, onOpenRoom)` | 弹栈 |
-| `live/room` | `id` | `LiveRoomScreen(roomId, onBack)` | 弹栈 |
+| `live/room` | `id`、`webRid`（可选） | `LiveRoomScreen(roomId, webRid, onBack)`（全屏播放窗口：顶栏不渲染、系统栏沉浸） | 弹栈 |
 | `mix/list` | — | `MixListScreen(onBack, onOpenMix)` | 弹栈 |
 | `mix/detail` | `id` | `MixDetailScreen(mixId, onBack, onPlay)` | 弹栈 |
 | `mix/play` | `id`、`aweme` | `PlayerFromAwemeScreen(awemeId, …)` | 弹栈 |
@@ -49,8 +49,11 @@
 
 ## 3. 数据接线点
 
-- 首页数据：`ui/home/HomeFeedRepository` → `axtv.app.FeedDataSource.loadFeed(cursor)`（cursor 为页序号，0 首屏）。
+- 首页数据：`ui/home/HomeFeedRepository` → `axtv.app.FeedDataSource.loadFeed(cursor, recentIds)`（cursor 为已加载页数，0 首屏；加载更多从 `refresh_index=2` 开始并回传最近作品 id）。
 - 首页队列播放：`PlayerFromFeedScreen` 复用 `HomeFeedRepository.cachedAwemes`；队列为空时补拉首屏。
+  播放位置进入队尾提前量后，按 `HomeFeedRepository.load(nextCursor, recentIds)` 继续追加，不会停在已加载的最后一条。
+- 精选队列播放：`FeaturedRepository.cache(channel)` 记录分区上下文；`PlayerFromFeaturedScreen` 到队尾时按该分区
+  `loadMore(channel, lastVisible)` 继续翻页。
 - 单作品播放：`PlayerFromAwemeScreen` → `VideoApi.detail(awemeId)` → `WorkDetailResponse.awemeDetail()`。
 - 播放队列：`ui/nav/awemePlaylistProvider(awemes, startIndex)` → `axtv.model.VideoPlayUrlResolver.playableUrl(aweme)`，并把 `author/coverUrl` 填进 `VideoPlaylistProvider.Entry`。
 - 桌面小组件：`PlayerOverlayScreen` 用 `WidgetRuntime.publishPlayback(...)` 上报当前条目 id/标题/作者/封面/播放态。

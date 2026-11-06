@@ -19,18 +19,23 @@ import axtv.model.FeedResponse;
  *
  * <p><b>关于 cursor</b>：`/aweme/v1/web/tab/feed/` 原实现没有 cursor 参数，
  * 翻页靠 {@code refresh_index} + {@code pull_type}。因此这里的 {@code cursor}
- * 被定义为「页序号」：
+ * 被定义为「已加载页数」：
  * <ul>
- *   <li>{@code 0} → 首屏（refresh_index=1，pull_type=1）</li>
- *   <li>{@code >0} → 加载更多（refresh_index=cursor，pull_type=2）</li>
+ *   <li>{@code 0} → 首屏（refresh_index=1，pull_type=0）</li>
+ *   <li>{@code >0} → 加载更多（refresh_index=cursor+1，pull_type=2）</li>
  * </ul>
+ * 原版首页首页刷新用 pull_type=0、加载更多用 pull_type=2（n11.m7995c0 默认值 +
+ * kq5.m7281s 调用点），没有 pull_type=1 这个取值。
  * 需要按 max_cursor 翻页的调用方应改用 {@link axtv.api.FeedApi#followFeed(int, long, String)}
  * 等真正带 cursor 的端点，而不是把 max_cursor 传进来。
  */
 public final class FeedDataSource {
 
-    /** 与原首页首屏一致的默认条数。 */
-    public static final int DEFAULT_PAGE_SIZE = 10;
+    /** 原版首页首屏条数（a40 / C1887zj 对空 tag 传 15）。 */
+    public static final int DEFAULT_PAGE_SIZE = 15;
+
+    /** 加载更多要回传的「最近已展示作品」条数（原版取 10 个）。 */
+    private static final int RECENT_ID_LIMIT = 10;
 
     private final FeedApi feedApi;
 
@@ -42,29 +47,52 @@ public final class FeedDataSource {
     }
 
     /**
-     * 拉取一页首页作品。
+     * 拉取一页首页作品（不携带最近作品 id，只适合首屏）。
      *
-     * <p>错误处理（与 {@link ApiException.Kind} 一一对应）：
-     * <ul>
-     *   <li>{@link ApiException.Kind#NETWORK}：底层 IO/网络失败</li>
-     *   <li>{@link ApiException.Kind#HTTP_STATUS}：HTTP 非 2xx，{@code httpStatus()} 为状态码</li>
-     *   <li>{@link ApiException.Kind#EMPTY_BODY}：2xx 但响应体为空（常见于签名/Cookie 失效）</li>
-     *   <li>{@link ApiException.Kind#DECODE}：JSON 无法解成 {@link FeedResponse}</li>
-     *   <li>{@link ApiException.Kind#LOGIN_REQUIRED} / {@link ApiException.Kind#RATE_LIMITED} /
-     *       {@link ApiException.Kind#API_STATUS}：HTTP 2xx 但接口 {@code status_code != 0}</li>
-     * </ul>
-     * 上述任一情况都不会返回空列表。只有 {@code status_code == 0} 且服务端确实没有下发作品时，
-     * 才返回合法的空列表。
-     *
-     * @param cursor 页序号，见类注释
+     * @param cursor 已加载页数，见类注释
      * @throws ApiException 任一错误分支
      */
-    public List<Aweme> loadFeed(long cursor) throws ApiException {
-        int refreshIndex = cursor <= 0 ? 1 : (int) Math.min(Integer.MAX_VALUE, cursor);
-        int pullType = cursor <= 0 ? 1 : 2;
-        FeedResponse response = feedApi.tabFeed(DEFAULT_PAGE_SIZE, refreshIndex, pullType);
+    public FeedPage loadFeed(long cursor) throws ApiException {
+        return loadFeed(cursor, List.of());
+    }
+
+    /**
+     * 拉取一页首页作品，并把最近已展示的作品 id 回传给推荐接口。
+     *
+     * <p>原版加载更多时把这些 id 拼进 {@code aweme_pc_rec_raw_data.videoPrefer}；
+     * 不传会让服务端无法判断推荐上下文，容易返回重复页或直接空页，表现为「翻不动」。
+     *
+     * @param cursor         已加载页数，见类注释
+     * @param recentAwemeIds 最近已展示作品 id（按展示顺序，取最后 10 个）
+     * @throws ApiException 任一错误分支
+     */
+    public FeedPage loadFeed(long cursor, List<String> recentAwemeIds) throws ApiException {
+        boolean firstPage = cursor <= 0;
+        int refreshIndex = firstPage ? 1 : (int) Math.min((long) Integer.MAX_VALUE - 1, cursor + 1);
+        int pullType = firstPage ? 0 : 2;
+        List<String> recent = recentAwemeIds == null
+                ? List.of()
+                : recentAwemeIds.stream()
+                        .filter(id -> id != null && !id.isBlank())
+                        .toList();
+        if (recent.size() > RECENT_ID_LIMIT) {
+            recent = recent.subList(recent.size() - RECENT_ID_LIMIT, recent.size());
+        }
+        FeedResponse response = feedApi.tabFeed(DEFAULT_PAGE_SIZE, refreshIndex, pullType, recent);
         requireSuccess(response.statusCode());
-        return response.flatAwemes();
+        List<Aweme> awemes = response.flatAwemes();
+        // has_more 可能以布尔/数字/字符串多种形态返回，模型层（ModelJsonCodec）已按
+        // FlexibleBoolean 规则归一化；缺失（false）时退回「本页非空就还能翻」，
+        // 避免服务端不下发该字段时直接停在第一页。
+        boolean resolvedHasMore = response.hasMore();
+        return new FeedPage(awemes, resolvedHasMore || !awemes.isEmpty());
+    }
+
+    /** 一页信息流：作品 + 是否还有下一页。 */
+    public record FeedPage(List<Aweme> awemes, boolean hasMore) {
+        public FeedPage {
+            awemes = awemes == null ? List.of() : List.copyOf(awemes);
+        }
     }
 
     private static void requireSuccess(int statusCode) throws ApiException {

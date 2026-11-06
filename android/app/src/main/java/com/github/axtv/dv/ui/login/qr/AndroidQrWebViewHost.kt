@@ -63,6 +63,11 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
     @Volatile private var pageStarted = false
     /** 主帧加载失败（ERR_NAME_NOT_RESOLVED / ERR_CONNECTION_* 等），用来把真实原因带出 WebView。 */
     @Volatile private var mainFrameError: String? = null
+    /**
+     * 浮出的登录页里按 BACK：交给宿主收起页面。
+     * WebView 自己会把 BACK 当成「网页历史返回」，验证页没有历史就根本退不出来。
+     */
+    var onBackFromPage: (() -> Unit)? = null
 
     // ───────────────────────── QrLoginBridge.WebViewHost ─────────────────────────
 
@@ -221,6 +226,27 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
         return !destroyed && !activity.isFinishing && !activity.isDestroyed
     }
 
+    /** 浏览器内核标识（如 "Chrome/143.0.7499.24"），登录页诊断用。 */
+    override fun engineInfo(): String {
+        val version = runCatching { WebView.getCurrentWebViewPackage()?.versionName }
+            .getOrNull()
+        return if (version.isNullOrBlank()) "unknown" else "Chrome/$version"
+    }
+
+    /**
+     * 本机是否有可用的 WebView。
+     *
+     * 定制 ROM / 电视盒子可能把 WebView 裁掉：`new WebView(context)` 会直接抛
+     * MissingWebViewPackageException / AndroidRuntimeException / NoClassDefFoundError。
+     * 用「真的建一个」来判断，比查包名可靠；失败时桥自动切到纯 HTTP 通道。
+     */
+    override fun isUsable(): Boolean = try {
+        callOnMain { runCatching { ensureWebView() }.isSuccess }
+    } catch (t: Throwable) {
+        Log.w(TAG, "webview unavailable, fall back to http", t)
+        false
+    }
+
     // ───────────────────────── 内部实现 ─────────────────────────
 
     private fun ensureWebView(): WebView {
@@ -233,7 +259,8 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
             databaseEnabled = true
             loadsImagesAutomatically = true
             mediaPlaybackRequiresUserGesture = false
-            // 登录页只应走 HTTPS；不允许降级加载 HTTP 子资源。
+            // 与 od2.m8562e 一致用 COMPATIBILITY：登录/验证页会夹带 http 子资源，
+            // 收紧成 NEVER_ALLOW 会让老电视上的验证组件加载不出来（表现为验证窗口不出现）。
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             allowFileAccess = false
             allowContentAccess = false
@@ -249,6 +276,17 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
         view.isFocusable = false
         view.isClickable = false
         view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        view.setOnKeyListener { target, keyCode, event ->
+            // 只在页面可交互（浮出）时接管 BACK；隐藏态下 BACK 仍然交给 Compose 导航。
+            if (keyCode == android.view.KeyEvent.KEYCODE_BACK &&
+                event.action == android.view.KeyEvent.ACTION_UP && target.isFocusable
+            ) {
+                onBackFromPage?.invoke()
+                true
+            } else {
+                false
+            }
+        }
         view.webViewClient = object : WebViewClient() {
             override fun onPageStarted(webView: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 Log.i(TAG, "onPageStarted $url")
@@ -278,14 +316,19 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
                 Log.w(TAG, "main frame error: $detail url=${request.url}")
             }
 
+            /**
+             * 只拦非 http(s) 的自定义 scheme（intent://、snssdk:// 等会跳出应用）。
+             *
+             * 这里刻意不做域名白名单：二次验证/中间跳转会落在 passport、sso、verify、snssdk
+             * 等不同域名上，按域名拦会把验证页直接挡掉——真机表现就是扫码后一直停在
+             * 「已扫码」，页面上什么也不出现。主帧 URL 由 onPageStarted 记录，追查不受影响。
+             */
             override fun shouldOverrideUrlLoading(webView: WebView, url: String?): Boolean {
-                // 只允许抖音/字节域名内的 HTTPS 跳转；外链、http 降级与自定义 scheme 一律拦掉。
                 if (url == null) return true
-                val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return true
-                if (!uri.scheme.equals("https", ignoreCase = true)) return true
-                val host = uri.host.orEmpty().lowercase(Locale.ROOT)
-                val allowed = host == "douyin.com" || host.endsWith(".douyin.com") ||
-                    host == "bytedance.com" || host.endsWith(".bytedance.com")
+                val scheme = runCatching { Uri.parse(url).scheme }.getOrNull()
+                val allowed = scheme.equals("http", ignoreCase = true) ||
+                    scheme.equals("https", ignoreCase = true)
+                if (!allowed) Log.i(TAG, "block non-http navigation: $url")
                 return !allowed
             }
         }
@@ -298,6 +341,13 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
         return view
     }
 
+    /**
+     * 登录页使用桌面 Chrome UA。
+     *
+     * 与反编译原版 od2.m8562e 完全一致：从系统默认 UA 里取 Chrome 主版本，再拼成桌面 UA。
+     * 原版在极米这类 Chrome/66 的老内核上能正常出码，说明抖音登录页对 66 是兼容的；
+     * 这里不要“贴心”地改成 147，否则站点会下发老内核跑不动的新页面。
+     */
     private fun desktopUserAgent(view: WebView): String {
         val default = runCatching { WebSettings.getDefaultUserAgent(view.context) }.getOrDefault("")
         val chrome = Regex("Chrome/(\\d+)").find(default)?.groupValues?.get(1) ?: "113"
@@ -362,6 +412,10 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
         private val COOKIE_URLS = listOf(
             "https://creator.douyin.com",
             "https://www.douyin.com",
+            // 扫码确认后 sessionid 可能先落在裸域或 sso 域，再随重定向种到 www：
+            // 只读前两个域时，真机会出现「手机已确认、电视永远拿不到登录态」。
+            "https://douyin.com",
+            "https://sso.douyin.com",
         )
     }
 }

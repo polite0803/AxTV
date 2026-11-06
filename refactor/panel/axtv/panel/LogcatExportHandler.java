@@ -1,5 +1,4 @@
-/*
- * 来源: src/app/p000/qj0.java 的 /logcat 分支（Runtime.getRuntime().exec("logcat -t 10000 -v threadtime")）
+/* 来源: src/app/p000/qj0.java 的 /logcat 分支（Runtime.getRuntime().exec("logcat -t 10000 -v threadtime")）
  * 原职责: 把最近 10000 行 logcat 以附件形式导出给开发者（手机点「导出日志」）
  * 重构说明: 抽成 LogcatSource 接口 + 进程实现；响应头 filename="logcat.txt" 原样保留。
  */
@@ -13,13 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/**
- * GET /logcat —— 导出 logcat。
- *
- * <p>原实现直接 {@code exec("logcat", "-t", "10000", "-v", "threadtime")}，
- * 也就是取最近 1 万行、threadtime 格式。Android 上该二进制位于 {@code /system/bin}，
- * 需要应用有读日志权限（正常安装的 App 只能看到自己的日志；系统签名/开发版可见全部）。
- */
+/** GET /logcat —— 导出 logcat。 */
 public final class LogcatExportHandler {
 
     /** 取多少行（原实现的 {@code -t 10000}）。 */
@@ -43,11 +36,29 @@ public final class LogcatExportHandler {
                  BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8), 8192)) {
                 String line;
                 while ((line = reader.readLine()) != null) {
+                    line = sanitizeLogLine(line);
                     out.append(line).append('\n');
                 }
             }
             process.waitFor();
             return out.toString();
+        }
+
+        /** L1：脱敏——屏蔽可能泄露的 Cookie、Token、私钥等敏感信息。 */
+        private static String sanitizeLogLine(String line) {
+            if (line == null) return line;
+            String result = line;
+            // 屏蔽 Cookie 头
+            result = result.replaceAll("(Cookie[=:][^\n]*)", "Cookie: [REDACTED]");
+            // 屏蔽 Authorization 头
+            result = result.replaceAll("(Authorization[=:][^\n]*)", "Authorization: [REDACTED]");
+            // 屏蔽 set-cookie
+            result = result.replaceAll("set-cookie[^\n]*", "set-cookie: [REDACTED]");
+            // 屏蔽包含 sessionid 的行
+            result = result.replaceAll("(sessionid[^\n]*)", "sessionid: [REDACTED]");
+            // 屏蔽 Bearer token
+            result = result.replaceAll("(Authorization: [^\n]*)", "Authorization: [REDACTED]");
+            return result;
         }
     }
 

@@ -119,6 +119,9 @@ public final class AbogusEngine implements AutoCloseable {
     /** 对应 C1608s.f19459d：byted_acrawler（__ac_signature）可用。 */
     private volatile boolean acrawlerReady;
 
+    /** 最近一次 a_bogus 初始化失败原因；供 UI 诊断（成功不清空，保留现场）。 */
+    private volatile String lastError = "";
+
     public AbogusEngine(Assets assets, JsRuntime.Factory runtimeFactory, SignLog log) {
         this.assets = Objects.requireNonNull(assets, "assets");
         this.runtimeFactory = Objects.requireNonNull(runtimeFactory, "runtimeFactory");
@@ -133,6 +136,11 @@ public final class AbogusEngine implements AutoCloseable {
 
     public boolean isReady() {
         return abogusReady;
+    }
+
+    /** 最近一次 a_bogus 初始化失败原因；空串表示没有记录到错误。 */
+    public String lastError() {
+        return lastError;
     }
 
     public boolean isAcrawlerReady() {
@@ -157,9 +165,11 @@ public final class AbogusEngine implements AutoCloseable {
             submit(this::initialize, INIT_TIMEOUT_MS);
         } catch (TimeoutException e) {
             // 原实现在此处静默返回 false（m10096d 拿不到结果即视为 false），由调用方打 "not ready"。
+            lastError = "初始化超时（30000ms）";
             log.e(TAG, "a_bogus runtime init timed out");
             return false;
         } catch (RuntimeException e) {
+            lastError = "初始化异常：" + e.getClass().getSimpleName() + ": " + e.getMessage();
             log.e(TAG, "a_bogus runtime init failed", e);
             return false;
         }
@@ -203,6 +213,7 @@ public final class AbogusEngine implements AutoCloseable {
 
             log.d(TAG, "QuickJS: calling initABogus()..."); // C1400n:108
             if (!asBoolean(eval(SCRIPT_INIT_ABOGUS))) { // C1400n:109-111
+                lastError = "initABogus() 返回 false（bdms SDK 不可用）";
                 log.e(TAG, "initABogus() returned false - bdms SDK _v not available"); // C1400n:112
                 destroyInline(); // C1400n:113 -> C1608s.m10094a()
                 return Boolean.FALSE;
@@ -216,6 +227,7 @@ public final class AbogusEngine implements AutoCloseable {
             log.d(TAG, "QuickJS: test sign result = " + take(testResult, LOG_PREVIEW_LIMIT)); // C1400n:125
 
             if (!getAbogusPresent) { // C1400n:126-130
+                lastError = "getABogus / get_ab 初始化后不可用";
                 log.e(TAG, "getABogus / get_ab not available after init");
                 destroyInline();
                 return Boolean.FALSE;
@@ -227,6 +239,7 @@ public final class AbogusEngine implements AutoCloseable {
             loadSignJs(); // C1400n:134-174，失败不影响 a_bogus 可用性
             return Boolean.TRUE; // C1400n:175-176
         } catch (Exception e) { // C1400n:177-187
+            lastError = "初始化失败：" + e.getClass().getSimpleName() + ": " + e.getMessage();
             log.e(TAG, "Failed to initialise QuickJS a_bogus runtime", e);
             logCauses(e, 5); // C1400n:182-187（最多 5 层）
             destroyInline(); // C1400n:188

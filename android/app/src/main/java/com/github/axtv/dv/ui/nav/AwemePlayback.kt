@@ -75,25 +75,33 @@ fun awemePlaylistProvider(awemes: List<Aweme>, startIndex: Int = 0): PlaylistPro
         val start = startIndex.coerceIn(0, awemes.lastIndex)
         awemes.drop(start) + awemes.take(start)
     }
-    val entries = ordered.mapIndexed { index, aweme ->
-        val video = aweme.video()
-        VideoPlaylistProvider.Entry(
-            id = aweme.awemeId().ifEmpty { "aweme_$index" },
-            title = aweme.desc().ifEmpty { "无标题视频" },
-            durationMs = video.duration().toLong(),
-            video = video,
-            resolvedUrl = PlaybackUrlResolver.playableUrl(aweme).takeIf { it.isNotEmpty() },
-            author = aweme.author().nickname().orEmpty(),
-            coverUrl = (
-                video.cover()?.firstUrl()?.orEmpty()
-                    ?.takeIf { it.isNotEmpty() }
-                    ?: video.originCover()?.firstUrl()?.orEmpty()
-                ).orEmpty(),
-        )
-    }
+    val entries = ordered.mapIndexed { index, aweme -> awemePlaylistEntry(aweme, index) }
     return VideoPlaylistProvider(entries).also {
         // 『历史记录容量』的消费点之一：起播即把这条记进本地「已看」环形缓冲。
         // 这里是所有播放路由（首页 / 精选 / 详情 / 历史 / 合集）的唯一收口，不改 ui/player 内部逻辑。
         ordered.firstOrNull()?.awemeId()?.let(ViewedVideoTracker::record)
     }
+}
+
+/**
+ * 单条 Aweme → 播放器条目。
+ *
+ * @param index 仅用于缺少 awemeId 时的兜底 id（aweme_{index}）；
+ *              播放器内续页追加时由调用方传入递增序号，避免与首批条目重名。
+ */
+fun awemePlaylistEntry(aweme: Aweme, index: Int = 0): VideoPlaylistProvider.Entry {
+    val video = aweme.video()
+    return VideoPlaylistProvider.Entry(
+        id = aweme.awemeId().ifEmpty { "aweme_$index" },
+        title = aweme.desc().ifEmpty { "无标题视频" },
+        durationMs = video.duration().toLong(),
+        video = video,
+        resolvedUrl = PlaybackUrlResolver.playableUrl(aweme).takeIf { it.isNotEmpty() },
+        author = aweme.author().nickname().orEmpty(),
+        coverUrl = (
+            video.cover()?.firstUrl()?.orEmpty()
+                ?.takeIf { it.isNotEmpty() }
+                ?: video.originCover()?.firstUrl()?.orEmpty()
+            ).orEmpty(),
+    )
 }

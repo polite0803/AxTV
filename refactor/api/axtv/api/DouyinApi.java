@@ -170,12 +170,18 @@ public final class DouyinApi {
             }
         }
 
+        boolean abogusPresent = !Texts.isBlank(query.get("a_bogus"));
+
         // ③ 请求头
         Map<String, String> headers = buildHeaders(request, path, query);
 
         // ④ 发送（URL 参数按 yy0 case 0 逐项 URL 编码；未编码会被判 Sign Invalid）
         String url = request.baseUrl() + path
                 + (query.isEmpty() ? "" : "?" + Texts.joinQueryEncoded(query));
+        if (abogusPresent) {
+            // 诊断用：带签名的完整 URL（不含 Cookie）。对比本地/网页请求即可判断 a_bogus 是否一致。
+            System.out.println("I AxTV_SIGNED_URL: " + url);
+        }
         if (request.writesSearchDiagnostics()) {
             logSearchDiagnostics(path, query);
         }
@@ -204,7 +210,27 @@ public final class DouyinApi {
 
         // ⑥ 查错
         if (response.statusCode() >= 400) {
-            throw ApiException.http(response.statusCode(), response.bodyText());
+            String detail = response.bodyText();
+            if (response.statusCode() == 403 && detail != null
+                    && detail.contains("ArgusSecurityPlugin")) {
+                // 直接把是否带上 a_bogus 写进错误文案：界面截图即可区分「没生成」和「生成了但被拒」。
+                detail = detail + (abogusPresent ? " [a_bogus=present]" : " [a_bogus=MISSING]");
+                // 再补一行不含敏感值的现场：Cookie 是否完整、UA、a_bogus 长度。
+                detail = detail + String.format(
+                        java.util.Locale.US,
+                        "\n[dbg ua=%s cookieB=%d sid=%s ttwid=%s fp=%s uifid=%s ab=%d sec=%d ts=%s path=%s]",
+                        userAgent,
+                        cookies.cookieHeader().length(),
+                        cookies.get("sessionid") != null,
+                        cookies.get("ttwid") != null,
+                        cookies.get("s_v_web_id") != null,
+                        cookies.get("UIFID") != null,
+                        Texts.nvl(query.get("a_bogus")).length(),
+                        Texts.nvl(query.get("x-secsdk-web-signature")).length(),
+                        query.containsKey("timestamp"),
+                        path);
+            }
+            throw ApiException.http(response.statusCode(), detail);
         }
         if (request.checksHeaderErrorCode()) {
             String errorCode = response.header("bd-tt-error-code");

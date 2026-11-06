@@ -13,7 +13,10 @@
 
 # 核心层入口（JNI 回调 / 反射装配点，按需保留）
 -keep class axtv.sign.** { *; }
--keep class axtv.panel.** { *; }
+
+# panel：仅保留具体实现类（Class.forName("axtv.panel.JdkPanelServer") 反射调用点 + PanelServer 抽象类）
+-keep class axtv.panel.PanelServer { *; }
+-keep class axtv.panel.JdkPanelServer { *; }
 
 # axtv.api.ModelJsonCodec 通过反射按 @JsonKey 绑定 model record：
 # 必须保留 model 类、字段名、注解与规范构造器，否则 release 解码会失效/错位。

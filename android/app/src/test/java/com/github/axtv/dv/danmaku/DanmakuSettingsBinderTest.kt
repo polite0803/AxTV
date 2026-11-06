@@ -2,6 +2,7 @@ package com.github.axtv.dv.danmaku
 
 import axtv.settings.MapSettingsStore
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -15,7 +16,7 @@ import org.junit.Test
 class DanmakuSettingsBinderTest {
 
     private fun newSettings(): Settings =
-        Settings(MapSettingsStore(), Settings.DeviceProfile.of(33, false))
+        Settings(MapSettingsStore(), SettingsTypes.DeviceProfile.of(33, false))
 
     @Test
     fun defaultsMatchPointSettings() {

@@ -110,11 +110,21 @@ internal fun Throwable.toFailure(page: String): LoadState.Failed {
             api.message ?: "请检查网络连接后重试。",
         )
 
-        ApiException.Kind.HTTP_STATUS -> LoadState.Failed(
-            false,
-            "服务器返回错误",
-            api.message ?: "HTTP ${api.httpStatus()}",
-        )
+        ApiException.Kind.HTTP_STATUS -> {
+            val detail = api.message ?: "HTTP ${api.httpStatus()}"
+            // Argus 403 有两种：a_bogus 没生成（签名器失败）或生成了但被拒。
+            // DouyinApi 会附 [a_bogus=...]，签名器原因再补一行，界面截图即可定位。
+            val signerError = if (detail.contains("ArgusSecurityPlugin")) {
+                AppRuntime.signer?.lastError()?.takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
+            LoadState.Failed(
+                false,
+                "服务器返回错误",
+                if (signerError != null) "$detail\n签名器：$signerError" else detail,
+            )
+        }
 
         ApiException.Kind.HEADER_ERROR -> LoadState.Failed(false, "请求被拦截", api.message ?: "请稍后重试。")
         ApiException.Kind.API_STATUS -> LoadState.Failed(false, "接口返回异常", api.message ?: "请稍后重试。")

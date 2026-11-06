@@ -408,6 +408,14 @@ public final class UpdateManager {
         } else if (trimmed.startsWith("v")) {
             trimmed = trimmed.substring(1);
         }
+        // 截断到首个非数字字符，避免“1.2.3-beta”导致 parseIntOrZero("beta")=0 导致比较错误
+        int dotIndex = trimmed.indexOf('.');
+        if (dotIndex > 0) {
+            String firstSegment = trimmed.substring(0, dotIndex);
+            if (!firstSegment.matches("\\d+")) {
+                trimmed = firstSegment;
+            }
+        }
         List<Integer> parts = new ArrayList<>();
         for (String part : trimmed.split("\\.")) {
             parts.add(parseIntOrZero(part));

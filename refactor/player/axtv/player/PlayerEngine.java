@@ -472,6 +472,11 @@ public final class PlayerEngine implements MediaEngine.Listener {
         return true;
     }
 
+    /** 队列是否还有下一条（错误自动跳过判断用）。 */
+    public boolean hasNext() {
+        return queue.hasNext();
+    }
+
     public boolean playPrevious() {
         if (!queue.hasPrevious()) {
             return false;

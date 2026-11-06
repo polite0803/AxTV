@@ -65,6 +65,20 @@ object AppRuntime {
         )
     }
 
+    /**
+     * 把设置仓库里的 Cookie 同步进运行时 CookieStore（douyin_auth/cookie_header）。
+     *
+     * 缺口来源：请求实际读的是 SharedPrefsCookieStore（见 install()），而「设置导入」只写
+     * axtv_settings（SettingsConfigIO 把 COOKIE_STRING 列为敏感键跳过），两处从未接线
+     * （LibraryCommon.kt:75）。于是设置里显示「已登录」，但搜索请求不带 sessionid，服务端回空。
+     * 导入或保存 Cookie 后调用本方法，与登录页的双写保持一致。
+     */
+    fun syncCookieToRuntimeStore(context: Context) {
+        val application = context.applicationContext
+        val cookie = settings?.cookie().orEmpty()
+        SharedPrefsCookieStore(application).setCookieHeader(cookie)
+    }
+
     fun shutdown() {
         PanelRuntime.shutdown()
         signer?.close()

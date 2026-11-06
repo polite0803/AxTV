@@ -39,6 +39,9 @@ public final class AbogusSigner implements AutoCloseable {
     private final AbogusEngine engine;
     private final SignLog log;
 
+    /** 最近一次签名失败原因；供界面诊断。 */
+    private volatile String lastError = "";
+
     public AbogusSigner(AbogusEngine engine, SignLog log) {
         this.engine = Objects.requireNonNull(engine, "engine");
         this.log = log == null ? SignLog.disabled() : log;
@@ -47,6 +50,12 @@ public final class AbogusSigner implements AutoCloseable {
     /** 便捷构造：内部自建引擎（等价于原 {@code new C1608s(context)} 的持有方式）。 */
     public AbogusSigner(Assets assets, JsRuntime.Factory runtimeFactory, SignLog log) {
         this(new AbogusEngine(assets, runtimeFactory, log), log);
+    }
+
+    /** 最近一次签名失败原因；空串表示没有记录到错误。 */
+    public String lastError() {
+        String engineError = engine.lastError();
+        return !isBlank(engineError) ? engineError : lastError;
     }
 
     /**
@@ -58,6 +67,7 @@ public final class AbogusSigner implements AutoCloseable {
      */
     public String sign(String query, String data, String uri, String userAgent) {
         if (!engine.ensureReady()) { // C1608s:202 -> m10096d
+            lastError = "签名运行时未就绪";
             log.e(TAG, "a_bogus runtime is not ready"); // C1608s:211
             return "";
         }
@@ -65,15 +75,18 @@ public final class AbogusSigner implements AutoCloseable {
             Object raw = engine.evaluate(buildSignScript(query, data, uri, userAgent), AbogusEngine.CALL_TIMEOUT_MS);
             if (!(raw instanceof String text)) {
                 // C0761j:82-87：结果不是 String（含 runtime 为空）时直接落到末尾的 return ""。
+                lastError = "getABogus 返回非字符串";
                 return "";
             }
             log.d(TAG, "getABogus raw result (" + text.length() + " chars): "
                     + AbogusEngine.take(text, LOG_PREVIEW_LIMIT)); // C0761j:84
             return parseResult(text); // C0761j:85
         } catch (TimeoutException e) {
+            lastError = "getABogus 调用超时";
             log.e(TAG, "getABogus timed out"); // C1608s:178
             return "";
         } catch (RuntimeException e) {
+            lastError = "getABogus 异常：" + e.getClass().getSimpleName() + ": " + e.getMessage();
             log.e(TAG, "getABogus failed", e); // C0761j:89
             logCauses(e); // C0761j:90-96（最多 3 层）
             return "";

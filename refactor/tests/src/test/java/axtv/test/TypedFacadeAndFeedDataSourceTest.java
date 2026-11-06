@@ -77,7 +77,7 @@ class TypedFacadeAndFeedDataSourceTest {
     @Test
     void tabFeedSendsOriginalBaseAndSpecificParams() throws Exception {
         Harness h = new Harness(FEED_JSON);
-        new FeedApi(h.api()).tabFeed(10, 1, 1);
+        new FeedApi(h.api()).tabFeed(10, 1, 0);
         String url = decodedQuery(h.http.lastUrl);
 
         // zy0.m12473a()：26 个桌面基础参数
@@ -92,7 +92,7 @@ class TypedFacadeAndFeedDataSourceTest {
         }
         // n11.m8036b0：tab 专用参数
         for (String specific : List.of("filterGids=", "tag_id=", "share_aweme_id=", "live_insert_type=",
-                "count=10", "refresh_index=1", "video_type_select=1", "pull_type=1", "min_window=0",
+                "count=10", "refresh_index=1", "video_type_select=1", "pull_type=0", "min_window=0",
                 "free_right=0", "view_count=0", "plug_block=0", "ug_source=", "creative_id=",
                 "webcast_sdk_version=170400", "webcast_version_code=170400")) {
             assertTrue(url.contains(specific), "tab/feed 必须带原版专用参数: " + specific);
@@ -247,11 +247,13 @@ class TypedFacadeAndFeedDataSourceTest {
     @Test
     void loadFeedReturnsAwemesOnSuccess() throws Exception {
         Harness h = new Harness(FEED_JSON);
-        List<Aweme> awemes = new FeedDataSource(new FeedApi(h.api())).loadFeed(0);
+        FeedDataSource.FeedPage page = new FeedDataSource(new FeedApi(h.api())).loadFeed(0);
+        List<Aweme> awemes = page.awemes();
 
         assertEquals(1, awemes.size());
         assertEquals("7300000000000000001", awemes.get(0).awemeId());
         assertFalse(awemes.isEmpty());
+        assertTrue(page.hasMore(), "has_more=1 时应透传 hasMore");
     }
 
     @Test
@@ -307,9 +309,37 @@ class TypedFacadeAndFeedDataSourceTest {
     @Test
     void loadFeedAllowsLegitimateEmptyList() throws Exception {
         Harness h = new Harness("{\"status_code\":0,\"aweme_list\":[]}");
-        List<Aweme> awemes = new FeedDataSource(new FeedApi(h.api())).loadFeed(0);
+        FeedDataSource.FeedPage page = new FeedDataSource(new FeedApi(h.api())).loadFeed(0);
+        List<Aweme> awemes = page.awemes();
 
         assertTrue(awemes.isEmpty(), "status_code==0 且服务端确实无作品时，空列表是合法结果");
+        assertFalse(page.hasMore(), "空页且 has_more 缺失时不应继续翻页");
+    }
+
+    @Test
+    void loadFeedFirstPageUsesOriginalRefreshPullTypeAndPageSize() throws Exception {
+        Harness h = new Harness(FEED_JSON);
+        new FeedDataSource(new FeedApi(h.api())).loadFeed(0);
+        String url = decodedQuery(h.http.lastUrl);
+
+        assertTrue(url.contains("count=15"), "首页首屏与原版一致，取 15 条");
+        assertTrue(url.contains("refresh_index=1"));
+        assertTrue(url.contains("pull_type=0"), "首屏 pull_type 必须是 0（原版无 1）");
+        assertTrue(url.contains("view_count=0"));
+        assertFalse(url.contains("videoPrefer"), "首屏用短 JSON");
+    }
+
+    @Test
+    void loadFeedLoadMoreUsesNextRefreshIndexAndRecentIds() throws Exception {
+        Harness h = new Harness(FEED_JSON);
+        new FeedDataSource(new FeedApi(h.api())).loadFeed(1, List.of("111", "222"));
+        String url = decodedQuery(h.http.lastUrl);
+
+        assertTrue(url.contains("refresh_index=2"), "第一页之后加载更多必须从 refresh_index=2 开始");
+        assertTrue(url.contains("pull_type=2"));
+        assertTrue(url.contains("view_count=15"), "view_count 应为 (refreshIndex-1)*count");
+        assertTrue(url.contains("videoPrefer"), "加载更多应带 videoPrefer 长 JSON");
+        assertTrue(url.contains("111,222"), "最近展示作品 id 必须回传给推荐接口");
     }
 
     // ---------------------------------------------------------------- 参数编码 / tab 签名形态

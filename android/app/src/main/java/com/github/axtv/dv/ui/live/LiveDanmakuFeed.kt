@@ -63,6 +63,8 @@ internal enum class DanmakuState(val label: String) {
 internal class LiveDanmakuFeed(
     context: Context,
     private val room: LiveRoom,
+    /** 列表/路由带来的真实 web_rid；房间对象自身可能不带。 */
+    private val webRidOverride: String = "",
     private val onComment: (LiveCommentUi) -> Unit,
     private val onUserSeq: (Long) -> Unit,
     private val onState: (DanmakuState) -> Unit,
@@ -87,7 +89,7 @@ internal class LiveDanmakuFeed(
             postState(DanmakuState.DISABLED)
             return
         }
-        val webRid = room.effectiveWebRid()
+        val webRid = webRidOverride.ifBlank { room.effectiveWebRid() }
         val roomId = DetailPageSpec.resolvedRoomId(room)
         if (webRid.isBlank() || roomId.isBlank()) {
             postState(DanmakuState.UNAVAILABLE)

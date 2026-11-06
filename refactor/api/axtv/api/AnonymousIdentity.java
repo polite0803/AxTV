@@ -36,6 +36,9 @@ public final class AnonymousIdentity {
     static final String REGISTER_URL = "https://ttwid.bytedance.com/ttwid/union/register/";
     static final String HOME_URL = "https://www.douyin.com/";
 
+    /** n11.m8071z：GET 该地址取首页 HTML，从响应体提取 user_unique_id / msToken / odin_tt。 */
+    static final String HOME_RECOMMEND_URL = "https://www.douyin.com/?recommend=1";
+
     /** 原实现固定用 Chrome/147 UA（与接口默认 UA 不同）。 */
     static final String REGISTER_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
@@ -47,6 +50,14 @@ public final class AnonymousIdentity {
                     + "\"cbUrlProtocol\":\"https\",\"union\":true}";
 
     private static final Pattern BODY_TTWID = Pattern.compile("\"ttwid\"\\s*:\\s*\"([^\"]+)\"");
+
+    /** 首页 HTML/JSON 里的设备号（n11.m8069y 第一段正则，匹配 \"user_unique_id\":\"123...\"）。 */
+    private static final Pattern BODY_UNIQUE_ID_ESCAPED =
+            Pattern.compile("\\\\\"user_unique_id\\\\\":\\\\\"(\\d+)\\\\\"");
+
+    /** 同上（n11.m8069y 第二段正则，匹配 "user_unique_id":"123..."）。 */
+    private static final Pattern BODY_UNIQUE_ID_PLAIN =
+            Pattern.compile("\"user_unique_id\"\\s*:\\s*\"(\\d+)\"");
 
     private AnonymousIdentity() {
     }
@@ -67,6 +78,9 @@ public final class AnonymousIdentity {
 
     /**
      * 补齐设备级匿名身份：ttwid 与 UIFID_TEMP 缺哪补哪，已有的不重复请求。
+     * 同时按 n11.m8071z/m8069y 的路径从首页响应体补 {@code user_unique_id}
+     * （缺它时 tab/feed 不带 webid/globalwid，服务端只能按匿名设备出通用热门池，
+     * 表现就是「登录与不登录推荐没区别」）。
      *
      * <p>阻塞式网络调用，需在非主线程执行。失败返回 false（不抛异常），
      * 调用方可照常继续——只是匿名接口可能依旧拿不到数据。
@@ -77,6 +91,9 @@ public final class AnonymousIdentity {
         }
         boolean ttwid = hasIdentity(cookies) || !Texts.isBlank(acquireTtwid(engine, cookies));
         boolean uifid = hasUifid(cookies) || !Texts.isBlank(acquireUifidTemp(engine, cookies));
+        // user_unique_id 独立于上面两项：哪怕 ttwid/UIFID_TEMP 已齐也值得补一次。
+        // acquireHomeIdentity 内部会判断「已有全数字 id 就不发请求」。
+        acquireHomeIdentity(engine, cookies);
         return ttwid && uifid;
     }
 
@@ -136,8 +153,8 @@ public final class AnonymousIdentity {
     }
 
     /**
-     * zg0 case 1：HEAD 首页。原实现只取 UIFID_TEMP；首页同时下发的 ttwid 也一并收下
-     * （原版 ttwid 已由 m8007A 单独申领，这里属于额外收益，不改变主链路）。
+     * zg0 case 1：HEAD https://www.douyin.com/ 取 UIFID_TEMP（该请求同时会下发 ttwid）。
+     * 原实现用"不跟随重定向"的客户端（n11.f14567e）。
      */
     static String fetchUifidTemp(HttpEngine engine, CookieStore cookies) {
         ApiLog.d(ApiLog.TAG_LIVE_WS, "[uifid] requesting " + HOME_URL);
@@ -172,6 +189,63 @@ public final class AnonymousIdentity {
                     + ": " + e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * n11.m8071z + m8069y：GET https://www.douyin.com/?recommend=1，从响应体提取
+     * {@code user_unique_id} 回写 CookieStore（顺带收 Set-Cookie 里的 msToken/odin_tt 等）。
+     *
+     * <p>原版在缺 msToken / odin_tt / user_unique_id 时触发，最多跟 5 次重定向；
+     * 这里简化为：仅当 {@code userUniqueId()} 为空时发一次 GET（跟随重定向），
+     * body 里两段正则各试一次——与 m8069y 的顺序一致（先转义形态再普通形态）。
+     * 失败静默返回，不影响 ttwid/UIFID_TEMP 主链路。
+     */
+    static void acquireHomeIdentity(HttpEngine engine, CookieStore cookies) {
+        String existing = cookies.userUniqueId();
+        if (!Texts.isBlank(existing) && Texts.allDigits(existing)) {
+            return;
+        }
+        ApiLog.d(ApiLog.TAG_LIVE_WS, "[uue] requesting " + HOME_RECOMMEND_URL);
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("User-Agent", REGISTER_USER_AGENT);
+        headers.put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+        headers.put("Accept-Language", "zh-CN,zh;q=0.9");
+        try {
+            // 原版跟重定向且每次回填 Set-Cookie（m8071z 循环），这里交给 followRedirects=true。
+            ApiResponse response = engine.execute("GET", HOME_RECOMMEND_URL, headers, null, null, true);
+            for (String raw : response.headers("Set-Cookie")) {
+                Map.Entry<String, String> pair = SetCookie.parse(raw);
+                if (pair != null && !Texts.isBlank(pair.getValue())) {
+                    cookies.putAll(Collections.singletonMap(pair.getKey(), pair.getValue()));
+                }
+            }
+            String body = response.bodyText();
+            if (body == null || body.isEmpty()) {
+                ApiLog.w(ApiLog.TAG_LIVE_WS,
+                        "[uue] homepage body empty (http=" + response.statusCode() + ")");
+                return;
+            }
+            String id = firstMatch(BODY_UNIQUE_ID_ESCAPED, body);
+            if (id == null) {
+                id = firstMatch(BODY_UNIQUE_ID_PLAIN, body);
+            }
+            if (id != null) {
+                cookies.setUserUniqueId(id);
+                ApiLog.d(ApiLog.TAG_LIVE_WS, "[uue] user_unique_id acquired: " + id);
+            } else {
+                ApiLog.w(ApiLog.TAG_LIVE_WS,
+                        "[uue] homepage body carried no user_unique_id (http=" + response.statusCode()
+                                + ", len=" + body.length() + ")");
+            }
+        } catch (Exception e) {
+            ApiLog.w(ApiLog.TAG_LIVE_WS, "[uue] fetch failed: " + e.getClass().getSimpleName()
+                    + ": " + e.getMessage());
+        }
+    }
+
+    private static String firstMatch(Pattern pattern, String text) {
+        Matcher matcher = pattern.matcher(text);
+        return matcher.find() ? matcher.group(1) : null;
     }
 }
 

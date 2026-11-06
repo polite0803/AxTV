@@ -14,6 +14,7 @@ package com.github.axtv.dv.adapter
 
 import axtv.api.ClientIdentityBranch
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import com.github.axtv.dv.ui.appearance.AxAppearance
 import kotlin.math.abs
 
@@ -95,7 +96,7 @@ class SettingsBinder(private val settings: Settings) {
         "playback_completion" -> listOf("自动下一个", "暂停", "重播")
         "video_load_timeout" -> listOf("5 秒", "10 秒", "15 秒", "30 秒", "60 秒")
         "feed_history_capacity" -> listOf("50 条", "100 条", "200 条", "500 条", "1000 条")
-        // j16 面板的 rm2 / zm2 档位（不是 Settings.DanmakuFontSize / DanmakuSpeed 的 5/3 档）。
+        // j16 面板的 rm2 / zm2 档位（不是 SettingsTypes.DanmakuFontSize / DanmakuSpeed 的 5/3 档）。
         "style_font" -> LIVE_FONT_LABELS
         "style_speed" -> LIVE_SPEED_LABELS
         // ---- 动态枚举行（qm4 运行时插入）----
@@ -109,96 +110,96 @@ class SettingsBinder(private val settings: Settings) {
 
     fun readEnumIndex(key: String): Int? = when (key) {
         "live_danmaku_style" ->
-            Settings.DanmakuStyle.values().indexOf(settings.liveDanmakuStyle())
+            SettingsTypes.DanmakuStyle.values().indexOf(settings.liveDanmakuStyle())
         "app_font_scale" ->
-            Settings.FontScale.values().indexOf(settings.fontScalePreset())
+            SettingsTypes.FontScale.values().indexOf(settings.fontScalePreset())
         "default_home" ->
-            Settings.HomeScreen.values().indexOf(settings.defaultHomeScreen())
+            SettingsTypes.HomeScreen.values().indexOf(settings.defaultHomeScreen())
         "client_identity_branch" ->
             ClientIdentityBranch.values().indexOf(settings.clientIdentityBranch())
         "theme_mode" ->
-            Settings.ThemeMode.values().indexOf(settings.themeMode())
+            SettingsTypes.ThemeMode.values().indexOf(settings.themeMode())
         "player_surface_type" ->
-            Settings.SurfaceType.values().indexOf(settings.surfaceType())
+            SettingsTypes.SurfaceType.values().indexOf(settings.surfaceType())
         "color_style" ->
-            Settings.ColorStyle.values().indexOf(settings.colorStyle())
+            SettingsTypes.ColorStyle.values().indexOf(settings.colorStyle())
         "color_contrast" ->
-            Settings.ColorContrast.values().indexOf(settings.colorContrast())
+            SettingsTypes.ColorContrast.values().indexOf(settings.colorContrast())
         "color_transition" ->
-            Settings.ColorTransition.values().indexOf(settings.colorTransition())
+            SettingsTypes.ColorTransition.values().indexOf(settings.colorTransition())
         "audio_balance" ->
-            Settings.AudioBalance.values().indexOf(settings.audioBalance())
+            SettingsTypes.AudioBalance.values().indexOf(settings.audioBalance())
         "playback_clock" ->
-            Settings.PlaybackClock.values().indexOf(settings.playbackClock())
+            SettingsTypes.PlaybackClock.values().indexOf(settings.playbackClock())
         "playback_completion" ->
-            Settings.CompletionAction.values().indexOf(settings.completionAction())
+            SettingsTypes.CompletionAction.values().indexOf(settings.completionAction())
         "video_load_timeout" ->
-            Settings.LoadTimeout.values().indexOf(settings.loadTimeout())
+            SettingsTypes.LoadTimeout.values().indexOf(settings.loadTimeout())
         "feed_history_capacity" ->
-            Settings.FeedHistoryCapacity.values().indexOf(settings.feedHistoryCapacity())
+            SettingsTypes.FeedHistoryCapacity.values().indexOf(settings.feedHistoryCapacity())
         "style_font" ->
             nearestIndex(LIVE_FONT_SCALES, settings.danmakuFontScale())
         "style_speed" ->
             nearestIndex(LIVE_SPEED_SCALES, settings.danmakuSpeedScale())
         // ---- 动态枚举行 ----
         "video_resolution" ->
-            Settings.VideoResolution.values().indexOf(settings.videoResolution())
+            SettingsTypes.VideoResolution.values().indexOf(settings.videoResolution())
         "live_video_resolution" ->
             LIVE_RESOLUTIONS.indexOf(settings.liveVideoResolution()).coerceAtLeast(0)
         "video_codec" ->
-            Settings.VideoCodec.values().indexOf(settings.videoCodec())
+            SettingsTypes.VideoCodec.values().indexOf(settings.videoCodec())
         "form_factor" ->
-            Settings.UiFormFactor.values().indexOf(settings.formFactor())
+            SettingsTypes.UiFormFactor.values().indexOf(settings.formFactor())
         "color_source" ->
-            Settings.ColorSource.values().indexOf(settings.colorSource())
+            SettingsTypes.ColorSource.values().indexOf(settings.colorSource())
         else -> null
     }
 
     fun writeEnumIndex(key: String, index: Int) {
         when (key) {
             "live_danmaku_style" ->
-                settings.setLiveDanmakuStyle(Settings.DanmakuStyle.values()[index])
+                settings.setLiveDanmakuStyle(SettingsTypes.DanmakuStyle.values()[index])
             "app_font_scale" ->
-                settings.setFontScalePreset(Settings.FontScale.values()[index])
+                settings.setFontScalePreset(SettingsTypes.FontScale.values()[index])
             "default_home" ->
-                settings.setDefaultHomeScreen(Settings.HomeScreen.values()[index])
+                settings.setDefaultHomeScreen(SettingsTypes.HomeScreen.values()[index])
             "client_identity_branch" ->
                 settings.setClientIdentityBranch(ClientIdentityBranch.values()[index])
             "theme_mode" ->
-                settings.setThemeMode(Settings.ThemeMode.values()[index])
+                settings.setThemeMode(SettingsTypes.ThemeMode.values()[index])
             "player_surface_type" ->
-                settings.setSurfaceType(Settings.SurfaceType.values()[index])
+                settings.setSurfaceType(SettingsTypes.SurfaceType.values()[index])
             "color_style" ->
-                settings.setColorStyle(Settings.ColorStyle.values()[index])
+                settings.setColorStyle(SettingsTypes.ColorStyle.values()[index])
             "color_contrast" ->
-                settings.setColorContrast(Settings.ColorContrast.values()[index])
+                settings.setColorContrast(SettingsTypes.ColorContrast.values()[index])
             "color_transition" ->
-                settings.setColorTransition(Settings.ColorTransition.values()[index])
+                settings.setColorTransition(SettingsTypes.ColorTransition.values()[index])
             "audio_balance" ->
-                settings.setAudioBalance(Settings.AudioBalance.values()[index])
+                settings.setAudioBalance(SettingsTypes.AudioBalance.values()[index])
             "playback_clock" ->
-                settings.setPlaybackClock(Settings.PlaybackClock.values()[index])
+                settings.setPlaybackClock(SettingsTypes.PlaybackClock.values()[index])
             "playback_completion" ->
-                settings.setCompletionAction(Settings.CompletionAction.values()[index])
+                settings.setCompletionAction(SettingsTypes.CompletionAction.values()[index])
             "video_load_timeout" ->
-                settings.setLoadTimeout(Settings.LoadTimeout.values()[index])
+                settings.setLoadTimeout(SettingsTypes.LoadTimeout.values()[index])
             "feed_history_capacity" ->
-                settings.setFeedHistoryCapacity(Settings.FeedHistoryCapacity.values()[index])
+                settings.setFeedHistoryCapacity(SettingsTypes.FeedHistoryCapacity.values()[index])
             "style_font" ->
                 settings.setDanmakuFontScale(LIVE_FONT_SCALES[index])
             "style_speed" ->
                 settings.setDanmakuSpeedScale(LIVE_SPEED_SCALES[index])
             // ---- 动态枚举行 ----
             "video_resolution" ->
-                settings.setVideoResolution(Settings.VideoResolution.values()[index])
+                settings.setVideoResolution(SettingsTypes.VideoResolution.values()[index])
             "live_video_resolution" ->
                 settings.setLiveVideoResolution(LIVE_RESOLUTIONS[index])
             "video_codec" ->
-                settings.setVideoCodec(Settings.VideoCodec.values()[index])
+                settings.setVideoCodec(SettingsTypes.VideoCodec.values()[index])
             "form_factor" ->
-                settings.setFormFactor(Settings.UiFormFactor.values()[index])
+                settings.setFormFactor(SettingsTypes.UiFormFactor.values()[index])
             "color_source" ->
-                settings.setColorSource(Settings.ColorSource.values()[index])
+                settings.setColorSource(SettingsTypes.ColorSource.values()[index])
         }
         syncAppearance(key)
     }
@@ -289,8 +290,8 @@ class SettingsBinder(private val settings: Settings) {
             listOf("自动", "最高画质", "高清 1080p", "标清 720p", "流畅 540p")
 
         /** 直播不支持「自动」（qm4 遍历时过滤 lq5.AUTO），可选 4 档。 */
-        private val LIVE_RESOLUTIONS = Settings.VideoResolution.values()
-            .filter { it != Settings.VideoResolution.AUTO }
+        private val LIVE_RESOLUTIONS = SettingsTypes.VideoResolution.values()
+            .filter { it != SettingsTypes.VideoResolution.AUTO }
         private val LIVE_RESOLUTION_LABELS =
             listOf("最高画质", "高挡位", "中挡位", "低挡位")
 

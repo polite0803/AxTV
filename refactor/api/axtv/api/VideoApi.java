@@ -39,10 +39,10 @@ public final class VideoApi {
                 .param("request_source", "0")
                 .param("support_dash", "1")
                 .param("support_h265", "1")
+                // 详情接口要求用户中心签名链（a_bogus + uifid + timestamp + x-secsdk-web-signature）。
+                // 实测：只带 a_bogus 会 403 Argus；补齐链后 200。ticket-guard 凭据为空时无需附加。
                 .commonParams()
-                .sign()
-                .uifidHeader()
-                .ticketGuardHeaders(), WorkDetailResponse.class);
+                .userCenterSignChain(), WorkDetailResponse.class);
     }
 
     /** 相关推荐。`/aweme/v1/web/aweme/related/` */
@@ -104,10 +104,10 @@ public final class VideoApi {
                 .param("count", String.valueOf(count))
                 .param("status", String.valueOf(status))
                 .param("category", "0")
+                .param("directory", "0")
+                // 原版 m8047j0 的 history/read：m8002r(..., 252)，只算 a_bogus。
                 .commonParams()
-                .sign()
-                .uifidHeader()
-                .userCenterSignChain(), UserWorksResponse.class);
+                .sign(), UserWorksResponse.class);
     }
 
     /**
@@ -135,11 +135,10 @@ public final class VideoApi {
         return api.callFor(ApiRequest.get(DouyinEndpoints.WATCH_LATER)
                 .params(DouyinEndpoints.WEB_BASE_PARAMS)
                 .param("offset", String.valueOf(offset))
-                .param("count", String.valueOf(count))
                 .param("operate_type", String.valueOf(operateType))
                 .param("list_type", "0")
+                // 原版 m8054n0：m8002r(..., 252)，只带 offset/list_type/operate_type + a_bogus。
                 .commonParams()
-                .sign()
-                .userCenterSignChain(), UserWorksResponse.class);
+                .sign(), UserWorksResponse.class);
     }
 }

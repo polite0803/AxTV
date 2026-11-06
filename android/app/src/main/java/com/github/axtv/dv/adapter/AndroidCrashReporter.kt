@@ -94,6 +94,14 @@ object AndroidCrashReporter {
         }
 
         /**
+         * 在处理完崩溃现场后调用，清除 ThreadLocal 引用，防止内存泄漏。
+         */
+        fun clearThreadLocals() {
+            crashingThread.remove()
+            crashingError.remove()
+        }
+
+        /**
          * 先回调系统默认 handler（保留崩溃对话框/系统上报/进程终结），再兜底 killProcess。
          * 任何一步都不允许影响后续兜底。
          */

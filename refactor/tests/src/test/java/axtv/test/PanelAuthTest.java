@@ -28,6 +28,18 @@ class PanelAuthTest {
     }
 
     @Test
+    void tokenExpiresAfterTokenValidPeriod() {
+        // 30 分钟有效期：构造一个 31 分钟前发行的 token，应判定为已过期
+        long issuedAt = System.currentTimeMillis() - (31L * 60L * 1000L);
+        PanelAuth expiredAuth = new PanelAuth("abc123", issuedAt);
+        assertTrue(expiredAuth.isExpired());
+
+        // 刚发出的 token 应未过期
+        PanelAuth freshAuth = new PanelAuth("abc123", System.currentTimeMillis());
+        assertFalse(freshAuth.isExpired());
+    }
+
+    @Test
     void routesRejectMissingTokenButAllowPreflight() {
         PanelRoutes routes = new PanelRoutes(
                 List.of(

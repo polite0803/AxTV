@@ -109,6 +109,10 @@ public final class LiveApi {
      *
      * <p>n11.m8027S：live 基础层 + room_id + 固定 scene=aweme_video_feed_pc + region=cn；
      * 原版此处不算 a_bogus（m8002r 的 z=false）。
+     *
+     * <p>实测（2026-11-06）：{@code room_id} 必须传列表里的数字 id（{@code id_str}），传 web_rid 会返回
+     * {@code status_code=30001 room doesn't exist}；响应 {@code data} 直接是房间对象。
+     * 旧的 {@code /webcast/room/web/enter/} 目前返回空响应体，只作为兜底。
      */
     public LiveRoomResponse roomInfoByScene(String roomId) throws ApiException {
         return api.callFor(liveRequest(DouyinEndpoints.LIVE_INFO_BY_SCENE)

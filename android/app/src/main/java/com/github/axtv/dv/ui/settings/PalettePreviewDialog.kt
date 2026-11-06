@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.tv.material3.Text
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.appearance.AxAppearance
@@ -83,29 +84,29 @@ internal fun PalettePreviewDialog(onDismiss: () -> Unit) {
     val closeRequester = remember { FocusRequester() }
 
     val modeLabel = when (settings?.themeMode()) {
-        Settings.ThemeMode.LIGHT -> "浅色"
-        Settings.ThemeMode.DARK -> "暗色"
+        SettingsTypes.ThemeMode.LIGHT -> "浅色"
+        SettingsTypes.ThemeMode.DARK -> "暗色"
         else -> "自动"
     }
     val sourceLabel = when (settings?.colorSource()) {
-        Settings.ColorSource.CONTENT -> "画面取色"
-        Settings.ColorSource.DEVICE -> "设备取色"
-        Settings.ColorSource.BRAND -> "品牌色"
+        SettingsTypes.ColorSource.CONTENT -> "画面取色"
+        SettingsTypes.ColorSource.DEVICE -> "设备取色"
+        SettingsTypes.ColorSource.BRAND -> "品牌色"
         null -> "—"
     }
     val styleLabel = when (settings?.colorStyle()) {
-        Settings.ColorStyle.VIBRANT -> "鲜艳"
-        Settings.ColorStyle.SOFT -> "柔和"
-        Settings.ColorStyle.FIDELITY -> "还原"
+        SettingsTypes.ColorStyle.VIBRANT -> "鲜艳"
+        SettingsTypes.ColorStyle.SOFT -> "柔和"
+        SettingsTypes.ColorStyle.FIDELITY -> "还原"
         else -> "按场景"
     }
     val contrastLabel = when (settings?.colorContrast()) {
-        Settings.ColorContrast.MEDIUM -> "中等"
-        Settings.ColorContrast.HIGH -> "高"
+        SettingsTypes.ColorContrast.MEDIUM -> "中等"
+        SettingsTypes.ColorContrast.HIGH -> "高"
         else -> "标准"
     }
     val transitionLabel =
-        if (settings?.colorTransition() == Settings.ColorTransition.OFF) "关闭" else "自动"
+        if (settings?.colorTransition() == SettingsTypes.ColorTransition.OFF) "关闭" else "自动"
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -125,7 +126,7 @@ internal fun PalettePreviewDialog(onDismiss: () -> Unit) {
             infoLine(
                 "种子实际来自",
                 AxAppearance.seedSourceLabel
-                    ?: if (settings?.colorSource() == Settings.ColorSource.BRAND) "品牌色（内置调色板）" else "等待首次取色…"
+                    ?: if (settings?.colorSource() == SettingsTypes.ColorSource.BRAND) "品牌色（内置调色板）" else "等待首次取色…"
             )
             infoLine("主题模式", "$modeLabel（当前渲染：${if (palette.dark) "暗色" else "浅色"}）")
             infoLine("色彩风格", styleLabel)

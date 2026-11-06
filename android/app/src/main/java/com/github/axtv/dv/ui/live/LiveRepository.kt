@@ -27,6 +27,7 @@ import axtv.model.LiveFeedResponseHome
 import axtv.model.LiveRoom
 import axtv.model.LiveRoomUtils
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import axtv.ui.DetailPageSpec
 import com.github.axtv.dv.adapter.AppRuntime
 import kotlinx.coroutines.CancellationException
@@ -104,31 +105,38 @@ internal object LiveRepository {
                     IllegalStateException("接口组件尚未就绪，请重启应用后重试"),
                 )
             val liveApi = LiveApi(api)
-            if (webRid.isNotBlank()) {
-                val fromEnter = try {
-                    liveApi.enterRoom(webRid).firstRoom()
+            // 实测（2026-11-06）：/webcast/room/info_by_scene/ 是当前唯一稳定的取房间接口，
+            // 传数字 id（列表里的 id_str）返回 data=房间对象；旧的 enter 接口现在返回空响应体。
+            // 所以顺序反过来：先 info_by_scene，进房接口只做兜底。
+            val sceneIds = listOf(roomId.trim(), webRid.trim()).filter { it.isNotEmpty() }.distinct()
+            for (id in sceneIds) {
+                try {
+                    val room = liveApi.roomInfoByScene(id).room()
+                    if (room != null) {
+                        return@withContext Result.success(room)
+                    }
                 } catch (cancel: CancellationException) {
                     throw cancel
                 } catch (t: Throwable) {
-                    failure = t
-                    null
-                }
-                if (fromEnter != null) {
-                    return@withContext Result.success(fromEnter)
+                    if (failure == null) failure = t
                 }
             }
-            val fromScene = try {
-                liveApi.roomInfoByScene(roomId).data()?.room()
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (t: Throwable) {
-                if (failure == null) failure = t
-                null
+            if (webRid.isNotBlank()) {
+                try {
+                    val fromEnter = liveApi.enterRoom(webRid).firstRoom()
+                    if (fromEnter != null) {
+                        return@withContext Result.success(fromEnter)
+                    }
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (t: Throwable) {
+                    if (failure == null) failure = t
+                }
             }
-            if (fromScene == null && failure != null) {
+            if (failure != null) {
                 Result.failure(failure)
             } else {
-                Result.success(fromScene)
+                Result.success(null)
             }
         } catch (cancel: CancellationException) {
             throw cancel
@@ -143,19 +151,20 @@ private const val PARTITION_TYPE = 1
 
 internal fun LiveFeedResponse.toCards(): List<LiveCardUi> =
     data()?.data().orEmpty()
-        .mapNotNull { it?.room() }
-        .distinctBy { DetailPageSpec.resolvedRoomId(it) }
-        .mapIndexed { index, room -> room.toCard(index) }
+        // web_rid 在外层条目上，房间对象自身通常不带；丢了它就会拿数字 id 去进房（服务端判参数错误）。
+        .mapNotNull { item -> item?.room()?.let { room -> item.webRid() to room } }
+        .distinctBy { DetailPageSpec.resolvedRoomId(it.second) }
+        .mapIndexed { index, pair -> pair.second.toCard(index, pair.first) }
 
 internal fun LiveFeedResponseHome.toCards(): List<LiveCardUi> =
     data().orEmpty()
-        .mapNotNull { it?.data() }
-        .distinctBy { DetailPageSpec.resolvedRoomId(it) }
-        .mapIndexed { index, room -> room.toCard(index) }
+        .mapNotNull { item -> item?.data()?.let { room -> item.webRid() to room } }
+        .distinctBy { DetailPageSpec.resolvedRoomId(it.second) }
+        .mapIndexed { index, pair -> pair.second.toCard(index, pair.first) }
 
-private fun LiveRoom.toCard(index: Int): LiveCardUi = LiveCardUi(
+private fun LiveRoom.toCard(index: Int, webRidFromList: String = ""): LiveCardUi = LiveCardUi(
     roomId = DetailPageSpec.resolvedRoomId(this),
-    webRid = effectiveWebRid(),
+    webRid = webRidFromList.ifBlank { effectiveWebRid() },
     title = DetailPageSpec.programName(title(), false) ?: DetailPageSpec.TEXT_NO_PROGRAM,
     ownerName = DetailPageSpec.ownerName(owner().nickname(), index),
     avatarUrl = owner().bestAvatar().firstUrl(),
@@ -197,9 +206,9 @@ internal fun LiveRoom.streamCandidates(): List<String> {
  * 流畅 540p 在核心层枚举里叫 P540。settings 为 null 时保持历史的 AUTO 行为。
  */
 private fun Settings?.liveQualityPreference(): LiveQualityPreference = when (this?.liveVideoResolution()) {
-    Settings.VideoResolution.P1080 -> LiveQualityPreference.P1080
-    Settings.VideoResolution.P720 -> LiveQualityPreference.P720
-    Settings.VideoResolution.P480 -> LiveQualityPreference.P540
+    SettingsTypes.VideoResolution.P1080 -> LiveQualityPreference.P1080
+    SettingsTypes.VideoResolution.P720 -> LiveQualityPreference.P720
+    SettingsTypes.VideoResolution.P480 -> LiveQualityPreference.P540
     else -> LiveQualityPreference.HIGHEST
 }
 

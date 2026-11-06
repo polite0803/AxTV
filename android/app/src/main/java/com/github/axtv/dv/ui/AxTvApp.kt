@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import axtv.settings.Settings
+import axtv.settings.SettingsTypes
 import com.github.axtv.dv.adapter.AppRuntime
 import com.github.axtv.dv.ui.collection.MixDetailScreen
 import com.github.axtv.dv.ui.collection.MixListScreen
@@ -81,16 +82,16 @@ private data class TopTab(val label: String, val route: String)
  * 电视大多忽略竖屏请求，选「手机竖屏」在 TV 上表现为「仍是横屏 + 顶栏可滚」，这是平台限制。
  * 本应用清单里 leanback 不是 required、MainActivity 方向是 fullSensor，所以这一档不是空设置。
  */
-private fun effectiveFormFactor(context: android.content.Context): Settings.UiFormFactor {
-    val stored = AppRuntime.settings?.formFactor() ?: return Settings.UiFormFactor.TV_LANDSCAPE
-    if (stored != Settings.UiFormFactor.AUTO) return stored
+private fun effectiveFormFactor(context: android.content.Context): SettingsTypes.UiFormFactor {
+    val stored = AppRuntime.settings?.formFactor() ?: return SettingsTypes.UiFormFactor.TV_LANDSCAPE
+    if (stored != SettingsTypes.UiFormFactor.AUTO) return stored
     val configuration = context.resources.configuration
     val isTelevision = (configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     return when {
-        isTelevision -> Settings.UiFormFactor.TV_LANDSCAPE
-        configuration.smallestScreenWidthDp < 600 -> Settings.UiFormFactor.PHONE_PORTRAIT
-        else -> Settings.UiFormFactor.TABLET_LANDSCAPE
+        isTelevision -> SettingsTypes.UiFormFactor.TV_LANDSCAPE
+        configuration.smallestScreenWidthDp < 600 -> SettingsTypes.UiFormFactor.PHONE_PORTRAIT
+        else -> SettingsTypes.UiFormFactor.TABLET_LANDSCAPE
     }
 }
 
@@ -131,8 +132,8 @@ private val RouteStackSaver = listSaver<SnapshotStateList<String>, String>(
  * 设置页该档文案已标注这一点，避免出现"选了却静默变首页"的歧义。
  */
 private fun defaultHomeRoute(): String = when (AppRuntime.settings?.defaultHomeScreen()) {
-    Settings.HomeScreen.FEATURED -> NavRoutes.FEATURED
-    Settings.HomeScreen.FOLLOWING -> NavRoutes.LIVE
+    SettingsTypes.HomeScreen.FEATURED -> NavRoutes.FEATURED
+    SettingsTypes.HomeScreen.FOLLOWING -> NavRoutes.LIVE
     else -> NavRoutes.HOME
 }
 
@@ -199,11 +200,13 @@ fun AxTvApp(
     val currentRoute = backStack.lastOrNull() ?: NavRoutes.HOME
     val destination = remember(currentRoute) { NavRoutes.parse(currentRoute) }
 
-    // 播放页要真正全屏：顶部 tab 栏不渲染（画面被顶栏挤占就不满屏）；直播页保留顶栏（侧栏布局另算）。
+    // 播放页与直播间要真正全屏：顶部 tab 栏不渲染（画面被顶栏挤占就不满屏）。
+    // 直播间在 0.2.x 重设计成满屏播放窗口（信息/弹幕都是覆盖层），与点播播放页同一套沉浸语义。
     val immersive = destination is NavDestination.Player ||
         destination is NavDestination.PlayerAweme ||
         destination is NavDestination.FeaturedPlay ||
-        destination is NavDestination.MixPlay
+        destination is NavDestination.MixPlay ||
+        destination is NavDestination.LiveRoom
 
     AxTvTheme {
         BackHandler(enabled = backStack.size > 1) { goBack() }
@@ -212,7 +215,7 @@ fun AxTvApp(
         // 『反向导航』只在根节点接管一次 DPAD 上/下；开关值改为每次按键现读（见 ReverseNavigation），
         // 这里只传「当前页面是否参与」：播放页的上下键是上一条/下一条（PlayerSession.handleRemoteKey），不能反转。
         val shellContext = LocalContext.current
-        val storedFactor = AppRuntime.settings?.formFactor() ?: Settings.UiFormFactor.AUTO
+        val storedFactor = AppRuntime.settings?.formFactor() ?: SettingsTypes.UiFormFactor.AUTO
         val formFactor = effectiveFormFactor(shellContext)
         // 『UI 形态』→ 屏幕方向：只看用户显式选的那一档。
         // AUTO 必须保持清单里的 fullSensor，否则在手机上会把「跟随重力」锁死成单一方向（回归）。
@@ -220,19 +223,19 @@ fun AxTvApp(
             val activity = shellContext.findActivity() ?: return@LaunchedEffect
             runCatching {
                 activity.requestedOrientation = when (storedFactor) {
-                    Settings.UiFormFactor.PHONE_PORTRAIT ->
+                    SettingsTypes.UiFormFactor.PHONE_PORTRAIT ->
                         ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
 
-                    Settings.UiFormFactor.TABLET_LANDSCAPE,
-                    Settings.UiFormFactor.TV_LANDSCAPE ->
+                    SettingsTypes.UiFormFactor.TABLET_LANDSCAPE,
+                    SettingsTypes.UiFormFactor.TV_LANDSCAPE ->
                         ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
 
-                    Settings.UiFormFactor.AUTO ->
+                    SettingsTypes.UiFormFactor.AUTO ->
                         ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
                 }
             }
         }
-        val tabletWide = formFactor == Settings.UiFormFactor.TABLET_LANDSCAPE && !immersive
+        val tabletWide = formFactor == SettingsTypes.UiFormFactor.TABLET_LANDSCAPE && !immersive
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -243,7 +246,7 @@ fun AxTvApp(
             if (!immersive) {
                 TopTabBar(
                     current = destination,
-                    compact = formFactor == Settings.UiFormFactor.PHONE_PORTRAIT,
+                    compact = formFactor == SettingsTypes.UiFormFactor.PHONE_PORTRAIT,
                     onSelect = { navigateTab(it.route) },
                 )
             }
