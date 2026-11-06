@@ -24,19 +24,29 @@ public final class BuiltInSources {
     private BuiltInSources() {
     }
 
-    /** 源 ID 到 M3U URL 的映射（2026-11-07 本机实测：Accept-only 可拉取、可解析，且抽样流可连）。 */
-    public static final Map<String, String> URLS = Map.of(
-        // vbskycn 央视/卫视（IPv4）：377 条，组含 央视频道/卫视频道/地方/电影；抽检 20 条 19 条可连
-        "vbskycn", "https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u",
-        // TianmuTNT：554 条，17 CCTV/53 卫视；抽检 10 条 10 条可连
-        "tianmutv", "https://raw.githubusercontent.com/TianmuTNT/iptv/main/iptv.m3u",
-        // suxuang/myIPTV（IPv4）：1273 条，159 CCTV/233 卫视；抽检 30 条约 17 条可连
-        "suxuang", "https://raw.githubusercontent.com/suxuang/myIPTV/main/ipv4.m3u",
-        // iptv-org 中国频道（154 条，36 CCTV）：抽检 10 条 7 条可连（CDN 托管，可达性好）
-        "iptv-org-cn", "https://iptv-org.github.io/iptv/countries/cn.m3u",
-        // iptv-org 中国全量（516 条，含海外/失效，作广度兜底）：抽检 10 条 3 条可连
-        "iptv-org-cn-all", "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u"
-    );
+    /**
+     * 源 ID 到 M3U URL 的映射（2026-11-07 本机实测：Accept-only 可拉取、可解析，且抽样流可连）。
+     *
+     * <p><b>顺序即候选优先级</b>：PlaylistSource 按此迭代顺序合并，同名频道的候选地址也按此顺序排列，
+     * 播放时按序回退。实测 vbskycn/Tianmu 的央视/卫视流多可连，suxuang 的央视主机已 404、
+     * iptv-org 多为境外主机，故把稳的排前、易失效的排后。用 LinkedHashMap 而非 Map.of 保证顺序。
+     */
+    public static final Map<String, String> URLS;
+
+    static {
+        Map<String, String> m = new LinkedHashMap<>();
+        // vbskycn 央视/卫视（IPv4）：377 条；抽检 20 条 19 条可连
+        m.put("vbskycn", "https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u");
+        // TianmuTNT：554 条；抽检 10 条 10 条可连
+        m.put("tianmutv", "https://raw.githubusercontent.com/TianmuTNT/iptv/main/iptv.m3u");
+        // iptv-org 中国频道（154 条，36 CCTV）：抽检 10 条 7 条可连（CDN 托管）
+        m.put("iptv-org-cn", "https://iptv-org.github.io/iptv/countries/cn.m3u");
+        // iptv-org 中国全量（516 条，含海外/失效，广度兜底）：抽检 10 条 3 条可连
+        m.put("iptv-org-cn-all", "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u");
+        // suxuang/myIPTV（1273 条，地方台多）：央视主机 101.35.240.114:88 已 404，排最后
+        m.put("suxuang", "https://raw.githubusercontent.com/suxuang/myIPTV/main/ipv4.m3u");
+        URLS = Collections.unmodifiableMap(m);
+    }
 
     /** 源 ID 对应的显示名称。 */
     public static final Map<String, String> DISPLAY_NAMES = Map.of(
