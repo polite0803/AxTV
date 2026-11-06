@@ -117,7 +117,7 @@ fun IptvPlayerScreen(
         }
         playFailure = null
         candidateIndex = 0
-        controller.play(candidates.first())
+        controller.playIptv(candidates.first())
     }
 
     // 当前地址失败 → 按顺序切下一个候选；候选耗尽才落错误卡片。
@@ -126,9 +126,9 @@ fun IptvPlayerScreen(
         val next = candidateIndex + 1
         if (next < candidates.size) {
             candidateIndex = next
-            controller.play(candidates[next])
+            controller.playIptv(candidates[next])
         } else {
-            playFailure = describePlaybackError(error)
+            playFailure = "${describePlaybackError(error)} ［码 ${error.errorCode()}］"
         }
     }
 

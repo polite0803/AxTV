@@ -14,6 +14,7 @@ import android.view.KeyEvent
 import android.view.Surface
 import android.view.TextureView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -91,6 +92,20 @@ internal object Media3Resources {
             .setCache(cache(context))
             .setUpstreamDataSourceFactory(plainFactory())
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+
+    /**
+     * 电视台 IPTV 用数据源：中性请求头（不带抖音 Referer），避免外部直播源的反盗链误拒。
+     * 抖音点播/直播仍用 [plainFactory]。
+     */
+    fun iptvFactory(): DataSource.Factory =
+        OkHttpDataSource.Factory(httpClient)
+            .setDefaultRequestProperties(
+                mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept" to "*/*",
+                ),
+            )
 
     fun mediaSourceFactory(context: Context, useCache: Boolean): DefaultMediaSourceFactory =
         DefaultMediaSourceFactory(if (useCache) cachedFactory(context) else plainFactory())
@@ -232,6 +247,22 @@ class Media3Engine(context: Context) : MediaEngine, WidgetPlayerControls {
     override fun setMediaItem(uri: String, useCache: Boolean) {
         val source = Media3Resources.mediaSourceFactory(appContext, useCache)
             .createMediaSource(MediaItem.fromUri(uri))
+        player.setMediaSource(source)
+        publishPlayback()
+    }
+
+    /**
+     * 电视台 HLS：强制 HLS 媒体类型（部分直播源 URL 不以 .m3u8 结尾，靠扩展名判定会落到
+     * ProgressiveMediaSource 而报 Source error），并使用中性请求头（不带抖音 Referer）。
+     */
+    fun setHlsMediaItem(uri: String) {
+        val source = DefaultMediaSourceFactory(Media3Resources.iptvFactory())
+            .createMediaSource(
+                MediaItem.Builder()
+                    .setUri(uri)
+                    .setMimeType(MimeTypes.APPLICATION_M3U8)
+                    .build(),
+            )
         player.setMediaSource(source)
         publishPlayback()
     }

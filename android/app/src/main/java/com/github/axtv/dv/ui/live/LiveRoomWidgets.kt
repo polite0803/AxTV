@@ -469,6 +469,16 @@ internal class LivePlaybackController(context: Context) {
         engine.play()
     }
 
+    /** 电视台 HLS：强制 HLS 媒体类型 + 中性请求头（不带抖音 Referer）。 */
+    fun playIptv(url: String) {
+        playerError = null
+        firstFrame = false
+        engine.stopAndClear()
+        engine.setHlsMediaItem(url)
+        engine.prepare()
+        engine.play()
+    }
+
     /** 音量（0..1）。电视台播放页用 ←/→ 调节；直播间沿用系统音量，不受影响。 */
     private var volumeLevel = 1f
 
