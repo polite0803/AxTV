@@ -13,6 +13,8 @@ package com.github.axtv.dv.ui.iptv
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -64,7 +66,7 @@ fun IptvListScreen(
     val headerRequester = remember { FocusRequester() }
     val refreshRequester = remember { FocusRequester() }
     val cardRequesters = remember { mutableMapOf<String, FocusRequester>() }
-    var focusRestoredFor by remember { mutableIntStateOf(-1) }
+    var selectedGroup by remember { mutableStateOf<String?>(null) }
 
     BackHandler(onBack = onBack)
 
@@ -81,8 +83,8 @@ fun IptvListScreen(
         loading = false
     }
 
-    // 有频道时把初始焦点落到第一张卡片；无频道时交给顶部按钮，避免遥控器无处可去、整页不响应。
-    LaunchedEffect(loading, catalog) {
+    // 有频道时把初始/切组后的焦点落到目标组第一张卡片；无频道时交给顶部按钮，避免遥控器无处可去。
+    LaunchedEffect(loading, catalog, selectedGroup) {
         if (loading || catalog == null) return@LaunchedEffect
         val c = catalog!!
         if (c.totalChannels == 0) {
@@ -90,13 +92,15 @@ fun IptvListScreen(
             runCatching { headerRequester.requestFocus() }
             return@LaunchedEffect
         }
-        if (focusRestoredFor == reloadToken) return@LaunchedEffect
         withFrameNanos { }
         withFrameNanos { }
-        val firstGroup = c.groups.firstOrNull { it.channels.isNotEmpty() } ?: return@LaunchedEffect
-        val first = firstGroup.channels.first()
-        runCatching { cardRequesters["${firstGroup.title}|${first.id}"]?.requestFocus() }
-        focusRestoredFor = reloadToken
+        val targetGroup = if (selectedGroup == null) {
+            c.groups.firstOrNull { it.channels.isNotEmpty() }
+        } else {
+            c.groups.firstOrNull { it.title == selectedGroup && it.channels.isNotEmpty() }
+        } ?: return@LaunchedEffect
+        val first = targetGroup.channels.first()
+        runCatching { cardRequesters["${targetGroup.title}|${first.id}"]?.requestFocus() }
     }
 
     Column(
@@ -132,9 +136,16 @@ fun IptvListScreen(
         }
         Spacer(Modifier.height(12.dp))
 
-        if (!loading && catalog != null) {
+        if (!loading && catalog != null && catalog!!.totalChannels > 0) {
             IptvSourceHealthRow(catalog!!.sources)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
+            // 频道分组选择：遥控器可直接跳到 央视频道 / 卫视频道 / 地方频道 等。
+            IptvGroupChips(
+                groups = catalog!!.groups,
+                selected = selectedGroup,
+                onSelect = { selectedGroup = it },
+            )
+            Spacer(Modifier.height(10.dp))
         }
 
         when {
@@ -161,17 +172,74 @@ fun IptvListScreen(
                 }
             }
 
-            else -> IptvGroupList(
-                groups = catalog!!.groups,
-                cardRequesters = cardRequesters,
-                onPlay = onPlay,
-                modifier = Modifier.weight(1f),
-            )
+            else -> {
+                val all = catalog!!.groups
+                val shown = if (selectedGroup == null) all else all.filter { it.title == selectedGroup }
+                IptvGroupList(
+                    groups = shown,
+                    cardRequesters = cardRequesters,
+                    onPlay = onPlay,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 
     if (showQr) {
         LiveSourceQrDialog(onDismiss = { showQr = false })
+    }
+}
+
+@Composable
+private fun IptvGroupChips(
+    groups: List<IptvGroup>,
+    selected: String?,
+    onSelect: (String?) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        IptvChip(label = "全部 ${groups.sumOf { it.channels.size }}", selected = selected == null) {
+            onSelect(null)
+        }
+        groups.forEach { g ->
+            IptvChip(label = "${g.title} ${g.channels.size}", selected = selected == g.title) {
+                onSelect(g.title)
+            }
+        }
+    }
+}
+
+@Composable
+private fun IptvChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        modifier = Modifier
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                when {
+                    selected -> AxTvColors.Focus.copy(alpha = 0.30f)
+                    focused -> AxTvColors.SurfaceHigh
+                    else -> AxTvColors.Surface
+                },
+                RoundedCornerShape(10.dp),
+            )
+            .focusRing(focused, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = label,
+            color = AxTvColors.TextPrimary,
+            style = TextStyle(
+                fontSize = 13.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            ),
+        )
     }
 }
 
