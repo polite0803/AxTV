@@ -285,9 +285,16 @@ class AudioBalanceRenderersFactory(context: Context) : DefaultRenderersFactory(c
         context: Context,
         enableFloatOutput: Boolean,
         enableAudioTrackPlaybackParams: Boolean,
-    ): AudioSink = DefaultAudioSink.Builder(context)
-        .setEnableFloatOutput(enableFloatOutput)
-        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-        .setAudioProcessors(arrayOf(AudioBalanceProcessor()))
-        .build()
+    ): AudioSink {
+        val builder = DefaultAudioSink.Builder(context)
+            .setEnableFloatOutput(enableFloatOutput)
+            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+        // 「音量均衡」关闭（默认）时不覆盖 Media3 默认音频处理链（含声道映射/裁剪等），
+        // 保证直播/点播音频最大兼容；仅开启时才挂自定义响度处理器。
+        val balance = AppRuntime.settings?.audioBalance() ?: SettingsTypes.AudioBalance.OFF
+        if (balance != SettingsTypes.AudioBalance.OFF) {
+            builder.setAudioProcessors(arrayOf(AudioBalanceProcessor()))
+        }
+        return builder.build()
+    }
 }

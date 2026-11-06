@@ -249,9 +249,11 @@ fun IptvPlayerScreen(
                 name = channelName,
                 message = playFailure.orEmpty(),
                 canRetry = candidates.isNotEmpty(),
+                canPrev = ordered.size > 1,
                 canNext = ordered.size > 1,
                 retryRequester = retryRequester,
                 onRetry = { reloadToken += 1 },
+                onPrevChannel = { switchChannel(-1) },
                 onNextChannel = { switchChannel(+1) },
             )
         }
@@ -301,9 +303,11 @@ private fun IptvPlaybackErrorCard(
     name: String,
     message: String,
     canRetry: Boolean,
+    canPrev: Boolean,
     canNext: Boolean,
     retryRequester: FocusRequester,
     onRetry: () -> Unit,
+    onPrevChannel: () -> Unit,
     onNextChannel: () -> Unit,
 ) {
     Box(
@@ -338,10 +342,17 @@ private fun IptvPlaybackErrorCard(
                 if (canRetry) {
                     IptvErrorAction(label = "重试", requester = retryRequester, onClick = onRetry)
                 }
+                if (canPrev) {
+                    IptvErrorAction(
+                        label = "上一频道",
+                        requester = if (canRetry) null else retryRequester,
+                        onClick = onPrevChannel,
+                    )
+                }
                 if (canNext) {
                     IptvErrorAction(
                         label = "下一频道",
-                        requester = if (canRetry) null else retryRequester,
+                        requester = if (canRetry || canPrev) null else retryRequester,
                         onClick = onNextChannel,
                     )
                 }
