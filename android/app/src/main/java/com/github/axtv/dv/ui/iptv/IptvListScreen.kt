@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -49,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import com.github.axtv.dv.ui.AxTvColors
+import com.github.axtv.dv.ui.FocusMemory
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.settings.LiveSourceQrDialog
 
@@ -66,7 +68,8 @@ fun IptvListScreen(
     val headerRequester = remember { FocusRequester() }
     val refreshRequester = remember { FocusRequester() }
     val cardRequesters = remember { mutableMapOf<String, FocusRequester>() }
-    var selectedGroup by remember { mutableStateOf<String?>(null) }
+    // 分组选择跨「播放返回」保留（SaveableStateHolder 按路由保存屏内状态）。
+    var selectedGroup by rememberSaveable { mutableStateOf<String?>(null) }
 
     BackHandler(onBack = onBack)
 
@@ -99,8 +102,11 @@ fun IptvListScreen(
         } else {
             c.groups.firstOrNull { it.title == selectedGroup && it.channels.isNotEmpty() }
         } ?: return@LaunchedEffect
-        val first = targetGroup.channels.first()
-        runCatching { cardRequesters["${targetGroup.title}|${first.id}"]?.requestFocus() }
+        // 优先回到上次聚焦的频道（播放返回不丢位置），不在本组才落第一张。
+        val rememberedId = FocusMemory.last("iptv")
+        val target = targetGroup.channels.firstOrNull { it.id == rememberedId }
+            ?: targetGroup.channels.first()
+        runCatching { cardRequesters["${targetGroup.title}|${target.id}"]?.requestFocus() }
     }
 
     Column(
@@ -309,7 +315,10 @@ private fun IptvChannelCard(
         modifier = Modifier
             .focusRequester(requester)
             .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) FocusMemory.remember("iptv", channel.id)
+            }
             .clip(RoundedCornerShape(12.dp))
             .background(
                 if (focused) AxTvColors.Focus.copy(alpha = 0.30f) else AxTvColors.Surface,

@@ -192,6 +192,7 @@ private fun SearchPageContent(
     val hotRetryRequester = remember { FocusRequester() }
     val suggestRetryRequester = remember { FocusRequester() }
     val contentActionRequester = remember { FocusRequester() }
+    val tabChipRequester = remember { FocusRequester() }
 
     var searchFocused by remember { mutableStateOf(false) }
     var fieldValue by remember { mutableStateOf(TextFieldValue("")) }
@@ -255,6 +256,16 @@ private fun SearchPageContent(
         if (!autoSearch) {
             withFrameNanos { }
             runCatching { searchRequester.requestFocus() }
+        }
+    }
+
+    // 结果页加载期间把焦点留在页内分栏 chip 上：默认焦点会落到顶栏「首页」，
+    // 此时按确认直接跳出搜索。数据落地后 focusSignal 会把焦点交给结果卡片。
+    LaunchedEffect(state.showResults, autoSearch) {
+        if (autoSearch && state.showResults) {
+            withFrameNanos { }
+            withFrameNanos { }
+            runCatching { tabChipRequester.requestFocus() }
         }
     }
 
@@ -384,6 +395,7 @@ private fun SearchPageContent(
                     TabChip(
                         label = target.label,
                         selected = state.tab == target,
+                        modifier = if (state.tab == target) Modifier.focusRequester(tabChipRequester) else Modifier,
                         onClick = { state.selectTab(target) },
                     )
                 }

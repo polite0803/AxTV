@@ -27,7 +27,7 @@ public final class BuiltInSources {
     /**
      * 源 ID 到 M3U URL 的映射（2026-11-07 本机实测：Accept-only 可拉取、可解析，且抽样流可连）。
      *
-     * <p><b>顺序即候选优先级</b>：PlaylistSource 按此迭代顺序合并，同名频道的候选地址也按此顺序排列，
+     * <p><b>顺序即候选优先级</b>：{@link ChannelCatalog.ResolvedSource} 按此迭代顺序合并，同名频道的候选地址也按此顺序排列，
      * 播放时按序回退。实测 vbskycn/Tianmu 的央视/卫视流多可连，suxuang 的央视主机已 404、
      * iptv-org 多为境外主机，故把稳的排前、易失效的排后。用 LinkedHashMap 而非 Map.of 保证顺序。
      */

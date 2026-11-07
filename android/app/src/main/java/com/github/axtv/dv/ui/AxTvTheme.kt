@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -102,11 +103,20 @@ fun AxTvTheme(content: @Composable () -> Unit) {
 private fun rememberTarget(version: Int, seed: Int, uiMode: Int): AxPalette =
     remember(version, seed, uiMode) { AxAppearance.targetPalette(uiMode) }
 
-/** 统一的「自绘焦点框」：TV 端不用 Leanback 的焦点盒，由 Compose 自绘。 */
+/**
+ * 统一的「自绘焦点框」：TV 端不用 Leanback 的焦点盒，由 Compose 自绘。
+ * 聚焦 = 整块 Focus 底色 + 3dp 描边（电视观看距离下细描边 alone 看不清，
+ * 底色铺在调用方 background 之上、内容之下，文字/行类控件整块发亮）。
+ * 调用方须把本修饰符放在自己的 background 之后，否则底色会被盖住。
+ */
 internal fun Modifier.focusRing(focused: Boolean, shape: Shape = RoundedCornerShape(12.dp)): Modifier =
-    border(
-        // 3dp：电视观看距离下 2dp 的高对比描边仍然偏细。
-        width = if (focused) 3.dp else 1.dp,
-        color = if (focused) AxTvColors.Focus else AxTvColors.Divider,
-        shape = shape,
-    )
+    this
+        .background(
+            color = if (focused) AxTvColors.Focus.copy(alpha = 0.16f) else Color.Transparent,
+            shape = shape,
+        )
+        .border(
+            width = if (focused) 3.dp else 1.dp,
+            color = if (focused) AxTvColors.Focus else AxTvColors.Divider,
+            shape = shape,
+        )

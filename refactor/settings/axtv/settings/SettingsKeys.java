@@ -129,6 +129,10 @@ public final class SettingsKeys {
     public static final String IPTV_LAST_CHANNEL = "iptv_last_channel";
     /** 加载超时（秒），取值对应 videoLoadTimeoutSeconds 的同一档或更小。 */
     public static final String IPTV_SOURCE_LOAD_TIMEOUT_SECONDS = "iptv_source_load_timeout_seconds";
+    /** 用户手动修正的频道分组（JSON 对象：channelId → group），跨目录刷新保留。 */
+    public static final String IPTV_GROUP_OVERRIDES = "iptv_group_overrides";
+    /** 是否隐藏确证死亡的频道（默认 true；关闭后「已隐藏」条目恢复显示）。 */
+    public static final String IPTV_HIDE_DEAD = "iptv_hide_dead";
 
     // ─────────────── remote_config ───────────────
     public static final String LICENSE_AGREED = "license_agreed";

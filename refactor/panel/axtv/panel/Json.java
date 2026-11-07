@@ -65,6 +65,42 @@ public final class Json {
         return value != null && Boolean.parseBoolean(String.valueOf(value));
     }
 
+    /** 取整数字段；缺失/null/非数值一律返回 {@code fallback}（解析器把整数读成 Long，小数读成 Double）。 */
+    public static long optLong(Map<String, Object> object, String key, long fallback) {
+        Object value = object.get(key);
+        if (value instanceof Number n) {
+            return n.longValue();
+        }
+        if (value instanceof String s) {
+            try {
+                return Long.parseLong(s.trim());
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
+        }
+        return fallback;
+    }
+
+    /** 取数组字段；缺失/null/非数组一律返回空表（不抛异常，损坏快照由调用方按 schema 判定）。 */
+    @SuppressWarnings("unchecked")
+    public static List<Object> optList(Map<String, Object> object, String key) {
+        Object value = object.get(key);
+        if (value instanceof List<?> list) {
+            return (List<Object>) list;
+        }
+        return List.of();
+    }
+
+    /** 取对象字段；缺失/null/非对象一律返回空 map。 */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> optObject(Map<String, Object> object, String key) {
+        Object value = object.get(key);
+        if (value instanceof Map<?, ?> map) {
+            return (Map<String, Object>) map;
+        }
+        return Map.of();
+    }
+
     /** 把 Java 值序列化成 JSON 文本。 */
     public static String write(Object value) {
         StringBuilder out = new StringBuilder(64);

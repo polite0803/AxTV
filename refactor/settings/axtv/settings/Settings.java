@@ -651,6 +651,24 @@ public final class Settings {
         }
     }
 
+    /** 用户手动修正的分组（JSON 对象文本，channelId → group）。空串视作无修正。 */
+    public String iptvGroupOverrides() {
+        return store.getString(SettingsKeys.IPTV_GROUP_OVERRIDES, "");
+    }
+
+    public void setIptvGroupOverrides(String json) {
+        store.putString(SettingsKeys.IPTV_GROUP_OVERRIDES, json);
+    }
+
+    /** 是否隐藏确证死亡的频道。默认隐藏。 */
+    public boolean iptvHideDead() {
+        return store.getBoolean(SettingsKeys.IPTV_HIDE_DEAD, true);
+    }
+
+    public void setIptvHideDead(boolean hide) {
+        store.putBoolean(SettingsKeys.IPTV_HIDE_DEAD, hide);
+    }
+
     /** 渲染面类型（默认 surface_view）。 */
     public SurfaceType surfaceType() {
         SurfaceType stored = SurfaceType.parse(store.getString(SettingsKeys.PLAYER_SURFACE_TYPE, "surface_view"));

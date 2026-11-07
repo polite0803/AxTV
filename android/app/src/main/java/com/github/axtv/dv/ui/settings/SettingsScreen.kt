@@ -148,10 +148,15 @@ private data class SelectRow(
 /** 非控件绘制：按当前主题模式 / 色彩风格渲染的小预览卡。 */
 private data class ThemePreviewRow(override val key: String = THEME_PREVIEW_KEY) : SettingsRow
 
-private val LIVE_DEPENDENT_PANEL_KEYS = setOf(
+// 弹幕样式面板的可见性按消费点定：透明度/密度/间距/字号/速度/屏蔽词同时被
+// 点播弹幕（DanmakuInjection）与直播弹幕（LiveRoomScreen）读取，任一开关开着就该可调；
+// 只有 filter_package 是直播专用（DanmakuSettingsBinder 注释：录播浮层不消费）。
+private val DANMAKU_PANEL_KEYS = setOf(
     "style_header", "style_opacity", "style_area", "style_vspacing", "style_hspacing",
-    "style_font", "style_speed", "filter_package", "blocklist", "style",
+    "style_font", "style_speed", "blocklist", "style",
 )
+
+private val LIVE_ONLY_PANEL_KEYS = setOf("filter_package")
 
 /** 直播设置 4 档（qm4 遍历时过滤 AUTO，直播不能选「自动」）。 */
 private val LIVE_QUALITY_OPTIONS = listOf(
@@ -242,8 +247,9 @@ private fun codecRows(): List<SelectRow> = CODEC_NAMES.mapIndexed { index, name 
     )
 }
 
-private fun isRowVisible(row: SettingsRow, liveDanmakuOn: Boolean): Boolean = when {
-    row is ControlRow && row.key in LIVE_DEPENDENT_PANEL_KEYS -> liveDanmakuOn
+private fun isRowVisible(row: SettingsRow, liveDanmakuOn: Boolean, anyDanmakuOn: Boolean): Boolean = when {
+    row is ControlRow && row.key in LIVE_ONLY_PANEL_KEYS -> liveDanmakuOn
+    row is ControlRow && row.key in DANMAKU_PANEL_KEYS -> anyDanmakuOn
     else -> true
 }
 
@@ -390,8 +396,10 @@ fun SettingsScreen(
     val liveDanmakuOn = switchStates[canonicalKey("live_danmaku")] == true
     val anyDanmakuOn = liveDanmakuOn || switchStates["video_danmaku"] == true
 
-    val visibleRows = rows.filter { isRowVisible(it, liveDanmakuOn) }
-    val firstFocusableKey = visibleRows.firstOrNull { it.isFocusableRow() }?.key
+    val visibleRows = rows.filter { isRowVisible(it, liveDanmakuOn, anyDanmakuOn) }
+    // 初始焦点跳过只读展示行（账号/凭据状态卡片）：落在上面按确认没有任何动作，
+    // 用户会以为设置页坏了；直接给第一个可操作的行。
+    val firstFocusableKey = visibleRows.firstOrNull { it.isFocusableRow() && it.key !in READONLY_KEYS }?.key
 
     LaunchedEffect(firstFocusableKey) {
         val key = firstFocusableKey ?: return@LaunchedEffect

@@ -355,14 +355,26 @@ class PlayerSession(
 
     /** 浮层「重试」：主链重开一次，并允许再走一次备用 URL。 */
     fun retry() {
-        val url = engine.currentUrl() ?: return
-        val position = engine.engine()?.getCurrentPosition() ?: 0L
+        if (released) {
+            return
+        }
         error = null
         skipNotice = null
         retrying = true
         fallbackUsed = false
-        engine.open(url, position, true)
+        val url = engine.currentUrl()
+        if (url == null) {
+            // 地址还没解析出来就失败了（如详情未取到）：重走一次取流，
+            // 而不是静默返回让「再试一次」按了没反应。
+            engine.openCurrentItem()
+        } else {
+            val position = engine.engine()?.getCurrentPosition() ?: 0L
+            engine.open(url, position, true)
+        }
     }
+
+    /** 队列里是否还有下一条：错误卡片的「播放下一条」据此决定渲染与否。 */
+    fun hasNext(): Boolean = !released && engine.hasNext()
 
     /**
      * 切画质：同一 ExoPlayer 实例上换 MediaSource（不重建 player）。

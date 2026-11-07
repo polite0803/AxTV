@@ -74,7 +74,7 @@ public final class IptvSourceHandler {
      * POST /api/iptv：判形态 → 落库 → 回 JSON。
      *
      * <p>名称与源内容都必填；形态（URL / 整份正文）由 {@link SourceInputDetector} 判定后不额外存类型，
-     * 存储层只保留原文，读取侧再判（见 {@link axtv.iptv.PlaylistSource}）。
+     * 存储层只保留原文，读取侧再判一次形态后交给 {@link PlaylistLoader}。
      */
     private PanelRoutes.Response submit(PanelRoutes.Request request) {
         try {

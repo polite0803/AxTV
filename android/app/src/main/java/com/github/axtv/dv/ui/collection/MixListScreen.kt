@@ -303,11 +303,18 @@ fun MixListScreen(
                         label = "重试",
                         selected = true,
                         onClick = {
-                            if (tab == ListTab.MIX) {
-                                mixReloadToken++
-                            } else {
-                                seriesStarted = true
-                                seriesReloadToken++
+                            // 重试必须落在当前页签：原来 else 一律走 SERIES，
+                            // 精选页签失败后按「重试」重新拉的是系列，本页错误不动。
+                            when (tab) {
+                                ListTab.MIX -> mixReloadToken++
+                                ListTab.SERIES -> {
+                                    seriesStarted = true
+                                    seriesReloadToken++
+                                }
+                                ListTab.FEATURED -> {
+                                    featuredStarted = true
+                                    featuredReloadToken++
+                                }
                             }
                         },
                         modifier = Modifier.focusRequester(statusActionRequester),

@@ -205,12 +205,12 @@ Android 侧（无法进 JVM 门）：`assembleDebug` 编译 + 阶段 D/E 的真�
 
 | 阶段 | 状态 | 读数 |
 |---|---|---|
-| A 核心模块 | 完成 | M3uParser/Channel/Playlist/Sources/Store + NOTES.md；BuiltInSources 70/94 央视卫视可用 |
+| A 核心模块 | 完成 | M3uParser/Channel/Playlist/Sources/Store + NOTES.md；BuiltInSources 5 源（实测条目 377/554/1273/154/516，抽检可连 19/10/17/7/3） |
 | B 配置键 | 已完成 | SettingsKeys/Settings 已添加 IPTV_SOURCES_LIST / IPTV_DISABLED_BUILTIN_IDS / IPTV_LAST_CHANNEL / IPTV_SOURCE_LOAD_TIMEOUT_SECONDS 及访问器 |
 | C 扫码通道 | 已完成 | IptvStore / IptvSourceHandler / IptvRoutes 在 refactor/iptv 下实现；PanelController 已 wiring |
 | D 二维码入口 | 已完成 | LiveSourceQrDialog 已追加至 SettingsActionDialogs.kt；OPTIONS 放行与 requireAuth 共用 |
-| E UI/播放 | 待续 | NavRoutes.kt 已补齐 IPTV 常量与分支；剩余：Compose UI 页面接入与真机验证 |
-| F 源实测留档 | 需授权 | docs/电视直播源核对.md 尚未生成，实测授权待批 |
+| E UI/播放 | 已完成（真机验证待做） | IptvListScreen / IptvPlayerScreen 已建并接入 AxTvApp；电视台播放页已入 immersive 全屏判定；随 0.1.3 发布。剩余仅真机验证 |
+| F 源实测留档 | 完成 | 实测数据 2026-11-07 写入 BuiltInSources（出处 / 核对日期 / 条目数 / 抽检可连数四项齐）；归档文档已补至 [docs/电视直播源核对.md](file:///\\172.29.147.201\projects\AxTV\docs\电视直播源核对.md)，读数为 5 源 / 条目 377·554·154·516·1273 / 抽检可连 19·10·7·3·17 |
 
 **执行顺序建议：F → A → B → C → D → E。**
 F 前置是因为 `BuiltInSources` 的数据只能来自实测，先写代码会造出一张假表；

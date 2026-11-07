@@ -1,152 +1,235 @@
 /*
  * 来源: 新建（电视直播功能，无原版对应）。
  * 原职责: 无。
- * 重构说明: D2 的核心：内置 + 用户源合并、D3 的名称归一聚合、按 group 分栏、给出
- *           「该频道候选 URL 有序列表」。内置源被禁用时会剔除，用户源删除不影响内置。
+ * 重构说明: 目录聚合的唯一权威。原先这里是一份零调用方的半成品（URL 源直接产出空表、
+ *           isBuiltIn 由输入形态推断、按 hashCode 排序、candidatesForChannel 返回整组地址），
+ *           Android 侧另写了一份聚合把它绕过。本轮改为接收【已解析】的源，
+ *           修掉上述四处缺陷，并让 Android 侧只负责取数、把聚合/分组/可见性判定全部交回这里。
  */
 package axtv.iptv;
 
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-/** D2/D3 的合并与目录算法。
- *  1. 收集所有源（内置 + 用户），每个源有 sourceId 标识。
- *  2. 按归一化后的频道名聚合：normalizedName() 一致视为同一频道。
- *  3. 同名频道按「有效候选」排序：内置源优先 → 按 sourceId 排序 → 用户源。
- *  4. 按 group-title 分栏返回有序 map。
- *  5. 被禁用的内置 sourceId 会从候选列表中剔除。
- */
+/** 合并、分组、活性标注与可见性判定。全部纯函数。 */
 public final class ChannelCatalog {
 
     private ChannelCatalog() {
     }
 
-    /** 频道候选，按优先级排序。 */
-    public record ChannelCandidate(
-        Channel channel,
-        /** 源的 sourceId，用于 UI 显示「来自哪份清单」 */
-        String sourceId,
-        /** 是否为内置源 */ boolean isBuiltIn,
-        /** 归一化后的频道名，用于去重比较 */
-        String normalizedName
-    ) implements Comparable<ChannelCandidate> {
-
-        @Override
-        public int compareTo(ChannelCandidate other) {
-            // 内置源优先
-            if (this.isBuiltIn != other.isBuiltIn) {
-                return other.isBuiltIn ? -1 : 1;
-            }
-            // sourceId 字母序排列（保持确定性）
-            return this.sourceId.compareTo(other.sourceId);
+    /**
+     * 一个已解析完的源。网络拉取由调用方做完再交进来——本类不碰网络，
+     * 这样内置 URL 源与用户正文源走同一条聚合路径，不会再出现「URL 源产出空表」。
+     *
+     * @param builtIn 是否内置源。由调用方按来源声明，绝不从 {@link SourceInput} 推断
+     *                （用户也可以推 URL，内置也可以是正文，形态与归属无关）
+     */
+    public record ResolvedSource(String sourceId, String displayName, boolean builtIn, Playlist playlist) {
+        public ResolvedSource {
+            sourceId = sourceId == null ? "" : sourceId;
+            displayName = displayName == null ? "" : displayName;
         }
     }
 
-    /** 归一化频道名（D3）：去空白、全半角、去分辨率标注 [HD][SD] 等，再大小写比较。 */
+    /** 频道级可见性计数。与「源健康度」是两个计数域，不得并排成可比数字（PLAN R2）。 */
+    public record Visibility(int total, int probed, int usable, int hidden) {
+    }
+
+    /** 归一化频道名（D3）：去分辨率标注、全角转半角、去空白、转小写。 */
     public static String normalizeName(String name) {
         if (name == null || name.isBlank()) {
             return "";
         }
-        String n = name.trim();
-        n = n.replaceAll("\\[HD\\]|\\[SD\\]|\\[1080\\]|\\[720\\]|\\[600\\]|\\[4K\\]|\\[S\\]|\\[4KHD\\]", "");
-        // 全半角转半角：Unicode 範 U+FF10–U+FF5A (全角字母/数字) → U+0030–U+007A (半角)
-        // 只对全角字符（码点 > 0xFF00）进行半角转换，避免破坏本身就是 ASCII 的字符
+        String n = name.trim()
+            .replaceAll("\\[HD\\]|\\[SD\\]|\\[1080\\]|\\[720\\]|\\[600\\]|\\[4K\\]|\\[S\\]|\\[4KHD\\]", "");
         StringBuilder sb = new StringBuilder(n.length());
         for (int i = 0; i < n.length(); i++) {
             int cp = n.codePointAt(i);
-            if (cp >= 0xFF11 && cp <= 0xFF5A) {
-                sb.appendCodePoint(cp - 0xFEE0);
-            } else {
-                sb.appendCodePoint(cp);
-            }
+            // 全角数字/字母 U+FF10–U+FF5A → 半角，差值恒为 0xFEE0；其余字符原样保留
+            sb.appendCodePoint(cp >= 0xFF10 && cp <= 0xFF5A ? cp - 0xFEE0 : cp);
         }
-        n = sb.toString();
-        return n.replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
+        return sb.toString().replaceAll("\\s+", "").toLowerCase(java.util.Locale.ROOT);
     }
 
-    /** 合并源为频道候选列表（按组分栏）。
-     *  @param builtIn 內置源列表（可为 null/空，被禁用的 sourceId 会被剔除）
-     * @param user      用户源列表（可为 null/空）
-     * @param disabledBuiltInIds 要剔除的内置 sourceId 集合（来自 Settings.IPTV_DISABLED_BUILTIN_IDS）
-     * @return 按 group-title 分组的有序频道候选 map：key=group-title，value=候选列表
+    /**
+     * 合并已解析的源为目录快照。
+     *
+     * <p>同名频道（归一化名一致）聚合为一条，候选地址按「内置优先 → 源的传入顺序」排列，
+     * 展示名/logo/原始分组取优先级最高的那个源。传入顺序即优先级，调用方必须用有序表
+     * （{@link BuiltInSources#URLS} 是 LinkedHashMap，顺序已按实测质量排好）。
+     *
+     * @param disabledBuiltInIds 用户禁用的内置 sourceId；只作用于内置源，用户源不受影响
      */
-    public static Map<String, List<ChannelCandidate>> merge(
-        List<PlaylistSource> builtIn,
-        List<PlaylistSource> user,
-        Set<String> disabledBuiltInIds
-    ) {
-        // 收集所有有效源
-        List<PlaylistSource> all = new ArrayList<>();
-        if (builtIn != null) {
-            for (PlaylistSource s : builtIn) {
-                if (s.sourceId() != null && !disabledBuiltInIds.contains(s.sourceId())) {
-                    all.add(s);
+    public static CatalogSnapshot merge(List<ResolvedSource> sources, Set<String> disabledBuiltInIds) {
+        Set<String> disabled = disabledBuiltInIds == null ? Set.of() : disabledBuiltInIds;
+        List<ResolvedSource> ordered = new ArrayList<>();
+        if (sources != null) {
+            // 稳定排序：内置整体提到用户源之前，各自内部保持传入顺序
+            for (ResolvedSource s : sources) {
+                if (s != null && s.builtIn() && !disabled.contains(s.sourceId())) {
+                    ordered.add(s);
+                }
+            }
+            for (ResolvedSource s : sources) {
+                if (s != null && !s.builtIn()) {
+                    ordered.add(s);
                 }
             }
         }
-        if (user != null) {
-            all.addAll(user);
-        }
 
-        // 按频道归一化名聚合
-        Map<String, List<ChannelCandidate>> byGroup = new java.util.LinkedHashMap<>();
-        for (PlaylistSource source : all) {
-            String text = source.rawUrlOrContent();
-            String srcId = source.sourceId();
-            SourceInput type = source.inputType();
+        Map<String, List<String>> candidates = new LinkedHashMap<>();
+        Map<String, Channel> display = new LinkedHashMap<>();
+        Map<String, String> displaySource = new LinkedHashMap<>();
 
-            // 根据源形态解析频道
-            List<Channel> parsedChannels;
-            if (type == SourceInput.CONTENT) {
-                // 整份 M3U 正文
-                Playlist pl = PlaylistLoader.loadFromContent(text, srcId);
-                parsedChannels = pl.ok() ? pl.channels() : List.of();
-            } else {
-                // URL 形式——这里不实际拉取，留给 Catalog 用户在有 URL 时再解析
-                // 为保持目录结构，我们把 rawUrlOrContent 当作 URL 处理，实际播放时再 fetch
-                parsedChannels = List.of(); // 由上层在有 URL 时补全
+        for (ResolvedSource source : ordered) {
+            Playlist pl = source.playlist();
+            if (pl == null || !pl.ok()) {
+                continue;
             }
-
-            for (Channel ch : parsedChannels) {
-                String norm = normalizeName(ch.name());
-                if (norm.isBlank()) {
-                    norm = "unknown";
+            for (Channel ch : pl.channels()) {
+                String key = normalizeName(ch.name());
+                if (key.isBlank()) {
+                    continue;
                 }
-                String group = ch.group().isBlank() ? "未分组" : ch.group();
-
-                byGroup.computeIfAbsent(group, k -> new ArrayList<>())
-                       .add(new ChannelCandidate(ch, srcId, type == SourceInput.URL, norm));
+                String url = ch.url();
+                if (url != null && !url.isBlank()) {
+                    List<String> urls = candidates.computeIfAbsent(key, k -> new ArrayList<>());
+                    if (!urls.contains(url)) {
+                        urls.add(url);
+                    }
+                }
+                display.putIfAbsent(key, ch);
+                displaySource.putIfAbsent(key, source.displayName());
             }
         }
 
-        // 每个组内按频道名归一化后的名字排序
-        byGroup.replaceAll((group, candidates) -> candidates.stream()
-            .sorted(Comparator.comparingLong(c -> c.normalizedName().hashCode()))
-            .collect(Collectors.toList()));
-
-        return byGroup;
+        List<CatalogSnapshot.Entry> entries = new ArrayList<>(display.size());
+        for (Map.Entry<String, Channel> e : display.entrySet()) {
+            Channel ch = e.getValue();
+            List<String> urls = candidates.getOrDefault(e.getKey(), List.of());
+            entries.add(new CatalogSnapshot.Entry(
+                e.getKey(),
+                ch.normalizedName().isBlank() ? ch.name() : ch.normalizedName(),
+                ch.logoUrl(),
+                ch.group(),
+                displaySource.getOrDefault(e.getKey(), ""),
+                urls
+            ));
+        }
+        return CatalogSnapshot.of(System.currentTimeMillis(), entries);
     }
 
-    /** 给定频道名，返回该频道所有候选 URL（按优先级排序）。
-     *  如果频道不存在返回空列表。
-     */
-    public static List<String> candidatesForChannel(
-        Map<String, List<ChannelCandidate>> catalog,
-        String channelName
-    ) {
-        String norm = normalizeName(channelName);
-        if (norm.isBlank()) {
+    /** 取某频道的候选地址；id 不存在返回空表（只返回该频道自己的，不是整组）。 */
+    public static List<String> candidatesForChannel(CatalogSnapshot snapshot, String channelId) {
+        if (snapshot == null || channelId == null) {
             return List.of();
         }
-        for (List<ChannelCandidate> candidates : catalog.values()) {
-            for (ChannelCandidate cc : candidates) {
-                if (cc.normalizedName().equals(norm)) {
-                    return candidates.stream()
-                        .map(cc2 -> cc2.channel().url())
-                        .collect(Collectors.toList());
+        CatalogSnapshot.Entry entry = snapshot.byId().get(channelId);
+        return entry == null ? List.of() : entry.candidates();
+    }
+
+    /**
+     * 频道级档位：任一候选 OK 就取其中最好的质量档；全部候选确证死亡才 DEAD；
+     * 其余（含从未探测、部分失败）一律 UNKNOWN。
+     */
+    public static LivenessRecord.Tier channelTier(List<String> candidateUrls, Map<String, LivenessRecord> liveness) {
+        if (candidateUrls == null || candidateUrls.isEmpty()) {
+            return LivenessRecord.Tier.UNKNOWN;
+        }
+        Map<String, LivenessRecord> table = liveness == null ? Map.of() : liveness;
+        LivenessRecord.Tier best = null;
+        boolean allDead = true;
+        for (String url : candidateUrls) {
+            LivenessRecord r = table.get(url);
+            if (r == null) {
+                allDead = false;
+                continue;
+            }
+            if (r.state() == LivenessRecord.State.OK) {
+                allDead = false;
+                LivenessRecord.Tier t = r.tier();
+                if (best == null || t.ordinal() < best.ordinal()) {
+                    best = t;
                 }
+            } else if (r.state() != LivenessRecord.State.DEAD) {
+                allDead = false;
             }
         }
-        return List.of();
+        if (best != null) {
+            return best;
+        }
+        return allDead ? LivenessRecord.Tier.DEAD : LivenessRecord.Tier.UNKNOWN;
+    }
+
+    /**
+     * 是否隐藏：只有【每个】候选都确证死亡才隐藏（PLAN R1）。
+     * 没有候选地址时不隐藏——无地址不等于连不上，隐藏它会让用户永远看不到这条目。
+     */
+    public static boolean channelHidden(List<String> candidateUrls, Map<String, LivenessRecord> liveness) {
+        return channelTier(candidateUrls, liveness) == LivenessRecord.Tier.DEAD;
+    }
+
+    /** 频道级计数，供列表页顶部单独一行展示（不与源健康度混排）。 */
+    public static Visibility countVisibility(CatalogSnapshot snapshot, Map<String, LivenessRecord> liveness) {
+        if (snapshot == null) {
+            return new Visibility(0, 0, 0, 0);
+        }
+        int probed = 0;
+        int usable = 0;
+        int hidden = 0;
+        for (CatalogSnapshot.Entry e : snapshot.entries()) {
+            LivenessRecord.Tier tier = channelTier(e.candidates(), liveness);
+            if (tier == LivenessRecord.Tier.DEAD) {
+                hidden++;
+                probed++;
+            } else if (tier != LivenessRecord.Tier.UNKNOWN) {
+                usable++;
+                probed++;
+            }
+        }
+        return new Visibility(snapshot.totalChannels(), probed, usable, hidden);
+    }
+
+    /**
+     * 套用户分组修正 + 过滤已隐藏 + 分栏排序。
+     * 排序口径与原 Android 侧一致：组内按展示名，组间按频道数降序、同数按标题。
+     *
+     * @param hideDead false 时连已判死的频道一并返回（「显示已隐藏」入口）
+     */
+    public static Map<String, List<CatalogSnapshot.Entry>> groupBy(
+        CatalogSnapshot snapshot,
+        GroupOverrides overrides,
+        Map<String, LivenessRecord> liveness,
+        boolean hideDead
+    ) {
+        Map<String, List<CatalogSnapshot.Entry>> byGroup = new LinkedHashMap<>();
+        if (snapshot == null) {
+            return byGroup;
+        }
+        GroupOverrides ov = overrides == null ? GroupOverrides.empty() : overrides;
+        for (CatalogSnapshot.Entry e : snapshot.entries()) {
+            if (hideDead && channelHidden(e.candidates(), liveness)) {
+                continue;
+            }
+            String group = ov.groupFor(e.id(), e.rawGroup());
+            byGroup.computeIfAbsent(group, k -> new ArrayList<>()).add(e);
+        }
+        Comparator<CatalogSnapshot.Entry> byName = Comparator.comparing(CatalogSnapshot.Entry::name);
+        List<Map.Entry<String, List<CatalogSnapshot.Entry>>> groups = new ArrayList<>(byGroup.entrySet());
+        for (Map.Entry<String, List<CatalogSnapshot.Entry>> g : groups) {
+            g.getValue().sort(byName);
+        }
+        groups.sort(Comparator
+            .comparingInt((Map.Entry<String, List<CatalogSnapshot.Entry>> g) -> g.getValue().size()).reversed()
+            .thenComparing(Map.Entry::getKey));
+        Map<String, List<CatalogSnapshot.Entry>> sorted = new LinkedHashMap<>();
+        for (Map.Entry<String, List<CatalogSnapshot.Entry>> g : groups) {
+            sorted.put(g.getKey(), List.copyOf(g.getValue()));
+        }
+        return sorted;
     }
 }

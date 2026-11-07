@@ -379,9 +379,9 @@ fun HomeFeedScreen(
         }
     }
 
-    // 失败态没有列表可聚焦，把焦点交给「重试」按钮，保证遥控器可操作。
-    LaunchedEffect(errorMessage, feedItems.size) {
-        if (errorMessage != null && feedItems.isEmpty()) {
+    // 失败/空态没有列表可聚焦，把焦点交给「重试」按钮，保证遥控器可操作（两种状态同一出口）。
+    LaunchedEffect(errorMessage, feedItems.size, loading) {
+        if (!loading && feedItems.isEmpty()) {
             withFrameNanos { }
             runCatching { retryRequester.requestFocus() }
         }

@@ -6,6 +6,7 @@ package com.github.axtv.dv.ui.detail
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -227,12 +228,18 @@ internal fun CommentItem(
 ) {
     var focused by remember(comment.cid(), comment.text()) { mutableStateOf(false) }
     val diggLabel = CommentUiSpec.diggLabel(comment)
+    // 整卡可聚焦：方向键才能驱动评论 LazyColumn 滚动（原来只有「展开回复」文字可聚焦，
+    // 没有回复的评论完全不在焦点链里，列表滚不动）。有回复的卡片按确认即展开/收起。
+    val hasReplies = !isReply && comment.replyCommentTotal() > 0
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = if (isReply) 28.dp else 0.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (isReply) AxTvColors.Surface else AxTvColors.SurfaceHigh)
+            .focusRing(focused, RoundedCornerShape(10.dp))
+            .onFocusChanged { focused = it.isFocused }
+            .then(if (hasReplies) Modifier.clickable(onClick = onToggleReplies) else Modifier.focusable())
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -252,17 +259,12 @@ internal fun CommentItem(
         ) {
             if (diggLabel != null) HintText("赞 $diggLabel")
             if (comment.ipLabel().isNotBlank()) HintText(comment.ipLabel())
-            if (!isReply && comment.replyCommentTotal() > 0) {
+            if (hasReplies) {
                 Text(
-                    text = if (expanded) "收起回复" else "展开 ${comment.replyCommentTotal()} 条回复",
+                    text = if (expanded) "收起回复" else "展开 ${comment.replyCommentTotal()} 条回复（按确认键）",
                     color = AxTvColors.Accent,
                     style = TextStyle(fontSize = 11.sp),
-                    modifier = Modifier
-                        .onFocusChanged { focused = it.isFocused }
-                        .focusRing(focused, RoundedCornerShape(6.dp))
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable(onClick = onToggleReplies)
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                 )
             }
             if (loadingReplies) HintText("正在加载回复…")

@@ -89,6 +89,13 @@ fun LiveListScreen(
     val focusScope = "live:${tab.name}"
 
     LaunchedEffect(tab, reloadToken) {
+        // 会话内缓存：进房返回/切回本页签直接复用，不重新联网；「刷新」才重拉。
+        val cached = LiveRepository.cachedRooms(tab)
+        if (reloadToken == 0 && cached != null) {
+            cards = cached
+            loading = false
+            return@LaunchedEffect
+        }
         loading = true
         error = null
         cards = emptyList()
@@ -131,22 +138,44 @@ fun LiveListScreen(
                     style = TextStyle(fontSize = 13.sp),
                 )
             }
-            // 电视台入口（D4）：不进直播分区枚举，独立页路由 NavRoutes.IPTV。
-            var iptvFocused by remember { mutableStateOf(false) }
-            Box(
-                modifier = Modifier
-                    .onFocusChanged { iptvFocused = it.isFocused }
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(AxTvColors.Accent.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
-                    .focusRing(iptvFocused, RoundedCornerShape(10.dp))
-                    .clickable(onClick = onOpenIptv)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = "电视台",
-                    color = AxTvColors.TextPrimary,
-                    style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-                )
+                // 列表走会话缓存，显式「刷新」才重新联网（与电视台列表同一套语义）。
+                var refreshFocused by remember { mutableStateOf(false) }
+                Box(
+                    modifier = Modifier
+                        .onFocusChanged { refreshFocused = it.isFocused }
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(AxTvColors.Surface, RoundedCornerShape(10.dp))
+                        .focusRing(refreshFocused, RoundedCornerShape(10.dp))
+                        .clickable { reloadToken += 1 }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                ) {
+                    Text(
+                        text = "刷新",
+                        color = AxTvColors.TextPrimary,
+                        style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                    )
+                }
+                // 电视台入口（D4）：不进直播分区枚举，独立页路由 NavRoutes.IPTV。
+                var iptvFocused by remember { mutableStateOf(false) }
+                Box(
+                    modifier = Modifier
+                        .onFocusChanged { iptvFocused = it.isFocused }
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(AxTvColors.Accent.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
+                        .focusRing(iptvFocused, RoundedCornerShape(10.dp))
+                        .clickable(onClick = onOpenIptv)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                ) {
+                    Text(
+                        text = "电视台",
+                        color = AxTvColors.TextPrimary,
+                        style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                    )
+                }
             }
         }
         Spacer(Modifier.height(14.dp))

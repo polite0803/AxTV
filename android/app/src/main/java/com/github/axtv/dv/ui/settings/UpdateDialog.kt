@@ -362,7 +362,7 @@ private fun DialogButton(
             // 不可用态仍保留焦点能力，避免焦点在状态切换时悬空；OK 不触发任何动作。
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier.focusable())
             .background(background, RoundedCornerShape(10.dp))
-            .focusRing(focused && enabled, RoundedCornerShape(10.dp))
+            .focusRing(focused, RoundedCornerShape(10.dp))
             .padding(horizontal = 18.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

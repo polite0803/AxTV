@@ -563,6 +563,7 @@ fun PlayerOverlayScreen(
                     session.error != null -> PlayerErrorCard(
                         error = session.error!!,
                         retryRequester = errorRetryRequester,
+                        hasNext = session.hasNext(),
                         onRetry = session::retry,
                         onNext = { session.playNext() },
                     )

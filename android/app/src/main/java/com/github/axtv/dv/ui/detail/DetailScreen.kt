@@ -48,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -150,7 +151,8 @@ fun DetailScreen(
 
     // 相关推荐点击 = 同页切换到该条详情（取证见文件头「相关推荐点击语义」）。
     // activeAwemeId 是当前展示条目的 id：切换时所有分区状态按新 id 重置并重新拉取。
-    var activeAwemeId by remember(awemeId) { mutableStateOf(awemeId) }
+    // rememberSaveable：经播放页返回时保留换集后的 id，不回退到路由原始条目。
+    var activeAwemeId by rememberSaveable(awemeId) { mutableStateOf(awemeId) }
 
     var state by remember(activeAwemeId) { mutableStateOf<DetailUiState>(DetailUiState.Loading) }
     var detailAttempt by remember(activeAwemeId) { mutableStateOf(0) }
@@ -304,6 +306,9 @@ fun DetailScreen(
     LaunchedEffect(activeAwemeId, state, queueIds, queueIndexFor(activeAwemeId, queueIds)) {
         val s = state
         if (s !is DetailUiState.Ready) return@LaunchedEffect
+        // 首屏让位给「全屏播放」首焦 effect；本 effect 只负责切条后的焦点安置，
+        // 否则从搜索进详情时后声明的它会把首焦抢到「下一条」。
+        if (!initialFocusGiven) return@LaunchedEffect
         val idx = queueIndexFor(s.aweme.awemeId(), queueIds)
         val nextId = queueIds.getOrNull(idx + 1)
         withFrameNanos { }

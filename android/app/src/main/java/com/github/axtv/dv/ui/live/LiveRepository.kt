@@ -65,6 +65,11 @@ internal data class LiveCardUi(
 
 internal object LiveRepository {
 
+    /** 会话内列表缓存：进房返回/切页签不重拉，「刷新」才强制联网（与电视台同一套语义）。 */
+    private val roomsCache = HashMap<LiveTab, List<LiveCardUi>>()
+
+    fun cachedRooms(tab: LiveTab): List<LiveCardUi>? = roomsCache[tab]
+
     /** 直播推荐 / 关注 / 分区列表。失败原样抛出，由 UI 展示可重试的错误态。 */
     suspend fun rooms(tab: LiveTab): Result<List<LiveCardUi>> = withContext(Dispatchers.IO) {
         try {
@@ -79,6 +84,7 @@ internal object LiveRepository {
                 else -> liveApi.partitionRooms(tab.partitionId.orEmpty(), PARTITION_TYPE, 0, PAGE_SIZE)
                     .toCards()
             }
+            roomsCache[tab] = rooms
             Result.success(rooms)
         } catch (cancel: CancellationException) {
             throw cancel

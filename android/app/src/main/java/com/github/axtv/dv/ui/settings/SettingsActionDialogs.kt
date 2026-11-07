@@ -17,6 +17,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
@@ -136,14 +137,24 @@ internal fun QrLinksDialog(
                     )
                 }
             }
-        } else {
-            DialogChip(label = links.first().title, modifier = Modifier.focusRequester(requester), onClick = {})
         }
+        // 单链接时首焦直接落在可用动作上（多链接落在首个切换 chip），
+        // 不再聚焦 onClick={} 的展示 chip——那会让确认键没反应。
+        val single = links.size == 1
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (activeLink.openable) {
-                DialogChip(label = "打开链接", primary = true, onClick = { onOpen(activeLink.url) })
+                DialogChip(
+                    label = "打开链接",
+                    primary = true,
+                    modifier = if (single) Modifier.focusRequester(requester) else Modifier,
+                    onClick = { onOpen(activeLink.url) },
+                )
             }
-            DialogChip(label = "关闭", onClick = onDismiss)
+            DialogChip(
+                label = "关闭",
+                modifier = if (single && !activeLink.openable) Modifier.focusRequester(requester) else Modifier,
+                onClick = onDismiss,
+            )
         }
     }
 }
@@ -249,7 +260,11 @@ internal fun AccountManagementDialog(
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            DialogChip(label = "关闭", onClick = onDismiss)
+            DialogChip(
+                label = "关闭",
+                modifier = if (accounts.isEmpty()) Modifier.focusRequester(firstRequester) else Modifier,
+                onClick = onDismiss,
+            )
         }
     }
 }
@@ -294,6 +309,10 @@ internal fun CredentialActionsDialog(
     var confirmClear by remember { mutableStateOf(false) }
     val payloadFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { payloadFocus.requestFocus() }
+    }
 
     /** 唯一的保存路径：输入框回车与『保存』按钮共用，避免两处校验漂移。 */
     val save: () -> Unit = {
@@ -384,6 +403,11 @@ internal fun ConfigIODialog(
     var message by remember { mutableStateOf<String?>(null) }
     var exports by remember { mutableStateOf(SettingsConfigIO.existingExports(context)) }
     var pendingImport by remember { mutableStateOf<File?>(null) }
+    val firstRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { firstRequester.requestFocus() }
+    }
 
     ActionDialogShell(onDismiss = onDismiss) {
         DialogTitle("配置管理", "导出 / 导入整份配置（含账号与凭据，请按机密处理）")
@@ -392,6 +416,7 @@ internal fun ConfigIODialog(
             DialogChip(
                 label = "导出",
                 primary = true,
+                modifier = Modifier.focusRequester(firstRequester),
                 onClick = {
                     message = runCatching { "已导出：${SettingsConfigIO.export(context).name}" }
                         .fold({ it }, { "导出失败：${it.message}" })
@@ -529,7 +554,8 @@ private fun DialogChip(
     Box(
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }
-            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            // 禁用态保留焦点能力（与 LoginWidgets 同一策略）：D-pad 可走查、高亮可见，OK 无动作。
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier.focusable())
             .background(background, RoundedCornerShape(10.dp))
             .focusRing(focused, RoundedCornerShape(10.dp))
             .padding(horizontal = 18.dp, vertical = 10.dp),

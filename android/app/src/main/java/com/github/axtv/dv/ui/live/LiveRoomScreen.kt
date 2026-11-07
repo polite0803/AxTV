@@ -413,13 +413,9 @@ fun LiveRoomScreen(
                 message = overlayMessage,
                 retryRequester = retryRequester,
                 onRetry = {
-                    if (candidates.isNotEmpty()) {
-                        candidateIndex = 0
-                        playFailure = null
-                        controller.play(candidates.first())
-                    } else {
-                        reloadToken += 1
-                    }
+                    // 重新取房间而不是重放旧候选：直播直链会过期，候选耗尽后
+                    // 再播同一批地址只会重复失败；reloadToken 触发整段重载拿新推流地址。
+                    reloadToken += 1
                 },
                 modifier = Modifier.align(Alignment.Center),
             )

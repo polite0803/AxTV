@@ -8,6 +8,8 @@
 package com.github.axtv.dv.ui
 
 import android.content.pm.ActivityInfo
+import android.os.SystemClock
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
@@ -104,6 +107,9 @@ private fun effectiveFormFactor(context: android.content.Context): SettingsTypes
 
 /** 平板横屏下正文列的侧边留白（TV 与手机保持原样，播放页不吃这条以保持全屏）。 */
 private val TABLET_SIDE_PADDING = 48.dp
+
+/** 栈底「再按一次返回键退出」的两次按键间隔上限。 */
+private const val ROOT_BACK_EXIT_WINDOW_MS = 2_000L
 
 private val TOP_TABS = listOf(
     TopTab("首页", NavRoutes.HOME),
@@ -184,14 +190,19 @@ fun AxTvApp(
         }
     }
 
-    /** 顶栏切页：首页清空回栈底，其它页序贯压栈（BACK 逐级返回）。 */
+    /** 顶栏切页：标签平级，栈内只保留「首页 + 当前标签」，BACK 一下回首页。 */
     fun navigateTab(route: String) {
-        if (route == NavRoutes.HOME) {
-            backStack.clear()
-            backStack.add(NavRoutes.HOME)
-            return
+        val normalized = NavRoutes.normalize(route)
+        if (backStack.lastOrNull() == normalized) return
+        while (backStack.size > 1) {
+            backStack.removeAt(backStack.lastIndex)
         }
-        navigate(route)
+        if (backStack.isEmpty()) {
+            backStack.add(NavRoutes.HOME)
+        }
+        if (normalized != NavRoutes.HOME) {
+            backStack.add(normalized)
+        }
     }
 
     fun goBack() {
@@ -219,6 +230,9 @@ fun AxTvApp(
 
     val currentRoute = backStack.lastOrNull() ?: NavRoutes.HOME
     val destination = remember(currentRoute) { NavRoutes.parse(currentRoute) }
+    // 按路由保留屏内 rememberSaveable 状态（首页标签/精选分区/直播页签等）：
+    // 返回栈切页只换栈顶，被覆盖页面的状态不丢，看片返回不再重置。
+    val saveableStateHolder = rememberSaveableStateHolder()
 
     // 播放页与直播间要真正全屏：顶部 tab 栏不渲染（画面被顶栏挤占就不满屏）。
     // 直播间在 0.2.x 重设计成满屏播放窗口（信息/弹幕都是覆盖层），与点播播放页同一套沉浸语义。
@@ -231,13 +245,24 @@ fun AxTvApp(
         destination is NavDestination.LiveRoom ||
         destination is NavDestination.IptvPlay
 
+    val shellContext = LocalContext.current
+    var lastRootBackAt by remember { mutableStateOf(0L) }
     AxTvTheme {
         BackHandler(enabled = backStack.size > 1) { goBack() }
-        // 『禁用双击返回退出』的消费点：开启后在栈底吞掉 BACK，不退出应用。
-        BackHandler(enabled = backStack.size == 1 && AppRuntime.settings?.disableDoubleBackExit() == true) { }
+        // 栈底「再按一次返回键退出」：第一次提示，2 秒内再按才退出；
+        // 「禁用双击返回退出」开启时吞掉 BACK。开关每次按键现读（非快照状态）。
+        BackHandler(enabled = backStack.size == 1) {
+            if (AppRuntime.settings?.disableDoubleBackExit() == true) return@BackHandler
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastRootBackAt <= ROOT_BACK_EXIT_WINDOW_MS) {
+                shellContext.findActivity()?.finish()
+            } else {
+                lastRootBackAt = now
+                Toast.makeText(shellContext, "再按一次返回键退出", Toast.LENGTH_SHORT).show()
+            }
+        }
         // 『反向导航』只在根节点接管一次 DPAD 上/下；开关值改为每次按键现读（见 ReverseNavigation），
         // 这里只传「当前页面是否参与」：播放页的上下键是上一条/下一条（PlayerSession.handleRemoteKey），不能反转。
-        val shellContext = LocalContext.current
         val storedFactor = AppRuntime.settings?.formFactor() ?: SettingsTypes.UiFormFactor.AUTO
         val formFactor = effectiveFormFactor(shellContext)
         // 『UI 形态』→ 屏幕方向：只看用户显式选的那一档。
@@ -273,219 +298,221 @@ fun AxTvApp(
                     onSelect = { navigateTab(it.route) },
                 )
             }
-            when (val target = destination) {
-                is NavDestination.Home -> HomeFeedScreen(
-                    rememberedFocusIndex = homeFocusIndex,
-                    onFocusIndexChange = { homeFocusIndex = it },
-                    onOpenPlayer = { startIndex ->
-                        navigate(NavRoutes.player(startIndex))
-                    },
-                    onOpenRoute = { navigate(it) },
-                    initialTab = target.tab,
-                    modifier = Modifier.weight(1f),
-                )
-
-                NavDestination.Featured -> FeaturedScreen(
-                    onOpenPlayer = { startIndex -> navigate(NavRoutes.featuredPlay(startIndex)) },
-                    onOpenSettings = { navigate(NavRoutes.SETTINGS) },
-                    modifier = Modifier.weight(1f),
-                )
-
-                is NavDestination.FeaturedPlay -> PlayerFromFeaturedScreen(
-                    startIndex = target.startIndex,
-                    onBack = { goBack() },
-                    modifier = Modifier.weight(1f),
-                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
-                )
-
-                is NavDestination.Detail -> Box(modifier = Modifier.weight(1f)) {
-                    // 从搜索结果进入时把搜索队列的 id 顺序带给详情页：上一条/下一条和全屏连播都用它。
-                    val queueIds = remember(target.awemeId, target.searchIndex) {
-                        if (target.searchIndex == null) {
-                            emptyList()
-                        } else {
-                            SearchPlaybackRepository.cachedAwemes.map { it.awemeId() }
-                        }
-                    }
-                    DetailScreen(
-                        awemeId = target.awemeId,
-                        onBack = { goBack() },
-                        onPlay = { awemeId, queueIndex ->
-                            if (queueIndex != null) {
-                                navigate(NavRoutes.searchPlay(queueIndex))
-                            } else {
-                                navigate(NavRoutes.playerAweme(awemeId))
-                            }
+            saveableStateHolder.SaveableStateProvider(currentRoute) {
+                when (val target = destination) {
+                    is NavDestination.Home -> HomeFeedScreen(
+                        rememberedFocusIndex = homeFocusIndex,
+                        onFocusIndexChange = { homeFocusIndex = it },
+                        onOpenPlayer = { startIndex ->
+                            navigate(NavRoutes.player(startIndex))
                         },
-                        queueIds = queueIds,
+                        onOpenRoute = { navigate(it) },
+                        initialTab = target.tab,
+                        modifier = Modifier.weight(1f),
+                    )
+    
+                    NavDestination.Featured -> FeaturedScreen(
+                        onOpenPlayer = { startIndex -> navigate(NavRoutes.featuredPlay(startIndex)) },
+                        onOpenSettings = { navigate(NavRoutes.SETTINGS) },
+                        modifier = Modifier.weight(1f),
+                    )
+    
+                    is NavDestination.FeaturedPlay -> PlayerFromFeaturedScreen(
+                        startIndex = target.startIndex,
+                        onBack = { goBack() },
+                        modifier = Modifier.weight(1f),
                         onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
                     )
-                }
-
-                is NavDestination.AuthorChannel -> Box(modifier = Modifier.weight(1f)) {
-                    AuthorChannelScreen(
+    
+                    is NavDestination.Detail -> Box(modifier = Modifier.weight(1f)) {
+                        // 从搜索结果进入时把搜索队列的 id 顺序带给详情页：上一条/下一条和全屏连播都用它。
+                        val queueIds = remember(target.awemeId, target.searchIndex) {
+                            if (target.searchIndex == null) {
+                                emptyList()
+                            } else {
+                                SearchPlaybackRepository.cachedAwemes.map { it.awemeId() }
+                            }
+                        }
+                        DetailScreen(
+                            awemeId = target.awemeId,
+                            onBack = { goBack() },
+                            onPlay = { awemeId, queueIndex ->
+                                if (queueIndex != null) {
+                                    navigate(NavRoutes.searchPlay(queueIndex))
+                                } else {
+                                    navigate(NavRoutes.playerAweme(awemeId))
+                                }
+                            },
+                            queueIds = queueIds,
+                            onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
+                        )
+                    }
+    
+                    is NavDestination.AuthorChannel -> Box(modifier = Modifier.weight(1f)) {
+                        AuthorChannelScreen(
+                            secUid = target.secUid,
+                            nickname = target.nickname,
+                            onBack = { goBack() },
+                            onPlay = { startAwemeId ->
+                                navigate(NavRoutes.authorPlay(target.secUid, startAwemeId))
+                            },
+                            onLogin = { navigate(NavRoutes.LOGIN) },
+                        )
+                    }
+    
+                    is NavDestination.AuthorPlay -> PlayerFromAuthorScreen(
                         secUid = target.secUid,
-                        nickname = target.nickname,
+                        awemeId = target.awemeId,
                         onBack = { goBack() },
-                        onPlay = { startAwemeId ->
-                            navigate(NavRoutes.authorPlay(target.secUid, startAwemeId))
-                        },
-                        onLogin = { navigate(NavRoutes.LOGIN) },
+                        modifier = Modifier.weight(1f),
+                        onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
                     )
-                }
-
-                is NavDestination.AuthorPlay -> PlayerFromAuthorScreen(
-                    secUid = target.secUid,
-                    awemeId = target.awemeId,
-                    onBack = { goBack() },
-                    modifier = Modifier.weight(1f),
-                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
-                )
-
-                is NavDestination.Player -> PlayerFromFeedScreen(
-                    startIndex = target.startIndex,
-                    onBack = { goBack() },
-                    modifier = Modifier.weight(1f),
-                    source = target.source,
-                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
-                )
-
-                is NavDestination.PlayerAweme -> PlayerFromAwemeScreen(
-                    awemeId = target.awemeId,
-                    onBack = { goBack() },
-                    modifier = Modifier.weight(1f),
-                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
-                )
-
-                NavDestination.Search -> Box(modifier = Modifier.weight(1f)) {
-                    // 双路由：输入页只负责输入/热搜/联想，提交后进入独立的 search/results 路由。
-                    // 这样从详情页返回会回到结果页，而不是回到输入页重搜一次。
-                    SearchPage(
-                        query = null,
-                        onOpenResults = { keyword -> navigate(NavRoutes.searchResults(keyword)) },
+    
+                    is NavDestination.Player -> PlayerFromFeedScreen(
+                        startIndex = target.startIndex,
                         onBack = { goBack() },
+                        modifier = Modifier.weight(1f),
+                        source = target.source,
+                        onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
                     )
-                }
-
-                is NavDestination.SearchResults -> Box(modifier = Modifier.weight(1f)) {
-                    SearchResultsPage(
-                        query = target.query,
-                        onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
-                        onOpenVideo = { awemeId, index ->
-                            navigate(NavRoutes.detail(awemeId, index))
-                        },
-                        onSearchCommitted = { keyword ->
-                            replaceTop(NavRoutes.searchResults(keyword))
-                        },
+    
+                    is NavDestination.PlayerAweme -> PlayerFromAwemeScreen(
+                        awemeId = target.awemeId,
                         onBack = { goBack() },
+                        modifier = Modifier.weight(1f),
+                        onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
                     )
-                }
-
-                is NavDestination.SearchPlay -> PlayerFromSearchScreen(
-                    startIndex = target.startIndex,
-                    onBack = { goBack() },
-                    modifier = Modifier.weight(1f),
-                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
-                )
-
-                NavDestination.Live -> Box(modifier = Modifier.weight(1f)) {
-                    LiveListScreen(
+    
+                    NavDestination.Search -> Box(modifier = Modifier.weight(1f)) {
+                        // 双路由：输入页只负责输入/热搜/联想，提交后进入独立的 search/results 路由。
+                        // 这样从详情页返回会回到结果页，而不是回到输入页重搜一次。
+                        SearchPage(
+                            query = null,
+                            onOpenResults = { keyword -> navigate(NavRoutes.searchResults(keyword)) },
+                            onBack = { goBack() },
+                        )
+                    }
+    
+                    is NavDestination.SearchResults -> Box(modifier = Modifier.weight(1f)) {
+                        SearchResultsPage(
+                            query = target.query,
+                            onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
+                            onOpenVideo = { awemeId, index ->
+                                navigate(NavRoutes.detail(awemeId, index))
+                            },
+                            onSearchCommitted = { keyword ->
+                                replaceTop(NavRoutes.searchResults(keyword))
+                            },
+                            onBack = { goBack() },
+                        )
+                    }
+    
+                    is NavDestination.SearchPlay -> PlayerFromSearchScreen(
+                        startIndex = target.startIndex,
                         onBack = { goBack() },
-                        onOpenRoom = { roomId, webRid -> navigate(NavRoutes.liveRoom(roomId, webRid)) },
-                        onOpenIptv = { navigate(NavRoutes.IPTV) },
+                        modifier = Modifier.weight(1f),
+                        onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
                     )
-                }
-
-                is NavDestination.LiveRoom -> Box(modifier = Modifier.weight(1f)) {
-                    LiveRoomScreen(
-                        roomId = target.roomId,
-                        webRid = target.webRid,
-                        onBack = { goBack() },
-                    )
-                }
-
-                NavDestination.MixList -> Box(modifier = Modifier.weight(1f)) {
-                    MixListScreen(
-                        onBack = { goBack() },
-                        onOpenMix = { mixId -> navigate(NavRoutes.mixDetail(mixId)) },
-                    )
-                }
-
-                is NavDestination.MixDetail -> Box(modifier = Modifier.weight(1f)) {
-                    MixDetailScreen(
+    
+                    NavDestination.Live -> Box(modifier = Modifier.weight(1f)) {
+                        LiveListScreen(
+                            onBack = { goBack() },
+                            onOpenRoom = { roomId, webRid -> navigate(NavRoutes.liveRoom(roomId, webRid)) },
+                            onOpenIptv = { navigate(NavRoutes.IPTV) },
+                        )
+                    }
+    
+                    is NavDestination.LiveRoom -> Box(modifier = Modifier.weight(1f)) {
+                        LiveRoomScreen(
+                            roomId = target.roomId,
+                            webRid = target.webRid,
+                            onBack = { goBack() },
+                        )
+                    }
+    
+                    NavDestination.MixList -> Box(modifier = Modifier.weight(1f)) {
+                        MixListScreen(
+                            onBack = { goBack() },
+                            onOpenMix = { mixId -> navigate(NavRoutes.mixDetail(mixId)) },
+                        )
+                    }
+    
+                    is NavDestination.MixDetail -> Box(modifier = Modifier.weight(1f)) {
+                        MixDetailScreen(
+                            mixId = target.mixId,
+                            onBack = { goBack() },
+                            onPlay = { mixId, awemeId ->
+                                navigate(NavRoutes.mixPlay(mixId, awemeId))
+                            },
+                        )
+                    }
+    
+                    is NavDestination.MixPlay -> PlayerFromMixScreen(
                         mixId = target.mixId,
+                        awemeId = target.awemeId,
                         onBack = { goBack() },
-                        onPlay = { mixId, awemeId ->
-                            navigate(NavRoutes.mixPlay(mixId, awemeId))
-                        },
+                        modifier = Modifier.weight(1f),
+                        onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
                     )
-                }
-
-                is NavDestination.MixPlay -> PlayerFromMixScreen(
-                    mixId = target.mixId,
-                    awemeId = target.awemeId,
-                    onBack = { goBack() },
-                    modifier = Modifier.weight(1f),
-                    onOpenAuthor = { secUid -> navigate(NavRoutes.author(secUid)) },
-                )
-
-                NavDestination.Profile -> Box(modifier = Modifier.weight(1f)) {
-                    ProfileScreen(
-                        onBack = { goBack() },
-                        onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
-                        onLogin = { navigate(NavRoutes.LOGIN) },
+    
+                    NavDestination.Profile -> Box(modifier = Modifier.weight(1f)) {
+                        ProfileScreen(
+                            onBack = { goBack() },
+                            onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
+                            onLogin = { navigate(NavRoutes.LOGIN) },
+                            onOpenRoute = { navigate(it) },
+                        )
+                    }
+    
+                    NavDestination.ProfileHistory -> Box(modifier = Modifier.weight(1f)) {
+                        HistoryScreen(
+                            onBack = { goBack() },
+                            onPlay = { awemeId -> navigate(NavRoutes.playerAweme(awemeId)) },
+                            onLogin = { navigate(NavRoutes.LOGIN) },
+                        )
+                    }
+    
+                    NavDestination.ProfileFavorites -> Box(modifier = Modifier.weight(1f)) {
+                        FavoritesScreen(
+                            onBack = { goBack() },
+                            onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
+                            onLogin = { navigate(NavRoutes.LOGIN) },
+                        )
+                    }
+    
+                    NavDestination.ProfileLater -> Box(modifier = Modifier.weight(1f)) {
+                        WatchLaterScreen(
+                            onBack = { goBack() },
+                            onPlay = { awemeId -> navigate(NavRoutes.playerAweme(awemeId)) },
+                            onLogin = { navigate(NavRoutes.LOGIN) },
+                        )
+                    }
+    
+                    NavDestination.Settings -> SettingsScreen(
+                        modifier = Modifier.weight(1f),
                         onOpenRoute = { navigate(it) },
                     )
-                }
-
-                NavDestination.ProfileHistory -> Box(modifier = Modifier.weight(1f)) {
-                    HistoryScreen(
-                        onBack = { goBack() },
-                        onPlay = { awemeId -> navigate(NavRoutes.playerAweme(awemeId)) },
-                        onLogin = { navigate(NavRoutes.LOGIN) },
-                    )
-                }
-
-                NavDestination.ProfileFavorites -> Box(modifier = Modifier.weight(1f)) {
-                    FavoritesScreen(
-                        onBack = { goBack() },
-                        onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
-                        onLogin = { navigate(NavRoutes.LOGIN) },
-                    )
-                }
-
-                NavDestination.ProfileLater -> Box(modifier = Modifier.weight(1f)) {
-                    WatchLaterScreen(
-                        onBack = { goBack() },
-                        onPlay = { awemeId -> navigate(NavRoutes.playerAweme(awemeId)) },
-                        onLogin = { navigate(NavRoutes.LOGIN) },
-                    )
-                }
-
-                NavDestination.Settings -> SettingsScreen(
-                    modifier = Modifier.weight(1f),
-                    onOpenRoute = { navigate(it) },
-                )
-
-                NavDestination.Login -> Box(modifier = Modifier.weight(1f)) {
-                    LoginScreen(
-                        onBack = { goBack() },
-                        onLoggedIn = { goBack() },
-                    )
-                }
-
-                NavDestination.Iptv -> Box(modifier = Modifier.weight(1f)) {
-                    IptvListScreen(
-                        onBack = { goBack() },
-                        onPlay = { channelId -> navigate(NavRoutes.iptvPlay(channelId)) },
-                    )
-                }
-
-                is NavDestination.IptvPlay -> Box(modifier = Modifier.weight(1f)) {
-                    IptvPlayerScreen(
-                        channelId = target.channelId,
-                        onBack = { goBack() },
-                    )
+    
+                    NavDestination.Login -> Box(modifier = Modifier.weight(1f)) {
+                        LoginScreen(
+                            onBack = { goBack() },
+                            onLoggedIn = { goBack() },
+                        )
+                    }
+    
+                    NavDestination.Iptv -> Box(modifier = Modifier.weight(1f)) {
+                        IptvListScreen(
+                            onBack = { goBack() },
+                            onPlay = { channelId -> navigate(NavRoutes.iptvPlay(channelId)) },
+                        )
+                    }
+    
+                    is NavDestination.IptvPlay -> Box(modifier = Modifier.weight(1f)) {
+                        IptvPlayerScreen(
+                            channelId = target.channelId,
+                            onBack = { goBack() },
+                        )
+                    }
                 }
             }
         }

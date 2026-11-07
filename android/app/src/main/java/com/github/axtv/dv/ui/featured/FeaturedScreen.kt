@@ -295,14 +295,20 @@ fun FeaturedScreen(
     }
     val actionRequester = remember { FocusRequester() }
     val channelScrollState = rememberScrollState()
+    // 重试（pageAttempt 变化）后重新授焦：否则重试按钮随错误态消失后焦点悬在顶栏。
+    LaunchedEffect(pageAttempt) {
+        focusGiven = false
+    }
     LaunchedEffect(channels.size, channelsLoaded, pageError) {
         if (focusGiven) return@LaunchedEffect
         val target = channels.getOrNull(selectedIndex)?.let { chipRequesters[it.tagId] }
             ?: if (channelsLoaded) actionRequester else null
         if (target == null) return@LaunchedEffect
         withFrameNanos { }
-        runCatching { target.requestFocus() }
-        focusGiven = true
+        // 只有真正落焦成功才算「已授焦」：加载态节点未挂载时失败不能吞掉这次机会。
+        if (runCatching { target.requestFocus() }.isSuccess) {
+            focusGiven = true
+        }
     }
 
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp)) {
@@ -559,8 +565,8 @@ private fun FeaturedChip(
     Box(
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }
-            .focusRing(focused || selected, shape)
             .background(AxTvColors.Surface, shape)
+            .focusRing(focused || selected, shape)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
@@ -590,8 +596,8 @@ private fun FeaturedVideoCard(
                 focused = it.isFocused
                 if (it.isFocused) onFocused()
             }
-            .focusRing(focused, shape)
             .background(AxTvColors.Surface, shape)
+            .focusRing(focused, shape)
             .clickable(onClick = onClick)
             .padding(6.dp),
     ) {
@@ -659,8 +665,8 @@ private fun FeaturedActionButton(label: String, onClick: () -> Unit, modifier: M
     Box(
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }
-            .focusRing(focused, shape)
             .background(if (focused) AxTvColors.SurfaceHigh else AxTvColors.Surface, shape)
+            .focusRing(focused, shape)
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 10.dp),
     ) {

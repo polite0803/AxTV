@@ -161,7 +161,7 @@ object NavRoutes {
         MIX_LIST, MIX_DETAIL, MIX_PLAY,
         PROFILE, PROFILE_HISTORY, PROFILE_FAVORITES, PROFILE_LATER,
         SETTINGS, LOGIN,
-        IPTV,
+        IPTV, IPTV_PLAY,
         WIDGET_PLAY_HISTORY, WIDGET_PLAY_LATER,
     )
 
@@ -344,7 +344,7 @@ object NavRoutes {
         is NavDestination.SearchResults -> searchResults(destination.query)
         is NavDestination.SearchPlay -> searchPlay(destination.startIndex)
         NavDestination.Live -> LIVE
-        is NavDestination.LiveRoom -> liveRoom(destination.roomId)
+        is NavDestination.LiveRoom -> liveRoom(destination.roomId, destination.webRid)
         NavDestination.MixList -> MIX_LIST
         is NavDestination.MixDetail -> mixDetail(destination.mixId)
         is NavDestination.MixPlay -> mixPlay(destination.mixId, destination.awemeId)

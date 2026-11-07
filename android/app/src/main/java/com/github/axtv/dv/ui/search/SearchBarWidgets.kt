@@ -170,10 +170,15 @@ internal fun BarChip(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-internal fun TabChip(label: String, selected: Boolean, onClick: () -> Unit) {
+internal fun TabChip(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     var focused by remember { mutableStateOf(false) }
     Box(
-        modifier = Modifier
+        modifier = modifier
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
             .background(

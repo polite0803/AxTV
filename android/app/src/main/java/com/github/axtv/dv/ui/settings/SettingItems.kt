@@ -195,7 +195,7 @@ internal fun SettingItem(
             Box(
                 modifier = Modifier.size(32.dp).background(AxTvColors.SurfaceHigh, CircleShape),
             )
-            RowLabel(labelOf(control.key()), null, enabled = true)
+            RowLabel(labelOf(control.key()), hint, enabled = true)
             Spacer(Modifier.weight(1f))
             Text(
                 text = statusText ?: cardHintOf(control.key()),

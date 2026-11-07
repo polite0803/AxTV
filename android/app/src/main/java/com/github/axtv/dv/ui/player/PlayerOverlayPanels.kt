@@ -10,15 +10,19 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -151,6 +155,7 @@ internal fun PlayerSkipNotice(text: String) {
 internal fun PlayerErrorCard(
     error: PlaybackError,
     retryRequester: FocusRequester,
+    hasNext: Boolean,
     onRetry: () -> Unit,
     onNext: () -> Unit,
 ) {
@@ -171,13 +176,26 @@ internal fun PlayerErrorCard(
             style = TextStyle(fontSize = 14.sp),
         )
         Text(
-            text = "别担心，可以先试试重试这一条，或者直接跳到下一条继续看。",
+            text = if (hasNext) {
+                "别担心，可以先试试重试这一条，或者直接跳到下一条继续看。"
+            } else {
+                "这已经是最后一条了。可以先试试重试，或者返回挑点别的看。"
+            },
             color = AxTvColors.TextSecondary,
             style = TextStyle(fontSize = 13.sp),
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OverlayAction(label = "再试一次", modifier = Modifier.focusRequester(retryRequester), onClick = onRetry)
-            OverlayAction(label = "播放下一条", onClick = onNext)
+        // 播放列表为空时重试也没有可重开的条目，不渲染按了没反应的按钮。
+        val canRetry = error.message() != "播放列表为空"
+        if (canRetry || hasNext) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (canRetry) {
+                    OverlayAction(label = "再试一次", modifier = Modifier.focusRequester(retryRequester), onClick = onRetry)
+                }
+                // 队尾没有下一条时不渲染死按钮（按了 playNext 只会返回 false）。
+                if (hasNext) {
+                    OverlayAction(label = "播放下一条", onClick = onNext)
+                }
+            }
         }
     }
 }
@@ -337,6 +355,8 @@ internal fun PlayerMenuPanel(
             .width(360.dp)
             .focusGroup()
             .background(AxTvColors.SurfaceHigh, RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
+            // 大字号/低分辨率下内容可能超出一屏：可纵向滚动，焦点移动会自动带出视口。
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -351,7 +371,11 @@ internal fun PlayerMenuPanel(
             color = AxTvColors.TextSecondary,
             style = TextStyle(fontSize = 13.sp),
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // FlowRow 而非 Row：画质档位多时换行，不把 chips 挤出 360dp 面板。
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             qualityTracks.forEachIndexed { index, track ->
                 SegmentChip(
                     label = track.label,
@@ -367,7 +391,11 @@ internal fun PlayerMenuPanel(
             color = AxTvColors.TextSecondary,
             style = TextStyle(fontSize = 13.sp),
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // 7 档倍速在 312dp 内容宽里排不下（原 Row 直接溢出面板），换行排布。
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             PlayerMenuSpec.SPEED_OPTIONS.forEach { option ->
                 SegmentChip(
                     label = PlayerMenuSpec.speedLabel(option),
@@ -430,6 +458,13 @@ internal fun MixEpisodePanel(
     onClose: () -> Unit,
 ) {
     val currentIndex = episodes.indexOfFirst { it.awemeId == currentEpisodeId }
+    val listState = rememberLazyListState()
+    // 打开面板先滚到正在播的那一集：几十集的合集从第 1 集开始翻才找得到当前集。
+    LaunchedEffect(currentEpisodeId, episodes.size) {
+        if (currentIndex >= 0) {
+            runCatching { listState.scrollToItem(currentIndex) }
+        }
+    }
     Column(
         modifier = modifier
             .width(400.dp)
@@ -453,14 +488,16 @@ internal fun MixEpisodePanel(
             style = TextStyle(fontSize = 13.sp),
         )
         LazyColumn(
+            state = listState,
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(episodes, key = { it.awemeId }) { episode ->
+            itemsIndexed(episodes, key = { _, episode -> episode.awemeId }) { index, episode ->
                 EpisodeRow(
                     label = "第 ${episode.number} 集 · ${episode.title}",
                     selected = episode.awemeId == currentEpisodeId,
-                    modifier = if (episode === episodes.first()) {
+                    // 焦点给当前集（找不到时退回第一集），与滚动落点一致。
+                    modifier = if (index == currentIndex.coerceAtLeast(0)) {
                         Modifier.focusRequester(firstRequester)
                     } else {
                         Modifier

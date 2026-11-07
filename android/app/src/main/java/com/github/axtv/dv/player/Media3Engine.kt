@@ -10,14 +10,17 @@
 package com.github.axtv.dv.player
 
 import android.content.Context
+import android.util.Log
 import android.view.KeyEvent
 import android.view.Surface
 import android.view.TextureView
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize as Media3VideoSize
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.cache.CacheDataSource
@@ -171,6 +174,32 @@ class Media3Engine(context: Context) : MediaEngine, WidgetPlayerControls {
             val mapped = VideoSize(videoSize.width, videoSize.height, videoSize.pixelWidthHeightRatio)
             for (listener in listeners.toList()) {
                 listener.onVideoSizeChanged(mapped)
+            }
+        }
+
+        /**
+         * 音轨取证埋点：Media3 在「只有音频轨无解码器」时不报错、只播视频，
+         * 表现为有画面没声音且日志无痕。这里把每条音轨的 MIME/编码与是否被选中、
+         * 是否受支持打出来，使无声原因可从 /logcat 直接判定，而不是靠猜。
+         */
+        override fun onTracksChanged(tracks: Tracks) {
+            val uri = getCurrentMediaUri() ?: "?"
+            var audioGroups = 0
+            for (group in tracks.groups) {
+                if (group.type != C.TRACK_TYPE_AUDIO) continue
+                audioGroups++
+                for (i in 0 until group.length) {
+                    val f = group.getTrackFormat(i)
+                    Log.i(
+                        "AxTvAudio",
+                        "uri=$uri mime=${f.sampleMimeType} codecs=${f.codecs} " +
+                            "ch=${f.channelCount} rate=${f.sampleRate} " +
+                            "selected=${group.isTrackSelected(i)} supported=${group.isTrackSupported(i)}",
+                    )
+                }
+            }
+            if (audioGroups == 0) {
+                Log.w("AxTvAudio", "uri=$uri 清单里没有音轨（video-only 或解析未出音轨）")
             }
         }
     }

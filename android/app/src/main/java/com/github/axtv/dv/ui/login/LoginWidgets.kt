@@ -76,7 +76,7 @@ internal fun LoginButton(
             // 不可用态保留焦点能力（便于 D-pad 逐行走查），但 OK 无动作。
             .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier.focusable())
             .background(background, RoundedCornerShape(10.dp))
-            .focusRing(focused && enabled, RoundedCornerShape(10.dp))
+            .focusRing(focused, RoundedCornerShape(10.dp))
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
