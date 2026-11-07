@@ -3,6 +3,8 @@
 面向 Android TV 与电视盒子的抖音客户端。为遥控器操作设计：方向键移动焦点、确定键进入、返回键逐级退出，界面使用 Compose for TV 构建。
 
 > 当前版本 0.1.5，仍在开发中。下面按「已接入主界面」「已实现、待接入」「桌面小组件」「系统能力」区分实际状态。
+>
+> 本仓库只发布安装包与更新日志，源码不公开。
 
 ## 功能
 
@@ -43,20 +45,23 @@
 
 - 系统要求：Android 8.0（API 26）及以上，适用于 Android TV 与电视盒子。
 - 从 Releases 下载 APK 后执行 `adb install -r AxTV.apk`，或在电视文件管理器中安装（需允许安装未知来源应用）。
+  通用包为 `AxTV-<版本>.apk`（含全部 ABI）；`AxTV-<版本>-arm64-v8a.apk` / `-armeabi-v7a` / `-x86` / `-x86_64` 是按 ABI 拆分的精简包，按设备架构选装即可。
 - 首次使用建议先在设置中完成登录：扫码或导入 Cookie。
 
-## 构建
+## 构建与发布
 
-环境：JDK 17、Android SDK（compileSdk 等参数见工程配置）。
+本仓库只发布安装包与更新日志，源码不公开。发布包在本地源码目录构建后手工上传：
 
 ```bash
 cd android
-./gradlew :app:assembleDebug
-# Windows
-gradlew.bat :app:assembleDebug
+./gradlew :app:assembleRelease -PsplitAbi=true
+# 产物在 app/build/outputs/apk/release/：
+#   app-universal-release.apk（通用包，含全部 ABI）
+#   app-arm64-v8a-release.apk / app-armeabi-v7a-release.apk / app-x86-release.apk / app-x86_64-release.apk
 ```
 
-产物位于 `android/app/build/outputs/apk/debug/app-debug.apk`。仓库已包含构建所需的全部源码。
+上传前按 `AxTV-<版本>[-<abi>].apk` 改名，先传通用包再传 ABI 包
+（旧客户端按资源顺序取第一个 apk）。release 构建请放在本地磁盘副本里跑，网络盘上 aapt2 会超时。
 
 ## 已知限制
 

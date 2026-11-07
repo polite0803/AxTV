@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 只暴露更新包所在子目录：FileProvider 的唯一消费方是 UpdatePlatform 的 APK 安装器。
-     过去另有 files-path path="." 把整个应用私有目录都挂给 content://，无调用方，已删。 -->
-<paths>
-    <files-path
-        name="updates"
-        path="updates"/>
-</paths>

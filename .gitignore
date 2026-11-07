@@ -44,3 +44,10 @@ out/
 
 # Hermes 技能目录（本地工具文件，误入仓库则忽略）
 .hermes_skills/
+
+# 公开仓库只留发布物与说明：源码、文档与 CI 配置只在本机保留，不再推送
+/android/
+/refactor/
+/scripts/
+/docs/
+/.github/
