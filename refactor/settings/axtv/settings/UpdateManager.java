@@ -118,8 +118,8 @@ public final class UpdateManager {
     /**
      * 检查更新（原 {@code lf5.m7411a} → {@code ff5}）。
      *
-     * @param silent 静默检查（启动时自动检查）：失败/已最新不提示，但仍会推送
-     *               {@link Listener#onUpdateInfo}（有更新时）
+     * @param silent 静默检查（启动时自动检查）：不推送 {@link Listener#onStatus}
+     *               与 {@link Listener#onUpdateInfo}，结果只通过返回值告知
      * @return 有更新时返回信息，否则 null
      */
     public ReleaseInfo checkForUpdate(boolean silent) {

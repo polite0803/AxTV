@@ -269,7 +269,11 @@ internal class SearchState(
     // ------------------------------------------------------------------ 本地搜索历史
 
     fun loadHistory() {
-        historyWords = history.load()
+        // SP 读取 + JSON 解析放到 IO：本方法原先在组合期直接同步读盘。
+        scope.launch {
+            val loaded = withContext(Dispatchers.IO) { history.load() }
+            historyWords = loaded
+        }
     }
 
     fun clearHistory() {

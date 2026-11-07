@@ -57,8 +57,8 @@ $JAVA -Dfile.encoding=UTF-8 -cp .workbuddy/build-final SmokeTest
 
 ## 3. JUnit 5 工程化测试（refactor/tests/，2026-11-05）
 
-SmokeTest 的 **147 项断言逐条**拆分为 **24 个 JUnit 5 测试类**（新增模型编解码与类型化门面 33 项，用例总数 180），位于
-`refactor/tests/src/test/java/axtv/test/`（另有共享夹具 `TestFixtures`：Aweme 工厂 + 内存假 TvProvider）。
+SmokeTest 的 **147 项断言逐条**拆分为 JUnit 5 测试类；此后又持续补入 IPTV / 更新校验(UpdateManager) / 日志脱敏 / 扫码 / protobuf 等用例，**当前共 44 个测试类、326 项用例**，位于
+`refactor/tests/src/test/java/axtv/`（按包分子目录：`axtv/test/` 为规格用例，`axtv/api|iptv|panel|settings/` 为模块用例；另有共享夹具 `TestFixtures`：Aweme 工厂 + 内存假 TvProvider）。
 
 构建形态：`refactor/` 是 Gradle 根工程，`:tests` 模块的 **main 源集直接指向 11 个既有源码目录**
 （`api/ app/ live/ model/ panel/ player/ settings/ sign/ tv/ ui/ widget/`）——
@@ -72,7 +72,7 @@ cd refactor
 ./gradlew :tests:test        # Windows 用 gradlew.bat；或直接 ./run-tests.sh / run-tests.bat
 ```
 
-**当前结果：180 tests / 0 failures / 0 errors（依据 2026-11-05 10:54 的 JUnit XML 记录）。**
+**当前结果：326 tests / 0 failures / 0 errors（2026-11-08 全量运行，44 个测试类；读数取自 `tests/build/test-results/test/*.xml` 汇总）。**
 报告：JUnit XML `tests/build/test-results/test/`，HTML `tests/build/reports/tests/test/`。
 
 | 测试类 | 项数 | 覆盖域 |
@@ -89,7 +89,7 @@ cd refactor
 | WidgetSpecTest | 10 | 小组件规格 |
 | CommentUiSpecTest | 9 | 评论区 |
 | InteractionBarSpecTest | 2 | 互动栏 |
-| SearchUiSpecTest | 4 | 搜索页 |
+| SearchUiSpecTest | 5 | 搜索页 |
 | DateLabelsTest | 5 | 日期标签 |
 | PlayerMenuGestureTest | 12 | 播放器 UI 规格 |
 | LivePageSpecTest | 5 | 直播页规格 |
@@ -100,8 +100,28 @@ cd refactor
 | DetailPageSpecTest | 4 | 详情页规格 |
 | LiveBrowseSpecTest | 4 | 直播浏览/搜索 |
 | ModelJsonCodecTest | 11 | 模型 JSON 编解码 |
-| TypedFacadeAndFeedDataSourceTest | 22 | 类型化门面与取流数据源 |
-| **合计** | **180** | 24 个测试类（另含共享夹具 `TestFixtures`） |
+| TypedFacadeAndFeedDataSourceTest | 45 | 类型化门面与取流数据源 |
+| AnonymousIdentityTest | 7 | 匿名身份降级 |
+| LiveRoomResponseTest | 1 | 直播间响应壳 |
+| MobileFeedProtoCodecTest | 9 | module/feed protobuf 编解码 |
+| PanelAuthTest | 3 | 手机面板鉴权 |
+| PlaybackQueueTest | 2 | 播放队列 |
+| QrSelfSessionScriptTest | 3 | 扫码登录自会话脚本 |
+| TicketGuardHeaderCodecTest | 10 | ticket-guard 头编码 |
+| SetCookieTest | 6 | Set-Cookie 解析与回写 |
+| TextsMaskSensitiveQueryTest | 5 | 签名 URL 日志脱敏（msToken/uifid 掩值，保留 a_bogus） |
+| CatalogSnapshotTest | 5 | IPTV 源表快照 |
+| ChannelCatalogTest | 8 | IPTV 频道目录 |
+| GroupOverridesTest | 5 | IPTV 分组覆盖 |
+| LivenessProbeTest | 9 | IPTV 源存活探测 |
+| LivenessRecordTest | 8 | IPTV 存活记录 |
+| QualityPolicyTest | 5 | IPTV 画质选择 |
+| RefreshPolicyTest | 6 | IPTV 刷新策略 |
+| LogcatSanitizeTest | 5 | logcat 导出脱敏（Cookie/Authorization/签名 URL） |
+| QrLoginHttpSessionTest | 2 | 扫码登录 HTTP 会话 |
+| QrVerificationDetectTest | 5 | 扫码验证页识别 |
+| UpdateManagerTest | 18 | 更新检查/镜像回退/摘要+签名+包名校验链 |
+| **合计** | **326** | 44 个测试类（另含共享夹具 `TestFixtures`） |
 
 CI：`.github/workflows/refactor-tests.yml` —— push/PR 触及 `refactor/**` 时自动跑
 `./gradlew :tests:test --no-daemon`，并把测试报告上传为 artifact（推送到 GitHub 后生效）。

@@ -122,6 +122,14 @@ final class Texts {
         }
     }
 
+    /** 日志脱敏：掩掉 query 里 msToken/uifid 的值；a_bogus 与其余参数保留（签名对比诊断要用）。 */
+    static String maskSensitiveQuery(String url) {
+        if (url == null) {
+            return null;
+        }
+        return url.replaceAll("(?i)([?&](?:msToken|uifid)=)[^&]*", "$1[REDACTED]");
+    }
+
     /** 对应 jx4.m6886f0 / 反编译里到处出现的 "截断到 n 字符" 日志辅助。 */
     static String truncate(String s, int max) {
         if (s == null) {

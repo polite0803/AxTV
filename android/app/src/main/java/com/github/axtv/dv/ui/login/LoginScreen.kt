@@ -23,6 +23,7 @@ import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.webkit.CookieManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -392,6 +393,10 @@ fun LoginScreen(onBack: () -> Unit, onLoggedIn: () -> Unit) {
             }
         }
         authEditor.apply()
+        // WebView 的 CookieManager 是独立 cookie 罐：只清 SP 不清它，登出后再打开登录页/精选页
+        // 仍带着旧会话（扫码桥只在下一次扫码开始时才清）。回调传 null 即可，落盘用 flush 兜住。
+        CookieManager.getInstance().removeAllCookies(null)
+        CookieManager.getInstance().flush()
         savedCookie = ""
         // accounts_list 里也存着各账号的 cookie / privateKey / ticket；登出必须一并清掉，
         // 否则“已登出”的设备仍可被导出登录态。互动凭据同理。

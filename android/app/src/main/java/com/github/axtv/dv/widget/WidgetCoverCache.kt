@@ -21,6 +21,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import android.util.LruCache
+import com.github.axtv.dv.adapter.UserAgents
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
@@ -35,9 +36,7 @@ internal object WidgetCoverCache {
     private const val MAX_TOTAL_BYTES = 24L * 1024L * 1024L
     private const val MAX_IMAGE_BYTES = 4L * 1024L * 1024L
     private const val MAX_URLS_PER_REFRESH = 12
-    private const val USER_AGENT =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    private const val USER_AGENT = UserAgents.DESKTOP_CHROME120
 
     /** 缩略图最长边；单张 RGB_565 约 70KB，单个组件最多 4 张，远低于 RemoteViews 的 binder 限制。 */
     private const val MAX_BITMAP_SIDE = 192

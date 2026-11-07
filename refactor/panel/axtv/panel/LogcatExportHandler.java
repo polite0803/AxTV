@@ -43,23 +43,26 @@ public final class LogcatExportHandler {
             process.waitFor();
             return out.toString();
         }
+    }
 
-        /** L1：脱敏——屏蔽可能泄露的 Cookie、Token、私钥等敏感信息。 */
-        private static String sanitizeLogLine(String line) {
-            if (line == null) return line;
-            String result = line;
-            // 屏蔽 Cookie 头
-            result = result.replaceAll("(Cookie[=:][^\n]*)", "Cookie: [REDACTED]");
-            // 屏蔽 Authorization 头
-            result = result.replaceAll("(Authorization[=:][^\n]*)", "Authorization: [REDACTED]");
-            // 屏蔽 set-cookie
-            result = result.replaceAll("set-cookie[^\n]*", "set-cookie: [REDACTED]");
-            // 屏蔽包含 sessionid 的行
-            result = result.replaceAll("(sessionid[^\n]*)", "sessionid: [REDACTED]");
-            // 屏蔽 Bearer token
-            result = result.replaceAll("(Authorization: [^\n]*)", "Authorization: [REDACTED]");
-            return result;
-        }
+    /** L1：脱敏——屏蔽可能泄露的 Cookie、Token、私钥等敏感信息。包私有便于 JUnit 直测。 */
+    static String sanitizeLogLine(String line) {
+        if (line == null) return line;
+        String result = line;
+        // 屏蔽 Cookie 头
+        result = result.replaceAll("(Cookie[=:][^\n]*)", "Cookie: [REDACTED]");
+        // 屏蔽 Authorization 头
+        result = result.replaceAll("(Authorization[=:][^\n]*)", "Authorization: [REDACTED]");
+        // 屏蔽 set-cookie
+        result = result.replaceAll("set-cookie[^\n]*", "set-cookie: [REDACTED]");
+        // 屏蔽包含 sessionid 的行
+        result = result.replaceAll("(sessionid[^\n]*)", "sessionid: [REDACTED]");
+        // 屏蔽 Bearer token
+        result = result.replaceAll("(Authorization: [^\n]*)", "Authorization: [REDACTED]");
+        // 签名 URL 里的 msToken/uifid 只掩值，保留 a_bogus 及其余参数（签名对比诊断要用）
+        result = result.replaceAll("(?i)(msToken=)[^&\\s]*", "$1[REDACTED]");
+        result = result.replaceAll("(?i)(uifid=)[^&\\s]*", "$1[REDACTED]");
+        return result;
     }
 
     private final LogcatSource source;

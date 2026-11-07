@@ -38,6 +38,7 @@ import axtv.player.PlayerEngine
 import axtv.player.VideoMediaCache
 import axtv.player.VideoSize
 import com.github.axtv.dv.adapter.AppRuntime
+import com.github.axtv.dv.adapter.UserAgents
 import com.github.axtv.dv.widget.WidgetPlaybackItem
 import com.github.axtv.dv.widget.WidgetPlayerControls
 import com.github.axtv.dv.widget.WidgetRuntime
@@ -104,8 +105,7 @@ internal object Media3Resources {
         OkHttpDataSource.Factory(httpClient)
             .setDefaultRequestProperties(
                 mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "User-Agent" to UserAgents.ANDROID_CHROME120,
                     "Accept" to "*/*",
                 ),
             )

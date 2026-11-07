@@ -1,6 +1,6 @@
 # Android 适配层总表（android/ 壳工程工作清单）
 
-> 核心层（`refactor/`，纯 JDK）已 100% 编译通过、125 项行为测试全绿。
+> 核心层（`refactor/`，纯 JDK）已 100% 编译通过、326 项行为测试全绿。
 > 本表把 14 份 NOTES 里的「待迁移」逐条收拢：**核心接口 → Android 实现 → 依赖 → 行为规格出处**。
 > 每一条的行为规格都已在 NOTES 里写死（常量/分支/文案/时序），实现时**照规格抄**，不要重新设计。
 
@@ -64,9 +64,9 @@
 | `SettingsStore` | `settings/SharedPrefsSettingsStore.kt`（含类型不匹配回落默认值） | 无 | 🟡 71 键/默认值 JUnit 通过（真跑）；SP 落盘待设备 | `settings/NOTES.md` 配置键全表 |
 | `SettingsJson` | 核心层 `SimpleSettingsJson`（纯 JDK，无需 Android 适配） | 无 | ✅ 编译通过 | `settings/NOTES.md` |
 | 设置页持久化 | `adapter/SettingsBinder.kt` + `adapter/AppRuntime.kt`（`MyApplication.onCreate` 装配） | 无 | 🟡 映射 JUnit 通过；UI 重启回读待设备 | 本轮模拟器实测缺陷 |
-| `AppInstaller` | 未实现 | — | ⬜ 本轮范围外 | `settings/NOTES.md` 更新时序 |
-| `AppInfo.signerSha256` | 未实现 | — | ⬜ 本轮范围外 | `settings/UpdateManager.java` |
-| `CrashHandler` 落盘/导出 | 未装配（模拟器未见 `crash-*.txt`） | — | ⬜ 非本轮三张表，仅归因 | `settings/NOTES.md`；`app/NOTES.md` |
+| `AppInstaller` | `ui/settings/UpdatePlatform.kt` 的 `FileProviderApkInstaller`（content:// + ACTION_VIEW 唤起系统安装器） | FileProvider | 🟡 已装配（设置页「检查更新」走 UpdateManager）；真机安装流程待验证 | `settings/NOTES.md` 更新时序 |
+| `AppInfo.signerSha256` | `ui/settings/UpdatePlatform.kt` 的 `AndroidAppInfo`（PackageManager 签名 → 公钥 SHA-256） | 无 | 🟡 已装配；与 Release digest 的解包比对见 `UpdateManagerTest`（JVM） | `settings/UpdateManager.java` |
+| `CrashHandler` 落盘/导出 | `adapter/AndroidCrashReporter.kt`（`MyApplication.onCreate` 装配，落盘 `filesDir/crash/`） | 无 | 🟡 已装配；真实崩溃样本未验证（模拟器未复现崩溃） | `settings/NOTES.md`；`app/NOTES.md` |
 
 ## 7. EPG（tv 模块）
 
@@ -114,7 +114,7 @@
 
 ## 12. 验证状态
 
-- 核心层：`javac 17` 零错误 + 125 项行为测试（`refactor/TESTS.md`）。
+- 核心层：`javac 17` 零错误 + 326 项行为测试（`refactor/TESTS.md`）。
 - 壳工程：`:app:assembleDebug` 通过（AGP 8.7.3 / compileSdk 35 / minSdk 23），APK 22.8 MB。
 - 本轮 JUnit（JVM，真跑 8 项全绿）：`ApiUrlAssemblyTest`(2)、`SignProviderForwardingTest`(2)、`SettingsKeyMappingTest`(4)。
 - 待设备/模拟器验证：QuickJS 初始化与真实 a_bogus、SharedPreferences 落盘与重启回读、TV 判定、Looper 主线程判定。

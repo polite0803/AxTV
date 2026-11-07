@@ -206,8 +206,8 @@ public final class DouyinApi {
         String url = request.baseUrl() + path
                 + (query.isEmpty() ? "" : "?" + Texts.joinQueryEncoded(query));
         if (abogusPresent) {
-            // 诊断用：带签名的完整 URL（不含 Cookie）。对比本地/网页请求即可判断 a_bogus 是否一致。
-            System.out.println("I AxTV_SIGNED_URL: " + url);
+            // 诊断用：带签名的 URL（不含 Cookie，msToken/uifid 已掩码）。对比 a_bogus 是否一致。
+            System.out.println("I AxTV_SIGNED_URL: " + Texts.maskSensitiveQuery(url));
         }
         if (request.writesSearchDiagnostics()) {
             logSearchDiagnostics(path, query);

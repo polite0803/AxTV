@@ -1,7 +1,7 @@
 # AxTV UI 栈迁移 · 第一步（基线 + 三样板）
 
 > **历史记录**：本文是迁移第一步的存档，其中的 compileSdk / minSdk / 版本号已被后续调整覆盖。
-> 当前基线以 `android/app/build.gradle.kts` 为准（compileSdk 36 / minSdk 26 / versionName 0.0.3）。
+> 当前基线以 `android/app/build.gradle.kts` 为准（compileSdk 36 / minSdk 26 / versionName 0.1.4）。
 
 ## 1. 结论
 
