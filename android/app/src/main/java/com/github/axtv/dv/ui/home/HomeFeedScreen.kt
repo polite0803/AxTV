@@ -449,6 +449,7 @@ fun HomeFeedScreen(
             listOfNotNull(
                 detailEntry,
                 "搜索" to { onOpenRoute(NavRoutes.SEARCH) },
+                "热榜" to { onOpenRoute(NavRoutes.HOT) },
                 "直播" to { onOpenRoute(NavRoutes.LIVE) },
                 "合集" to { onOpenRoute(NavRoutes.MIX_LIST) },
                 "个人" to { onOpenRoute(NavRoutes.PROFILE) },

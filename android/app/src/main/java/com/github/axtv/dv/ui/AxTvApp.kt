@@ -57,6 +57,7 @@ import com.github.axtv.dv.ui.collection.MixListScreen
 import com.github.axtv.dv.ui.detail.DetailScreen
 import com.github.axtv.dv.ui.featured.FeaturedScreen
 import com.github.axtv.dv.ui.home.HomeFeedScreen
+import com.github.axtv.dv.ui.home.HotScreen
 import com.github.axtv.dv.ui.library.FavoritesScreen
 import com.github.axtv.dv.ui.library.HistoryScreen
 import com.github.axtv.dv.ui.library.WatchLaterScreen
@@ -118,6 +119,7 @@ private val TOP_TABS = listOf(
     TopTab("直播", NavRoutes.LIVE),
     TopTab("电视台", NavRoutes.IPTV),
     TopTab("合集", NavRoutes.MIX_LIST),
+    TopTab("热榜", NavRoutes.HOT),
     TopTab("个人", NavRoutes.PROFILE),
     TopTab("设置", NavRoutes.SETTINGS),
 )
@@ -129,6 +131,7 @@ private fun TopTab.isSelected(destination: NavDestination): Boolean = when (rout
     NavRoutes.LIVE -> destination is NavDestination.Live
     NavRoutes.IPTV -> destination is NavDestination.Iptv || destination is NavDestination.IptvPlay
     NavRoutes.MIX_LIST -> destination is NavDestination.MixList
+    NavRoutes.HOT -> destination is NavDestination.Hot
     NavRoutes.PROFILE -> destination is NavDestination.Profile
     NavRoutes.SETTINGS -> destination is NavDestination.Settings
     else -> false
@@ -434,6 +437,12 @@ fun AxTvApp(
                         MixListScreen(
                             onBack = { goBack() },
                             onOpenMix = { mixId -> navigate(NavRoutes.mixDetail(mixId)) },
+                        )
+                    }
+
+                    NavDestination.Hot -> Box(modifier = Modifier.weight(1f)) {
+                        HotScreen(
+                            onOpenSearch = { keyword -> navigate(NavRoutes.searchResults(keyword)) },
                         )
                     }
     

@@ -111,6 +111,9 @@ sealed interface NavDestination {
 
     data object Login : NavDestination
 
+    /** 热榜列表。 */
+    data object Hot : NavDestination
+
     /** IPTV 电视台列表。 */
     data object Iptv : NavDestination
 
@@ -147,6 +150,9 @@ object NavRoutes {
     const val WIDGET_PLAY_HISTORY = "play/history"
     const val WIDGET_PLAY_LATER = "play/later"
 
+    /** 热榜（全站热搜词榜）。 */
+    const val HOT = "hot"
+
     /** IPTV 电视台。 */
     const val IPTV = "iptv"
     /** IPTV 单频道播放。 */
@@ -156,6 +162,7 @@ object NavRoutes {
     private val KNOWN_PAGES = setOf(
         HOME, FEATURED, FEATURED_PLAY, DETAIL, PLAYER, PLAY_AWEME,
         AUTHOR, AUTHOR_PLAY,
+        HOT,
         SEARCH, SEARCH_RESULTS, SEARCH_PLAY,
         LIVE, LIVE_ROOM,
         MIX_LIST, MIX_DETAIL, MIX_PLAY,
@@ -270,6 +277,8 @@ object NavRoutes {
                 ?.let { NavDestination.AuthorPlay(it, args["aweme"].orEmpty()) }
                 ?: NavDestination.Home()
 
+            HOT -> NavDestination.Hot
+
             SEARCH -> NavDestination.Search
 
             SEARCH_RESULTS -> args["query"].orEmpty()
@@ -340,6 +349,7 @@ object NavRoutes {
         is NavDestination.PlayerAweme -> playerAweme(destination.awemeId)
         is NavDestination.AuthorChannel -> author(destination.secUid, destination.nickname)
         is NavDestination.AuthorPlay -> authorPlay(destination.secUid, destination.awemeId)
+        is NavDestination.Hot -> HOT
         NavDestination.Search -> SEARCH
         is NavDestination.SearchResults -> searchResults(destination.query)
         is NavDestination.SearchPlay -> searchPlay(destination.startIndex)

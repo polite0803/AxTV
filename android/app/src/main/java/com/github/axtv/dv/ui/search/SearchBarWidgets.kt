@@ -215,13 +215,28 @@ internal fun SectionTitle(text: String) {
     )
 }
 
+/**
+ * 热搜榜的一行。
+ * [requester]/[onFocused] 是可选的：搜索页自己用不到（列表在输入框下方，焦点由输入框交接），
+ * 但热榜标签页是遥控器直接进入的整页列表，必须能把焦点落到指定行并记住落点。
+ */
 @Composable
-internal fun HotWordRow(position: Int, word: String, hotValue: Long, onClick: () -> Unit) {
+internal fun HotWordRow(
+    position: Int,
+    word: String,
+    hotValue: Long,
+    onClick: () -> Unit,
+    requester: FocusRequester? = null,
+    onFocused: () -> Unit = {},
+) {
     var focused by remember { mutableStateOf(false) }
     Row(
-        modifier = Modifier
+        modifier = (if (requester != null) Modifier.focusRequester(requester) else Modifier)
             .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            }
             .clickable(onClick = onClick)
             .background(AxTvColors.Surface, RoundedCornerShape(10.dp))
             .focusRing(focused, RoundedCornerShape(10.dp))
