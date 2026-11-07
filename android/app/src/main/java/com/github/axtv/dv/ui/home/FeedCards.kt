@@ -10,6 +10,7 @@ import axtv.ui.DetailPageSpec
 import axtv.ui.FeedPageSpec
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +45,7 @@ import androidx.tv.material3.Text
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.focusRing
 import com.github.axtv.dv.ui.home.HomeFeedRepository
+import com.github.axtv.dv.ui.library.ActionButton
 import java.util.Locale
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.layout.ContentScale
@@ -172,40 +174,6 @@ internal fun HomeTabChip(label: String, selected: Boolean, onClick: () -> Unit) 
     }
 }
 
-@Composable
-internal fun RelatedCard(item: Aweme, viewed: Boolean, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Column(
-        modifier = Modifier
-            .width(240.dp)
-            .height(150.dp)
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .background(AxTvColors.Surface, RoundedCornerShape(12.dp))
-            .focusRing(focused, RoundedCornerShape(12.dp))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        CoverThumb(
-            url = item.coverUrl(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        )
-        Text(
-            text = item.cardTitle(),
-            color = AxTvColors.TextPrimary,
-            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-        )
-        Text(
-            text = item.cardSubtitle(),
-            color = AxTvColors.TextSecondary,
-            style = TextStyle(fontSize = 12.sp),
-        )
-        if (viewed) ViewedBadge()
-    }
-}
-
 /**
  * 首页封面 URL：cover → dynamic_cover（原版口径），再兜一层 origin_cover。
  *
@@ -249,47 +217,58 @@ internal fun FeedRow(
     requester: FocusRequester,
     onFocused: () -> Unit,
     onClick: () -> Unit,
+    onDetail: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    // 卡片与「详情」同组：确认键在卡片上=播放，右移到按钮=详情，入口就近不再去页面导航找。
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .focusRequester(requester)
-            .onFocusChanged {
-                focused = it.isFocused
-                if (it.isFocused) onFocused()
-            }
-            .clickable(onClick = onClick)
-            .background(AxTvColors.Surface, RoundedCornerShape(12.dp))
-            .focusRing(focused, RoundedCornerShape(12.dp))
-            .padding(12.dp),
+            .focusGroup(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        CoverThumb(
-            url = item.coverUrl(),
+        Row(
             modifier = Modifier
-                .width(160.dp)
-                .height(90.dp),
-        )
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                text = item.cardTitle(),
-                color = AxTvColors.TextPrimary,
-                style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+                .weight(1f)
+                .focusRequester(requester)
+                .onFocusChanged {
+                    focused = it.isFocused
+                    if (it.isFocused) onFocused()
+                }
+                .clickable(onClick = onClick)
+                .background(AxTvColors.Surface, RoundedCornerShape(12.dp))
+                .focusRing(focused, RoundedCornerShape(12.dp))
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            CoverThumb(
+                url = item.coverUrl(),
+                modifier = Modifier
+                    .width(160.dp)
+                    .height(90.dp),
             )
-            Text(
-                text = item.cardSubtitle(),
-                color = AxTvColors.TextSecondary,
-                style = TextStyle(fontSize = 13.sp),
-            )
-            Text(
-                text = item.cardMeta(),
-                color = AxTvColors.TextSecondary,
-                style = TextStyle(fontSize = 12.sp),
-            )
-            if (viewed) ViewedBadge()
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = item.cardTitle(),
+                    color = AxTvColors.TextPrimary,
+                    style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+                )
+                Text(
+                    text = item.cardSubtitle(),
+                    color = AxTvColors.TextSecondary,
+                    style = TextStyle(fontSize = 13.sp),
+                )
+                Text(
+                    text = item.cardMeta(),
+                    color = AxTvColors.TextSecondary,
+                    style = TextStyle(fontSize = 12.sp),
+                )
+                if (viewed) ViewedBadge()
+            }
         }
+        ActionButton(label = "详情", onClick = onDetail)
     }
 }
 

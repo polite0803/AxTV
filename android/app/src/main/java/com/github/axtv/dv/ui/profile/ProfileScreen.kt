@@ -393,6 +393,7 @@ fun ProfileScreen(
                         onRetry = { historyAttempt += 1 },
                         // 历史条目点击即起播：走 player/aweme 路由，与 HistoryScreen 的行为一致。
                         onOpen = { aweme -> onOpenRoute(NavRoutes.playerAweme(aweme.awemeId())) },
+                        onOpenDetail = { aweme -> onOpenDetail(aweme.awemeId()) },
                         onLogin = onLogin,
                     )
 

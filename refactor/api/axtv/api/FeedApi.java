@@ -285,7 +285,19 @@ public final class FeedApi {
             }
             return response;
         } catch (MobileFeedProtoException e) {
-            throw ApiException.decode(path, e);
+            // 诊断：protobuf 解码失败时把长度和正文头带出来，区分「服务端回了非 protobuf
+            // （风控页/HTML/JSON 片段）」和「protobuf 结构变了」。
+            String head;
+            try {
+                head = new String(body, 0, Math.min(160, body.length),
+                        java.nio.charset.StandardCharsets.UTF_8)
+                        .replaceAll("[\\p{Cntrl}]", " ");
+            } catch (Throwable t) {
+                head = "?";
+            }
+            System.out.println("I AxTV_MobileFeed: decode failed len=" + body.length
+                    + " head=" + head + " msg=" + e.getMessage());
+                throw ApiException.decode(path, e);
         }
     }
 

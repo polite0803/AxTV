@@ -2,8 +2,8 @@
  * 线 F：合集 / 系列详情页。
  *
  * 固定签名（供导航线分发 widget 路由 mix/detail?id=）：
- *   MixDetailScreen(mixId, onBack, onPlay)
- * 播放回调参数 = (canonical mix/series id, awemeId)。
+ *   MixDetailScreen(mixId, onBack, onPlay, onOpenDetail)
+ * 播放回调参数 = (canonical mix/series id, awemeId)；详情回调参数 = awemeId。
  *
  * 行为规格出处 refactor/ui/axtv/ui/EpisodePickerSpec.java：
  *   已看过弱化（DIM_ALPHA=0.6）、上次看到高亮、继续第 N 集、未命名合集、帮助文案。
@@ -57,6 +57,7 @@ import androidx.tv.material3.Text
 import axtv.ui.EpisodePickerSpec
 import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.focusRing
+import com.github.axtv.dv.ui.library.ActionButton
 import kotlinx.coroutines.launch
 
 /** 每行集数（TV 横屏，5 列可保证 1080p 下单元可读）。 */
@@ -81,6 +82,7 @@ fun MixDetailScreen(
     mixId: String,
     onBack: () -> Unit,
     onPlay: (mixId: String, awemeId: String) -> Unit,
+    onOpenDetail: (awemeId: String) -> Unit,
 ) {
     var reloadToken by remember { mutableIntStateOf(0) }
     var state by remember { mutableStateOf<DetailUiState>(DetailUiState.Loading) }
@@ -167,6 +169,7 @@ fun MixDetailScreen(
                 onBack = onBack,
                 onRetry = { reloadToken++ },
                 onPlay = { episode -> play(current.detail, episode) },
+                onOpenDetail = onOpenDetail,
                 onLoadMore = { loadMore(current) },
             )
         }
@@ -245,6 +248,7 @@ private fun DetailContent(
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onPlay: (CollectionEpisode) -> Unit,
+    onOpenDetail: (String) -> Unit,
     onLoadMore: () -> Unit,
 ) {
     val listState = rememberLazyListState()
@@ -429,6 +433,9 @@ private fun DetailContent(
                             focusRequester = remember(episode.awemeId) { FocusRequester() }
                                 .also { requesters[episode.awemeId] = it },
                             onPlay = { onPlay(episode) },
+                            onDetail = {
+                                if (episode.awemeId.isNotEmpty()) onOpenDetail(episode.awemeId)
+                            },
                         )
                     }
                     // 末行不足 5 列时补空位，保持单元格等宽。
@@ -501,15 +508,17 @@ private fun EpisodeCell(
     isWatched: Boolean,
     focusRequester: FocusRequester,
     onPlay: () -> Unit,
+    onDetail: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
+    // 外卡做焦点组与整体高亮；内容区承接 focusRequester（恢复焦点落在播放区），
+    // 底部挂就近「详情」按钮。高度随按钮增加，标题行数不变。
     Column(
         modifier = modifier
-            .height(104.dp)
-            .focusRequester(focusRequester)
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onPlay)
+            .height(140.dp)
+            .focusGroup()
+            .onFocusChanged { focused = it.hasFocus }
             .background(
                 color = if (isCurrent) AxTvColors.Accent.copy(alpha = 0.16f) else AxTvColors.Surface,
                 shape = RoundedCornerShape(10.dp),
@@ -518,41 +527,55 @@ private fun EpisodeCell(
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .focusRequester(focusRequester)
+                .clickable(onClick = onPlay),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(
-                text = "第 ${episode.number} 集",
-                color = if (isCurrent) AxTvColors.Accent else AxTvColors.TextPrimary,
-                style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-            )
-            val duration = formatDuration(episode.durationMs)
-            if (isCurrent) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    text = "上次看到",
-                    color = AxTvColors.Accent,
-                    style = TextStyle(fontSize = 10.sp),
+                    text = "第 ${episode.number} 集",
+                    color = if (isCurrent) AxTvColors.Accent else AxTvColors.TextPrimary,
+                    style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
                 )
-            } else if (duration.isNotEmpty()) {
-                Text(
-                    text = duration,
-                    color = AxTvColors.TextSecondary,
-                    style = TextStyle(fontSize = 10.sp),
-                )
+                val duration = formatDuration(episode.durationMs)
+                if (isCurrent) {
+                    Text(
+                        text = "上次看到",
+                        color = AxTvColors.Accent,
+                        style = TextStyle(fontSize = 10.sp),
+                    )
+                } else if (duration.isNotEmpty()) {
+                    Text(
+                        text = duration,
+                        color = AxTvColors.TextSecondary,
+                        style = TextStyle(fontSize = 10.sp),
+                    )
+                }
             }
+            Text(
+                text = episode.title,
+                color = if (isWatched) {
+                    AxTvColors.TextSecondary.copy(alpha = EpisodePickerSpec.DIM_ALPHA)
+                } else {
+                    AxTvColors.TextPrimary
+                },
+                style = TextStyle(fontSize = 12.sp),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        Text(
-            text = episode.title,
-            color = if (isWatched) {
-                AxTvColors.TextSecondary.copy(alpha = EpisodePickerSpec.DIM_ALPHA)
-            } else {
-                AxTvColors.TextPrimary
-            },
-            style = TextStyle(fontSize = 12.sp),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
+        ActionButton(
+            label = "详情",
+            onClick = onDetail,
+            modifier = Modifier.align(Alignment.End),
         )
     }
 }

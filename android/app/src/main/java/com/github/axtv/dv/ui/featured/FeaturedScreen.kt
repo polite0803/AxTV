@@ -11,8 +11,10 @@
  */
 package com.github.axtv.dv.ui.featured
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -66,6 +68,7 @@ import com.github.axtv.dv.ui.AxTvColors
 import com.github.axtv.dv.ui.FocusMemory
 import com.github.axtv.dv.ui.collection.collectionMessage
 import com.github.axtv.dv.ui.focusRing
+import com.github.axtv.dv.ui.library.ActionButton
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -86,6 +89,7 @@ private const val TEXT_DEGRADED = "分区内容接口不可用，当前显示的
 fun FeaturedScreen(
     onOpenPlayer: (startIndex: Int) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenDetail: (awemeId: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var channels by remember { mutableStateOf(FeaturedRepository.cachedChannels) }
@@ -126,10 +130,26 @@ fun FeaturedScreen(
         try {
             var updated = FeaturedRepository.loadInitial(channel)
                 .getOrElse { channel.copy(loading = false, error = it.collectionMessage()) }
-            // 原生 module/feed 拿空时，用页面自己的请求兜底取真实分区内容。
+            Log.i(
+                "FeaturedWebFeed",
+                "native tag=$tagId videos=${updated.videos.size} degraded=${updated.degraded} error=${updated.error}",
+            )
+            Log.i(
+                "FeaturedWebFeed",
+                "gate tag=$tagId allowWeb=$allowWeb empty=${updated.videos.isEmpty()} " +
+                    "isAll=${FeaturedRepository.isAllTag(tagId)}",
+            )
+            // 原生 module/feed 拿空时，优先用磁盘缓存（1 小时 TTL），没有再走页面请求兜底。
             if (allowWeb && updated.videos.isEmpty() && !FeaturedRepository.isAllTag(tagId)) {
                 val reason = FeaturedWebFeed.unsupportedReason(context)
-                val webItems = if (reason != null) emptyList() else FeaturedWebFeed.fetch(context, tagId)
+                val cached = if (reason != null) emptyList() else FeaturedWebFeed.cached(context, tagId)
+                if (cached.isNotEmpty()) Log.i("FeaturedWebFeed", "disk tag=$tagId items=${cached.size}")
+                val webItems = when {
+                    reason != null -> emptyList()
+                    cached.isNotEmpty() -> cached
+                    else -> FeaturedWebFeed.fetch(context, tagId)
+                }
+                Log.i("FeaturedWebFeed", "fallback tag=$tagId reason=$reason web=${webItems.size}")
                 if (reason != null) updated = updated.copy(error = reason)
                 if (webItems.isNotEmpty()) {
                     updated = updated.copy(
@@ -312,13 +332,8 @@ fun FeaturedScreen(
     }
 
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp)) {
+        // 页头只留页面标题：品牌标识已经在全局顶栏，页内再放一次会重复。
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = ChannelListSpec.TEXT_APP_TITLE,
-                color = AxTvColors.Accent,
-                style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold),
-            )
-            Spacer(Modifier.width(12.dp))
             Text(
                 text = ChannelListSpec.TEXT_FEATURED_CHANNEL_TITLE,
                 color = AxTvColors.TextPrimary,
@@ -391,6 +406,7 @@ fun FeaturedScreen(
                     FeaturedRepository.cache(selected)
                     onOpenPlayer(index)
                 },
+                onOpenDetail = onOpenDetail,
                 // 分区 ERROR 重试：按规格重新拉取该分区（m9520c 重试 → 重新请求分组），不是翻页。
                 onRetry = { loadGroup(selected.tagId, allowWeb = true) },
                 onNeedMore = { lastVisible -> loadMore(selected.tagId, lastVisible) },
@@ -407,6 +423,7 @@ private fun SectionContent(
     channel: FeaturedChannel,
     refreshSeq: Int,
     onOpenPlayer: (Int) -> Unit,
+    onOpenDetail: (String) -> Unit,
     onRetry: suspend () -> Unit,
     onNeedMore: suspend (Int) -> Boolean,
 ) {
@@ -531,6 +548,7 @@ private fun SectionContent(
                             val index = channel.videos.indexOfFirst { it.awemeId() == aweme.awemeId() }
                             onOpenPlayer(index.coerceAtLeast(0))
                         },
+                        onDetail = { if (id.isNotEmpty()) onOpenDetail(id) },
                     )
                 }
                 if (channel.loading || channel.error != null) {
@@ -585,35 +603,48 @@ private fun FeaturedChip(
 private fun FeaturedVideoCard(
     aweme: Aweme,
     onClick: () -> Unit,
+    onDetail: () -> Unit,
     modifier: Modifier = Modifier,
     onFocused: () -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
+    // 外卡只做焦点组与整体高亮（hasFocus：按钮获焦时整卡仍亮）；
+    // 内容区承接调用方的 focusRequester，恢复焦点落在卡片（播放）而不是详情按钮上。
     Column(
-        modifier = modifier
-            .onFocusChanged {
-                focused = it.isFocused
-                if (it.isFocused) onFocused()
-            }
+        modifier = Modifier
+            .focusGroup()
+            .onFocusChanged { focused = it.hasFocus }
             .background(AxTvColors.Surface, shape)
             .focusRing(focused, shape)
-            .clickable(onClick = onClick)
             .padding(6.dp),
     ) {
-        AsyncImage(
-            model = aweme.video().cover().firstUrl(),
-            contentDescription = aweme.desc(),
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-        )
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .onFocusChanged { if (it.isFocused) onFocused() }
+                .clickable(onClick = onClick),
+        ) {
+            AsyncImage(
+                model = aweme.video().cover().firstUrl(),
+                contentDescription = aweme.desc(),
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = aweme.desc().ifBlank { aweme.author().nickname() },
+                color = AxTvColors.TextPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(fontSize = 13.sp),
+            )
+        }
         Spacer(Modifier.height(6.dp))
-        Text(
-            text = aweme.desc().ifBlank { aweme.author().nickname() },
-            color = AxTvColors.TextPrimary,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            style = TextStyle(fontSize = 13.sp),
+        ActionButton(
+            label = "详情",
+            onClick = onDetail,
+            modifier = Modifier.align(Alignment.End),
         )
     }
 }

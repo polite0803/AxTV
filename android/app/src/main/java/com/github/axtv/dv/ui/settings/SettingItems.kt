@@ -74,16 +74,8 @@ internal fun SettingItem(
             style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold),
         )
 
-        ControlType.SECTION_HEADER, ControlType.STYLE_HEADER, ControlType.HEADER -> Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = sectionLabel(control.key()),
-                color = AxTvColors.Accent,
-                style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
-            )
-        }
+        ControlType.SECTION_HEADER, ControlType.STYLE_HEADER, ControlType.HEADER ->
+            SectionHeader(sectionLabel(control.key()))
 
         ControlType.NOTE -> Text(
             text = noteOf(control.key()),
@@ -213,6 +205,21 @@ internal fun SettingItem(
             Spacer(Modifier.weight(1f))
             Text(control.type().raw(), color = AxTvColors.TextSecondary, style = TextStyle(fontSize = 12.sp))
         }
+    }
+}
+
+/** 分组标题：两栏布局下整行跨栏，只作视觉分隔，不参与焦点链。 */
+@Composable
+internal fun SectionHeader(label: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            color = AxTvColors.Accent,
+            style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
+        )
     }
 }
 

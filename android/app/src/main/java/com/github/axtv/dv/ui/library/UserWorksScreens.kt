@@ -5,12 +5,13 @@
  *  - 请求统一经 AppRuntime.api → axtv.api.VideoApi / UserApi，UI 不自建 HTTP 客户端；
  *  - 加载 / 失败（区分未登录）/ 空态三态齐全，失败不折叠为空列表；
  *  - 点击条目只回调调用方（历史/稍后再看 → onPlay，收藏 → onOpenDetail）；
+ *    历史/稍后再看行尾另有就近「详情」按钮（onOpenDetail），收藏点击即详情不再重复挂；
  *    观看历史与播放埋点统一由播放器在真正起播时上报，见 ui/player/PlayerOverlayScreen。
  *
  * 固定对外的 Composable 签名：
- *   HistoryScreen(onBack, onPlay)
+ *   HistoryScreen(onBack, onPlay, onOpenDetail)
  *   FavoritesScreen(onBack, onOpenDetail)
- *   WatchLaterScreen(onBack, onPlay)
+ *   WatchLaterScreen(onBack, onPlay, onOpenDetail)
  */
 package com.github.axtv.dv.ui.library
 
@@ -60,6 +61,7 @@ private const val PAGE_SIZE = 18
 fun HistoryScreen(
     onBack: () -> Unit,
     onPlay: (String) -> Unit,
+    onOpenDetail: (String) -> Unit,
     onLogin: (() -> Unit)? = null,
 ) {
     UserWorksListScreen(
@@ -70,6 +72,7 @@ fun HistoryScreen(
         load = { api -> VideoApi(api).historyRead(0L, PAGE_SIZE, 0) },
         onBack = onBack,
         onOpen = { aweme -> onPlay(aweme.awemeId()) },
+        onOpenDetail = { aweme -> onOpenDetail(aweme.awemeId()) },
         onLogin = onLogin,
     )
 }
@@ -110,6 +113,7 @@ fun FavoritesScreen(
 fun WatchLaterScreen(
     onBack: () -> Unit,
     onPlay: (String) -> Unit,
+    onOpenDetail: (String) -> Unit,
     onLogin: (() -> Unit)? = null,
 ) {
     UserWorksListScreen(
@@ -121,6 +125,7 @@ fun WatchLaterScreen(
         load = { api -> VideoApi(api).watchLater(0, PAGE_SIZE, 0) },
         onBack = onBack,
         onOpen = { aweme -> onPlay(aweme.awemeId()) },
+        onOpenDetail = { aweme -> onOpenDetail(aweme.awemeId()) },
         onLogin = onLogin,
     )
 }
@@ -135,6 +140,7 @@ private fun UserWorksListScreen(
     load: suspend (DouyinApi) -> UserWorksResponse,
     onBack: () -> Unit,
     onOpen: (Aweme) -> Unit,
+    onOpenDetail: ((Aweme) -> Unit)? = null,
     onLogin: (() -> Unit)? = null,
 ) {
     var attempt by rememberSaveable { mutableStateOf(0) }
@@ -203,6 +209,7 @@ private fun UserWorksListScreen(
             emptyText = emptyText,
             onRetry = { attempt += 1 },
             onOpen = openItem,
+            onOpenDetail = onOpenDetail,
             onLogin = onLogin,
             focusRequesters = rowRequesters,
             focusScope = focusScope,
@@ -261,6 +268,7 @@ internal fun LazyListScope.userWorksListItems(
     emptyText: String,
     onRetry: () -> Unit,
     onOpen: (Aweme) -> Unit,
+    onOpenDetail: ((Aweme) -> Unit)? = null,
     onLogin: (() -> Unit)? = null,
     /** 非空时按条目 id 注册焦点请求器，并记下最后聚焦下标（从播放/详情返回时恢复）。 */
     focusRequesters: MutableMap<String, FocusRequester>? = null,
@@ -290,6 +298,7 @@ internal fun LazyListScope.userWorksListItems(
                     AwemeRow(
                         aweme = aweme,
                         onClick = onOpen,
+                        onDetail = onOpenDetail,
                         modifier = if (focusRequesters != null) {
                             Modifier.focusRequester(requester)
                         } else {

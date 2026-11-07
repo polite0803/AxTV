@@ -55,6 +55,27 @@ fun Context.findActivity(): Activity? {
 
 class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
 
+    init {
+        // QrLoginBridge 的出码/轮询日志走 java.util.logging，Android 没有默认 handler，
+        // 不桥接到 logcat 的话真机上完全看不到（tag=AxTV_QR 一条命令取全量取证）。
+        val logger = java.util.logging.Logger.getLogger("QrLoginManager")
+        if (logger.handlers.isEmpty()) {
+            logger.addHandler(object : java.util.logging.Handler() {
+                override fun publish(record: java.util.logging.LogRecord) {
+                    if (record.level.intValue() >= java.util.logging.Level.WARNING.intValue()) {
+                        Log.w(TAG, record.message, record.thrown)
+                    } else {
+                        Log.i(TAG, record.message)
+                    }
+                }
+
+                override fun flush() {}
+                override fun close() {}
+            })
+            logger.level = java.util.logging.Level.ALL
+        }
+    }
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val activityRef = WeakReference(activity)
     private var webView: WebView? = null
@@ -261,7 +282,7 @@ class AndroidQrWebViewHost(activity: Activity) : QrLoginBridge.WebViewHost {
             mediaPlaybackRequiresUserGesture = false
             // 与 od2.m8562e 一致用 COMPATIBILITY：登录/验证页会夹带 http 子资源，
             // 收紧成 NEVER_ALLOW 会让老电视上的验证组件加载不出来（表现为验证窗口不出现）。
-            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             allowFileAccess = false
             allowContentAccess = false
             userAgentString = desktopUserAgent(view)

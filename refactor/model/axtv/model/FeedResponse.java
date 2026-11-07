@@ -22,28 +22,43 @@ public record FeedResponse(
         @JsonKey("has_more") boolean hasMore,
         @JsonKey("max_cursor") long maxCursor,
         @JsonKey("cursor") long cursor,
-        @JsonKey("status_code") int statusCode) {
+        @JsonKey("status_code") int statusCode,
+        /** module/feed 的分块响应把完整作品放在这里（顶层 aweme_list 可能只有骨架）。 */
+        @JsonKey("preload_awemes") List<Aweme> preloadAwemes) {
 
     public FeedResponse {
         awemeList = awemeList == null ? null : List.copyOf(awemeList);
         data = data == null ? null : List.copyOf(data);
+        preloadAwemes = preloadAwemes == null ? null : List.copyOf(preloadAwemes);
     }
 
     public FeedResponse() {
-        this(null, null, false, 0L, 0L, 0);
+        this(null, null, false, 0L, 0L, 0, null);
     }
 
     /**
-     * 归一化取作品列表：优先 {@code aweme_list}，为空则展开 {@code data[].aweme} 并丢掉空壳。
-     * 原界面对这两种返回形态分别做了判空，这里收敛成一个入口，语义不变。
+     * 归一化取作品列表：优先 {@code aweme_list}，为空则展开 {@code data[].aweme} 并丢掉空壳；
+     * 存在 {@code preload_awemes} 时按 awemeId 合并去重（分块响应里完整数据常在这里）。
      */
     public List<Aweme> flatAwemes() {
+        List<Aweme> base;
         if (awemeList != null && !awemeList.isEmpty()) {
-            return awemeList;
+            base = awemeList;
+        } else if (data == null) {
+            base = List.of();
+        } else {
+            base = data.stream().map(FeedDataItem::aweme).filter(a -> a != null).toList();
         }
-        if (data == null) {
-            return List.of();
+        if (preloadAwemes == null || preloadAwemes.isEmpty()) {
+            return base;
         }
-        return data.stream().map(FeedDataItem::aweme).filter(a -> a != null).toList();
+        java.util.LinkedHashMap<String, Aweme> merged = new java.util.LinkedHashMap<>();
+        for (Aweme a : base) {
+            if (a != null) merged.putIfAbsent(a.awemeId(), a);
+        }
+        for (Aweme a : preloadAwemes) {
+            if (a != null) merged.putIfAbsent(a.awemeId(), a);
+        }
+        return new java.util.ArrayList<>(merged.values());
     }
 }

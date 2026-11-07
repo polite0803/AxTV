@@ -208,6 +208,23 @@ final class QrLoginScripts {
                   var cs = getComputedStyle(modal);
                   var mr = modal.getBoundingClientRect();
                   if (cs.display !== 'none' && cs.visibility !== 'hidden' && mr.width > 0 && mr.height > 0) {
+                    // 弹窗已开但没抓到二维码：新版登录弹窗默认停在「验证码登录」tab，
+                    // 不切到「扫码登录」就永远不请求 get_qrcode（旧版默认就是二维码 tab，
+                    // 这是页面改版后"弹窗开了却没码"的根因）。
+                    if (!window.__dyQr) {
+                      var tabs = modal.querySelectorAll('div,span,button,a');
+                      for (var ti = 0; ti < tabs.length; ti++) {
+                        var tab = tabs[ti];
+                        var tt = (tab.textContent || '').trim();
+                        if (tt !== '扫码登录' && tt !== '二维码登录') continue;
+                        var tr = tab.getBoundingClientRect();
+                        if (tr.width < 20 || tr.height < 12) continue;
+                        var thit = document.elementFromPoint(tr.x + tr.width / 2, tr.y + tr.height / 2);
+                        if (!thit || !(thit === tab || tab.contains(thit))) continue;
+                        try { tab.click(); } catch (e2) {}
+                        return 'tab:' + tt;
+                      }
+                    }
                     return 'already-open';
                   }
                 }

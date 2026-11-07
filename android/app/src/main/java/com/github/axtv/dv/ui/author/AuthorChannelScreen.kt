@@ -73,6 +73,7 @@ fun AuthorChannelScreen(
     onBack: () -> Unit,
     /** 从作品 id 开始连播该作者的作品；空串表示从第一条开始（播放全部）。 */
     onPlay: (startAwemeId: String) -> Unit,
+    onOpenDetail: (awemeId: String) -> Unit,
     modifier: Modifier = Modifier,
     onLogin: (() -> Unit)? = null,
 ) {
@@ -277,6 +278,7 @@ fun AuthorChannelScreen(
                     AwemeRow(
                         aweme = aweme,
                         onClick = { if (it.awemeId().isNotBlank()) onPlay(it.awemeId()) },
+                        onDetail = { if (it.awemeId().isNotBlank()) onOpenDetail(it.awemeId()) },
                         modifier = Modifier.focusRequester(requester),
                         onFocused = { FocusMemory.remember(focusScope, index.toString()) },
                     )

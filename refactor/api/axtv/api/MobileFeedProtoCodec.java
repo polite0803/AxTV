@@ -75,13 +75,23 @@ public final class MobileFeedProtoCodec {
             awemes = nested == null ? List.of() : Msg.parse(nested).rawList(5);
         }
         List<Aweme> list = new ArrayList<>();
-        for (byte[] raw : awemes) {
-            Aweme aweme = aweme(0, raw);
-            if (aweme != null) {
-                list.add(aweme);
+        int skipped = 0;
+        for (int idx = 0; idx < awemes.size(); idx++) {
+            byte[] raw = awemes.get(idx);
+            try {
+                Aweme aweme = aweme(0, raw);
+                if (aweme != null) {
+                    list.add(aweme);
+                }
+            } catch (MobileFeedProtoException e) {
+                // 新版卡片（直播/商品/新字段布局）可能让单条解析错位：
+                // 跳过这一条，不让整页 500KB 一起失败。
+                skipped++;
             }
         }
-        return new FeedResponse(list, null, hasMore, 0L, 0L, statusCode);
+        System.out.println("I AxTV_MobileFeed: parsed=" + list.size()
+                + " skipped=" + skipped + " total=" + awemes.size());
+        return new FeedResponse(list, null, hasMore, 0L, 0L, statusCode, null);
     }
 
     // ------------------------------------------------------------------ Aweme（m4374e，L157-456）
@@ -101,13 +111,29 @@ public final class MobileFeedProtoCodec {
         }
         long createTime = msg.num(3);
 
-        byte[] authorRaw = first(concat(msg.rawList(4), msg.rawList(5)));
-        Author author = authorRaw == null ? new Author() : author(Msg.parse(authorRaw));
+        // 新版（抖音 39.x）把 f8 改成 share_url 明文、f5 改成 music：拼接后会把
+        // URL/音乐字节当 video/author 解析，导致整条 aweme 错位（malformed varint）。
+        // 这里按「跳过明文 URL」的方式取，兼容新旧两种布局。
+        byte[] authorRaw = first(msg.rawList(4));
+        Author author;
+        try {
+            author = authorRaw == null ? new Author() : author(Msg.parse(authorRaw));
+        } catch (MobileFeedProtoException e) {
+                        throw e;
+        }
 
-        byte[] videoRaw = first(concat(msg.rawList(7), msg.rawList(8)));
-        Video video = videoRaw == null ? new Video() : video(Msg.parse(videoRaw));
+        byte[] videoRaw = firstNonUrl(msg.rawList(7));
+        if (videoRaw == null) {
+            videoRaw = firstNonUrl(msg.rawList(8));
+        }
+        Video video;
+        try {
+            video = videoRaw == null ? new Video() : video(Msg.parse(videoRaw));
+        } catch (MobileFeedProtoException e) {
+                        throw e;
+        }
 
-        byte[] statRaw = first(concat(msg.rawList(10), msg.rawList(11)));
+        byte[] statRaw = first(msg.rawList(10));
         Statistics statistics = new Statistics();
         if (statRaw != null) {
             Msg s = Msg.parse(statRaw);
@@ -182,13 +208,27 @@ public final class MobileFeedProtoCodec {
     }
 
     private static Avatar avatar(List<byte[]> list) {
-        byte[] raw = first(list);
-        return raw == null ? new Avatar() : new Avatar(urls(Msg.parse(raw), 0));
+        byte[] raw = firstNonUrl(list);
+        if (raw == null || looksLikePlainText(raw)) {
+            return new Avatar();
+        }
+        try {
+            return new Avatar(urls(Msg.parse(raw), 0));
+        } catch (MobileFeedProtoException e) {
+                        return new Avatar();
+        }
     }
 
     private static Cover cover(List<byte[]> list) {
-        byte[] raw = first(list);
-        return raw == null ? new Cover() : new Cover(urls(Msg.parse(raw), 0));
+        byte[] raw = firstNonUrl(list);
+        if (raw == null || looksLikePlainText(raw)) {
+            return new Cover();
+        }
+        try {
+            return new Cover(urls(Msg.parse(raw), 0));
+        } catch (MobileFeedProtoException e) {
+                        return new Cover();
+        }
     }
 
     // ------------------------------------------------------------------ Video（m4374e L247-395）
@@ -280,7 +320,16 @@ public final class MobileFeedProtoCodec {
         }
         List<String> nested = new ArrayList<>();
         for (byte[] raw : msg.allBytes()) {
-            nested.addAll(urls(Msg.parse(raw), depth + 1));
+            // 新版把这些字段里夹了明文（share_url / desc / 昵称）。明文当 protobuf 解析
+            // 会读到非法 varint（malformed varint），必须跳过。
+            if (raw == null || raw.length == 0 || isUrlBytes(raw) || looksLikePlainText(raw)) {
+                continue;
+            }
+            try {
+                nested.addAll(urls(Msg.parse(raw), depth + 1));
+            } catch (MobileFeedProtoException e) {
+                                throw e;
+            }
         }
         if (!nested.isEmpty()) {
             return nested;
@@ -307,7 +356,8 @@ public final class MobileFeedProtoCodec {
     // ------------------------------------------------------------------ aweme_type（m4374e L410-429）
 
     private static int awemeType(Msg msg) {
-        for (int f : new int[]{43, 55, 61}) {
+        // 新版把 aweme_type 放在 f30（直播卡=101）；旧版在 f43/f55/f61，保留兜底。
+        for (int f : new int[]{30, 43, 55, 61}) {
             if (msg.hasNum(f)) {
                 int v = (int) msg.num(f);
                 if (v >= 0 && v < 201) {
@@ -316,6 +366,40 @@ public final class MobileFeedProtoCodec {
             }
         }
         return 0;
+    }
+
+    /** 取第一个「不是明文 URL」的 length-delimited 值（新版把 share_url 塞在 video 备选字段里）。 */
+    private static byte[] firstNonUrl(List<byte[]> list) {
+        for (byte[] raw : list) {
+            if (raw != null && raw.length > 0 && !isUrlBytes(raw)) {
+                return raw;
+            }
+        }
+        return null;
+    }
+
+    private static boolean isUrlBytes(byte[] b) {
+        return b.length >= 8 && b[0] == 'h' && b[1] == 't' && b[2] == 't' && b[3] == 'p';
+    }
+
+    /** 整段都是可打印 UTF-8 文本 → 是明文而不是嵌套消息，不能当 protobuf 解析。 */
+    private static boolean looksLikePlainText(byte[] b) {
+        try {
+            String s = new String(b, java.nio.charset.StandardCharsets.UTF_8);
+            if (s.isEmpty()) {
+                return false;
+            }
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                boolean printable = c >= 0x20 || c == '\n' || c == '\r' || c == '\t';
+                if (!printable || c == '\uFFFD') {
+                    return false;
+                }
+            }
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     private static <T> T first(List<T> list) {

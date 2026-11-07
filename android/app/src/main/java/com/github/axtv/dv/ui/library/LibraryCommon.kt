@@ -11,6 +11,7 @@ package com.github.axtv.dv.ui.library
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -261,67 +262,83 @@ internal fun ActionButton(
     }
 }
 
-/** 列表行：封面 + 文案 + 作者 + 互动/进度信息，整行可聚焦点击。 */
+/**
+ * 列表行：封面 + 文案 + 作者 + 互动/进度信息，整行可聚焦点击。
+ * [onDetail] 非空时行尾挂就近「详情」按钮（与卡片同焦点组）；点击卡片本身即进详情的列表不传。
+ * [modifier] 落在卡片本体上（调用方在其中放 focusRequester，恢复焦点仍落在卡片而非按钮）。
+ */
 @Composable
 internal fun AwemeRow(
     aweme: Aweme,
     onClick: (Aweme) -> Unit,
     modifier: Modifier = Modifier,
     onFocused: () -> Unit = {},
+    onDetail: ((Aweme) -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     val cover = coverUrlOf(aweme)
     Row(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .onFocusChanged {
-                focused = it.isFocused
-                if (it.isFocused) onFocused()
-            }
-            .clickable { onClick(aweme) }
-            .background(AxTvColors.Surface, RoundedCornerShape(12.dp))
-            .focusRing(focused, RoundedCornerShape(12.dp))
-            .padding(12.dp),
+            .focusGroup(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .width(160.dp)
-                .aspectRatio(16f / 9f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(AxTvColors.SurfaceHigh),
+        Row(
+            modifier = modifier
+                .weight(1f)
+                .onFocusChanged {
+                    focused = it.isFocused
+                    if (it.isFocused) onFocused()
+                }
+                .clickable { onClick(aweme) }
+                .background(AxTvColors.Surface, RoundedCornerShape(12.dp))
+                .focusRing(focused, RoundedCornerShape(12.dp))
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            if (cover.isNotEmpty()) {
-                AsyncImage(
-                    model = cover,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
+            Box(
+                modifier = Modifier
+                    .width(160.dp)
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(AxTvColors.SurfaceHigh),
+            ) {
+                if (cover.isNotEmpty()) {
+                    AsyncImage(
+                        model = cover,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = titleOf(aweme),
+                    color = AxTvColors.TextPrimary,
+                    style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "@${authorNameOf(aweme)}",
+                    color = AxTvColors.TextSecondary,
+                    style = TextStyle(fontSize = 13.sp),
+                )
+                Text(
+                    text = metaOf(aweme),
+                    color = AxTvColors.TextSecondary,
+                    style = TextStyle(fontSize = 12.sp),
                 )
             }
         }
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                text = titleOf(aweme),
-                color = AxTvColors.TextPrimary,
-                style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "@${authorNameOf(aweme)}",
-                color = AxTvColors.TextSecondary,
-                style = TextStyle(fontSize = 13.sp),
-            )
-            Text(
-                text = metaOf(aweme),
-                color = AxTvColors.TextSecondary,
-                style = TextStyle(fontSize = 12.sp),
-            )
+        if (onDetail != null) {
+            ActionButton(label = "详情", onClick = { onDetail(aweme) })
         }
     }
 }

@@ -57,8 +57,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.tv.foundation.ExperimentalTvFoundationApi
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.tv.material3.Text
 import axtv.ui.SettingsPageSpec
 import axtv.ui.SettingsPageSpec.Control
@@ -148,6 +150,12 @@ private data class SelectRow(
 /** 非控件绘制：按当前主题模式 / 色彩风格渲染的小预览卡。 */
 private data class ThemePreviewRow(override val key: String = THEME_PREVIEW_KEY) : SettingsRow
 
+/** UI 专用分组标题：规格里没有对应控件（如播放设置），只作分隔。 */
+private data class TextHeaderRow(
+    override val key: String,
+    val label: String,
+) : SettingsRow
+
 // 弹幕样式面板的可见性按消费点定：透明度/密度/间距/字号/速度/屏蔽词同时被
 // 点播弹幕（DanmakuInjection）与直播弹幕（LiveRoomScreen）读取，任一开关开着就该可调；
 // 只有 filter_package 是直播专用（DanmakuSettingsBinder 注释：录播浮层不消费）。
@@ -177,11 +185,15 @@ internal val THEME_LABELS = listOf("自动", "浅色", "暗色")
 internal val COLOR_STYLE_LABELS = listOf("按场景", "鲜艳", "柔和", "还原")
 
 private fun buildRows(): List<SettingsRow> {
-    val rows = ArrayList<SettingsRow>(112)
-    for (control in SettingsPageSpec.MAIN_PAGE) {
-        // 原版规格里保留这一行（SettingsPageSpec.MAIN_PAGE），但仓库没有本项目群组地址，
-        // 按用户要求整行移除；地址来源说明见 src/app/p000/h30.java:200。
-        if (control.key() == "about_telegram") continue
+    val controls = (SettingsPageSpec.MAIN_PAGE + SettingsPageSpec.DANMAKU_STYLE_PANEL)
+        .associateBy { it.key() }
+    val rows = ArrayList<SettingsRow>(SETTINGS_UI_ORDER.size + 20)
+    for (key in SETTINGS_UI_ORDER) {
+        if (key == PLAYBACK_HEADER) {
+            rows += TextHeaderRow(key, "播放设置")
+            continue
+        }
+        val control = controls[key] ?: continue
         rows += ControlRow(control)
         when (control.key()) {
             "live_resolution_header" -> rows += liveQualityRows()
@@ -192,7 +204,6 @@ private fun buildRows(): List<SettingsRow> {
             "theme_mode" -> rows += ThemePreviewRow()
         }
     }
-    SettingsPageSpec.DANMAKU_STYLE_PANEL.forEach { rows += ControlRow(it) }
     return rows
 }
 
@@ -306,12 +317,19 @@ private fun rowHint(key: String): String? = when {
     else -> null
 }
 
-private fun SettingsRow.isStructural(): Boolean = this is ControlRow && control.isStructural()
+/** 分组标题、说明与主题预览整行跨两栏；控件各占一栏。 */
+private fun SettingsRow.spansAllColumns(): Boolean = when (this) {
+    is ControlRow -> control.isStructural()
+    is SelectRow -> false
+    is ThemePreviewRow -> true
+    is TextHeaderRow -> true
+}
 
 private fun SettingsRow.isFocusableRow(): Boolean = when (this) {
     is ControlRow -> !control.isStructural()
     is SelectRow -> true
     is ThemePreviewRow -> false
+    is TextHeaderRow -> false
 }
 
 // ════════════════════════════ 滑杆 ════════════════════════════
@@ -438,19 +456,31 @@ fun SettingsScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        LazyColumn(
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 40.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 Text(
                     text = "设置页",
                     color = AxTvColors.TextPrimary,
                     style = TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold),
                 )
             }
-            items(count = visibleRows.size) { index ->
+            items(
+                count = visibleRows.size,
+                key = { index -> visibleRows[index].key },
+                span = { index ->
+                    if (visibleRows[index].spansAllColumns()) {
+                        GridItemSpan(maxLineSpan)
+                    } else {
+                        GridItemSpan(1)
+                    }
+                },
+            ) { index ->
                 val row = visibleRows[index]
                 when (row) {
                     is ControlRow -> {
@@ -574,13 +604,15 @@ fun SettingsScreen(
                         )
                     }
 
+                    is TextHeaderRow -> SectionHeader(row.label)
+
                     is ThemePreviewRow -> ThemePreview(
                         themeModeIndex = enumIndexes["theme_mode"] ?: 0,
                         colorStyleIndex = enumIndexes["color_style"] ?: 0,
                     )
                 }
             }
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 Text(
                     text = "↑/↓ 移动焦点 · OK 开关/进入 · ←/→ 调值 · BACK 关闭弹层或返回上一页",
                     color = AxTvColors.TextSecondary,

@@ -689,7 +689,11 @@ public final class QrLoginBridge {
         StringBuilder text = new StringBuilder();
         text.append("内核=").append(this.webView.engineInfo());
         if (snapshot != null) {
-            String rawQr = snapshot.qrRaw != null ? snapshot.qrRaw : snapshot.domQrRaw;
+            // Snapshot 字段来自 Json.optString（缺失即 ""，永不为 null）：用 isEmpty 判空，
+            // "码=无" 才是可达分支——代表页面没发 get_qrcode 且 DOM 里没有二维码图，
+            // 与「抓到响应但解不出 PNG（无效 N B）」是两种不同病因。
+            String rawQr = !snapshot.qrRaw.isEmpty() ? snapshot.qrRaw
+                    : (!snapshot.domQrRaw.isEmpty() ? snapshot.domQrRaw : null);
             if (rawQr != null) {
                 // “码=有”只说明页面发过 get_qrcode；这里再区分响应能否解出 PNG，
                 // 老内核上常见“有响应但数据不对”，只看“有/无”会误判。
@@ -709,8 +713,18 @@ public final class QrLoginBridge {
                         ? snapshot.url.substring(0, 56) + "…" : snapshot.url);
             }
         }
-        if (pollStatus != null) {
-            text.append(" 轮询=").append(pollStatus);
+        // 出码前的循环调用方传 null：从快照推导页面自己的轮询状态——
+        // 「页面登录 SDK 是否活着」就体现在有没有 check_qrconnect 往返。
+        String poll = pollStatus;
+        if (poll == null && snapshot != null && !snapshot.pollRaw.isEmpty()) {
+            String derived = QrLoginProtocol.pollStatus(snapshot.pollRaw);
+            poll = derived != null ? derived : "未知(" + snapshot.pollRaw.length() + "B)";
+        }
+        if (poll != null) {
+            text.append(" 轮询=").append(poll);
+        } else if (snapshot != null && snapshot.pollAt > 0L) {
+            // 钩子对空响应体也记 pollAt：发了请求但回来的是空 body（风控拦的一般是这个形态）。
+            text.append(" 轮询=空响应");
         }
         this.diagnostic = text.toString();
     }

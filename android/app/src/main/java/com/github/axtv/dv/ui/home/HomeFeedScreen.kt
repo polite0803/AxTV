@@ -72,9 +72,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-/** 单页最多展示的相关推荐条数（与原有 LazyRow 视觉保持一致）。 */
-private const val RELATED_LIMIT = 5
-
 /** 提前多少条触发自动续页（焦点或滚动到达末尾前 N 条就开始拉下一页）。 */
 private const val AUTO_LOAD_AHEAD = 3
 
@@ -435,53 +432,33 @@ fun HomeFeedScreen(
         Spacer(Modifier.height(14.dp))
 
         // 首页快捷入口：把无内部回调的页面（历史/收藏/稍后再看/登录）接到统一路由。
-        // 「详情」跟随当前焦点条目，但入口本身常驻不增删：原来是按焦点有没有才渲染，
-        // 信息流每移一次焦点顶栏就重排一次，「相邻」关系跟着变，表现为按一下焦点跑很远。
-        val focusedAwemeId = feedItems.let { items ->
-            items.getOrNull(rememberedFocusIndex) ?: items.firstOrNull()
-        }?.awemeId()?.takeIf { it.isNotEmpty() }
-        val detailEntry: Pair<String, () -> Unit>? = focusedAwemeId
-            ?.let { id -> "详情" to { onOpenRoute(NavRoutes.detail(id)) } }
+        // 「详情」不在这里：每条信息流卡片右侧自带就近的详情按钮（FeedRow）。
         Row(
             modifier = Modifier.focusGroup(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOfNotNull(
-                detailEntry,
-                "搜索" to { onOpenRoute(NavRoutes.SEARCH) },
-                "热榜" to { onOpenRoute(NavRoutes.HOT) },
-                "直播" to { onOpenRoute(NavRoutes.LIVE) },
-                "合集" to { onOpenRoute(NavRoutes.MIX_LIST) },
-                "个人" to { onOpenRoute(NavRoutes.PROFILE) },
+            // 快捷动作只留顶栏没有的入口：搜索/热榜/直播/合集/个人/设置 已在全局顶栏，
+            // 重复摆放会让首页多出一整行。
+            listOf(
                 "历史" to { onOpenRoute(NavRoutes.PROFILE_HISTORY) },
                 "收藏" to { onOpenRoute(NavRoutes.PROFILE_FAVORITES) },
                 "稍后再看" to { onOpenRoute(NavRoutes.PROFILE_LATER) },
                 "登录" to { onOpenRoute(NavRoutes.LOGIN) },
-                "设置" to { onOpenRoute(NavRoutes.SETTINGS) },
             ).forEach { (label, action) ->
                 HomeTabChip(label = label, selected = false, onClick = action)
             }
-        }
-        Spacer(Modifier.height(16.dp))
-
-        Row(
-            modifier = Modifier.focusGroup(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+            Spacer(Modifier.width(16.dp))
+            // 信息流标签：推荐 / 关注 / 移动推荐（「精选」是独立页面，顶栏已有入口，不再重复）。
             listOf(
                 HomeTabsSpec.TAB_RECOMMEND,
                 HomeTabsSpec.TAB_FOLLOW,
-                HomeTabsSpec.TAB_FEATURED,
                 HomeTabsSpec.TAB_MOBILE,
             ).forEach { tab ->
                 HomeTabChip(
                     label = tab,
                     selected = tab == activeTab,
                     onClick = {
-                        // 「精选」是真入口：跳到独立精选页；关注/移动推荐 切标签拉取各自数据流。
-                        if (tab == HomeTabsSpec.TAB_FEATURED) {
-                            onOpenRoute(NavRoutes.FEATURED)
-                        } else if (tab == activeTab) {
+                        if (tab == activeTab) {
                             // 对齐原版 i42.m5308P：同 Tab 再触发 → 提示刷新文案并刷新该 Tab。
                             // 已在加载中/已在刷新就忽略，避免连按攒出多个并发请求互相覆盖。
                             if (!loading && !refreshing) {
@@ -523,7 +500,6 @@ fun HomeFeedScreen(
             )
 
             else -> {
-                val related = feedItems.take(RELATED_LIMIT)
                 val playerSource = when (activeTab) {
                     HomeTabsSpec.TAB_FOLLOW -> PLAYER_SOURCE_FOLLOW
                     HomeTabsSpec.TAB_MOBILE -> PLAYER_SOURCE_MOBILE
@@ -531,37 +507,6 @@ fun HomeFeedScreen(
                 }
                 // 本地「已看」集合：整页都看过时（原版会退回未过滤列表）用它标出重复条目。
                 val viewedIds = remember(feedItems) { ViewedVideoTracker.viewedIds() }
-                Text(
-                    text = FeedPageSpec.TEXT_RELATED,
-                    color = AxTvColors.TextPrimary,
-                    style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
-                )
-                LazyRow(
-                    // 焦点分组：一行卡片是一个岛，左右键在岛内移动，上下键才离岛。
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusGroup(),
-                    contentPadding = PaddingValues(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(count = related.size) { index ->
-                        RelatedCard(
-                            item = related[index],
-                            viewed = related[index].awemeId() in viewedIds,
-                            onClick = {
-                                // 非推荐标签也走队列播放：PlayerFromFeedScreen 按 source 选该标签的仓储续页，
-                                // 只播单条会让「到末尾自动翻页」在这两个标签上失效。
-                                if (playerSource == PLAYER_SOURCE_RECOMMEND) {
-                                    onOpenPlayer(index)
-                                } else {
-                                    onOpenRoute(NavRoutes.player(index, playerSource))
-                                }
-                            },
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(8.dp))
                 Text(
                     text = when (activeTab) {
                         HomeTabsSpec.TAB_FOLLOW -> "关注信息流"
@@ -600,6 +545,10 @@ fun HomeFeedScreen(
                                 } else {
                                     onOpenRoute(NavRoutes.player(index, playerSource))
                                 }
+                            },
+                            onDetail = {
+                                val id = feedItems[index].awemeId()
+                                if (id.isNotEmpty()) onOpenRoute(NavRoutes.detail(id))
                             },
                         )
                     }

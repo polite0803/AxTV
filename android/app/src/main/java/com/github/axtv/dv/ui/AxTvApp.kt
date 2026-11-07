@@ -13,6 +13,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -172,6 +175,18 @@ fun AxTvApp(
             mutableStateListOf(NavRoutes.HOME)
         } else {
             mutableStateListOf(NavRoutes.HOME, initial)
+        }
+    }
+    // 深链/小部件给了明确路由时，以它为准：rememberSaveable 会恢复上次的栈，
+    // 不覆盖的话「axtv://…?ROUTE=home」这类请求会被上次停留的页面吃掉。
+    // 不能用 rememberSaveable 记「已应用」——恢复后一直是 true，第二次深链就失效。
+    LaunchedEffect(initialRoute) {
+        if (!initialRoute.isNullOrBlank() && backStack.lastOrNull() != initial) {
+            runCatching {
+                backStack.clear()
+                backStack.add(NavRoutes.HOME)
+                if (initial != NavRoutes.HOME) backStack.add(initial)
+            }
         }
     }
     // 焦点记忆：离开首页再回来时恢复到上次停留的信息流条目。
@@ -317,6 +332,7 @@ fun AxTvApp(
                     NavDestination.Featured -> FeaturedScreen(
                         onOpenPlayer = { startIndex -> navigate(NavRoutes.featuredPlay(startIndex)) },
                         onOpenSettings = { navigate(NavRoutes.SETTINGS) },
+                        onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
                         modifier = Modifier.weight(1f),
                     )
     
@@ -359,6 +375,7 @@ fun AxTvApp(
                             onPlay = { startAwemeId ->
                                 navigate(NavRoutes.authorPlay(target.secUid, startAwemeId))
                             },
+                            onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
                             onLogin = { navigate(NavRoutes.LOGIN) },
                         )
                     }
@@ -453,6 +470,7 @@ fun AxTvApp(
                             onPlay = { mixId, awemeId ->
                                 navigate(NavRoutes.mixPlay(mixId, awemeId))
                             },
+                            onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
                         )
                     }
     
@@ -477,6 +495,7 @@ fun AxTvApp(
                         HistoryScreen(
                             onBack = { goBack() },
                             onPlay = { awemeId -> navigate(NavRoutes.playerAweme(awemeId)) },
+                            onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
                             onLogin = { navigate(NavRoutes.LOGIN) },
                         )
                     }
@@ -493,6 +512,7 @@ fun AxTvApp(
                         WatchLaterScreen(
                             onBack = { goBack() },
                             onPlay = { awemeId -> navigate(NavRoutes.playerAweme(awemeId)) },
+                            onOpenDetail = { awemeId -> navigate(NavRoutes.detail(awemeId)) },
                             onLogin = { navigate(NavRoutes.LOGIN) },
                         )
                     }
@@ -530,9 +550,12 @@ fun AxTvApp(
 
 @Composable
 private fun TopTabBar(current: NavDestination, compact: Boolean, onSelect: (TopTab) -> Unit) {
+    // 顶栏整条 Row 兜底消费点击（页签之间/两侧的空白），避免触摸落到下层内容卡片。
+    // 必须用 pointerInput 而不是 clickable：clickable 会让整条 Row 变成可聚焦节点，
+    // 遥控器方向键只能停在 Row 上，进不了各个页签。
     Row(
         // 窄屏（手机竖屏）时 7 个页签放不下，改成横向可滚，并收起右下角的路由调试文案。
-        modifier = if (compact) {
+        modifier = (if (compact) {
             Modifier
                 .fillMaxWidth()
                 .background(AxTvColors.Surface)
@@ -543,15 +566,13 @@ private fun TopTabBar(current: NavDestination, compact: Boolean, onSelect: (TopT
                 .fillMaxWidth()
                 .background(AxTvColors.Surface)
                 .padding(horizontal = 40.dp, vertical = 12.dp)
+        }).pointerInput(Unit) {
+            detectTapGestures(onTap = {})
         },
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "AxTV",
-            color = AxTvColors.Accent,
-            style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold),
-        )
+        BrandMark()
         Spacer(Modifier.width(if (compact) 12.dp else 24.dp))
         TOP_TABS.forEach { item ->
             TopTabItem(
@@ -570,6 +591,7 @@ private fun TopTabItem(label: String, selected: Boolean, onClick: () -> Unit) {
         modifier = Modifier
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
+            .heightIn(min = 40.dp)
             .background(
                 color = if (selected) AxTvColors.Accent.copy(alpha = 0.16f) else Color.Transparent,
                 shape = RoundedCornerShape(8.dp),
