@@ -23,7 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** 当前详情来自 mix 接口还是 series 接口。 */
-enum class CollectionSource { MIX, SERIES, FEATURED }
+enum class CollectionSource { MIX, SERIES }
 
 /** 合集内的一集（序号从 1 开始，按接口返回顺序）。 */
 data class CollectionEpisode(
@@ -209,19 +209,6 @@ object CollectionRepository {
         val items = response.mixInfos().orEmpty()
             .filter { it.mixId().isNotBlank() }
             .map { it.toSummary(CollectionSource.MIX) }
-        CollectionListPage(
-            items = items,
-            hasMore = response.hasMore(),
-            cursor = nextCursor(response.hasMore(), response.cursor(), cursor, items.size),
-        )
-    }
-
-    /** 精选合集列表。 */
-    suspend fun loadFeaturedMixList(cursor: Long): CollectionListPage = withContext(Dispatchers.IO) {
-        val response = CollectionApi(requireApi()).mixListCollection(cursor, PAGE_SIZE)
-        val items = response.mixInfos().orEmpty()
-            .filter { it.mixId().isNotBlank() }
-            .map { it.toSummary(CollectionSource.FEATURED) }
         CollectionListPage(
             items = items,
             hasMore = response.hasMore(),
