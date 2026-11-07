@@ -477,7 +477,7 @@ fun PlayerFromSearchScreen(
 /**
  * 作者作品连播：队列来自 [AuthorRepository] 里 [AuthorChannelScreen] 已加载的该作者作品。
  *
- * - 从选中的作品播到队尾（wrap=false，不回到第一条）；
+ * - 从选中的作品播到队尾（不回到第一条）；
  * - 队尾按作者作品接口的 max_cursor 继续追加，直到 has_more=false；
  * - 深链进入且快照为空时先拉第一页；目标作品不在第一页时单独取详情放到队首。
  */
@@ -562,7 +562,7 @@ fun PlayerFromAuthorScreen(
         queue.isNotEmpty() -> PlayerOverlayScreen(
             modifier = modifier,
             playlistProvider = remember(queue, startIndex) {
-                awemePlaylistProvider(queue, startIndex, wrap = false)
+                awemePlaylistProvider(queue, startIndex)
             },
             playlistMore = loadMore,
             onOpenAuthor = onOpenAuthor,
@@ -827,7 +827,7 @@ private fun MixPlayer(
         modifier = modifier,
         playlistProvider = remember(queue, startIndex) {
             // 从选中集播到队尾，不回到第 1 集。
-            awemePlaylistProvider(queue, startIndex, wrap = false)
+            awemePlaylistProvider(queue, startIndex)
         },
         playlistMore = loadMore,
         mixEpisodes = panelEpisodes,

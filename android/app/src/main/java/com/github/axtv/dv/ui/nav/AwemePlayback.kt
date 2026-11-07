@@ -65,20 +65,18 @@ object PlaybackUrlResolver {
 /**
  * 用真实 aweme 列表构造播放器数据源。
  *
- * @param startIndex 首页点击的条目序号：把该条目旋转到队首，保证「点哪条先播哪条」，
- *                   连播仍按原列表顺序；不改变 PlayerSession 的换档/续播/兜底逻辑。
- * @param wrap false 时从 startIndex 播到队尾为止（合集「从这一集连播」不应回到第 1 集）。
+ * @param startIndex 起播条目序号：从这一条向后连播，队尾由调用方续页继续追加。
+ *                   不把 startIndex 之前的条目绕回队尾——那会让连播在「进场时已加载的
+ *                   列表」里循环，而不是继续拉新内容。
  */
 fun awemePlaylistProvider(
     awemes: List<Aweme>,
     startIndex: Int = 0,
-    wrap: Boolean = true,
 ): PlaylistProvider {
     val ordered = if (awemes.isEmpty()) {
         emptyList()
     } else {
-        val start = startIndex.coerceIn(0, awemes.lastIndex)
-        if (wrap) awemes.drop(start) + awemes.take(start) else awemes.drop(start)
+        awemes.drop(startIndex.coerceIn(0, awemes.lastIndex))
     }
     val entries = ordered.mapIndexed { index, aweme -> awemePlaylistEntry(aweme, index) }
     return VideoPlaylistProvider(entries).also {
