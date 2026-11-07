@@ -45,7 +45,7 @@
 
 - 系统要求：Android 8.0（API 26）及以上，适用于 Android TV 与电视盒子。
 - 从 Releases 下载 APK 后执行 `adb install -r AxTV.apk`，或在电视文件管理器中安装（需允许安装未知来源应用）。
-  通用包为 `AxTV-<版本>.apk`（含全部 ABI）；`AxTV-<版本>-arm64-v8a.apk` / `-armeabi-v7a` / `-x86` / `-x86_64` 是按 ABI 拆分的精简包，按设备架构选装即可。
+  通用包为 `AxTV-<版本>-all.apk`（含全部 ABI，资源名排序最靠前）；`AxTV-<版本>-arm64-v8a.apk` / `-armeabi-v7a` / `-x86` / `-x86_64` 是按 ABI 拆分的精简包，按设备架构选装即可。
 - 首次使用建议先在设置中完成登录：扫码或导入 Cookie。
 
 ## 构建与发布
@@ -60,8 +60,9 @@ cd android
 #   app-arm64-v8a-release.apk / app-armeabi-v7a-release.apk / app-x86-release.apk / app-x86_64-release.apk
 ```
 
-上传前按 `AxTV-<版本>[-<abi>].apk` 改名，先传通用包再传 ABI 包
-（旧客户端按资源顺序取第一个 apk）。release 构建请放在本地磁盘副本里跑，网络盘上 aapt2 会超时。
+上传前按 `AxTV-<版本>-all.apk` 与 `AxTV-<版本>-<abi>.apk` 改名，先传通用包再传 ABI 包。
+`-all` 在资源名排序里最靠前，旧客户端按顺序取第一个 apk 时也会拿到通用包。
+release 构建请放在本地磁盘副本里跑，网络盘上 aapt2 会超时。
 
 ## 已知限制
 
