@@ -36,6 +36,7 @@ replay_pid*.log
 
 # 本地构建/验收日志（禁止入库）
 *.log
+/tmp/
 docs/logs/
 *.class
 out/
