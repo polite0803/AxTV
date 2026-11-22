@@ -14,6 +14,8 @@
 | ZXing core | 3.5.3（Maven） | Apache-2.0 | 本地渲染二维码 |
 | AndroidX / Jetpack Compose / Media3 / WorkManager / Coil | 见 `android/gradle/libs.versions.toml` | Apache-2.0 | Android 运行时与 UI |
 | OkHttp | 4.12.0 | Apache-2.0 | HTTP 客户端 |
+| smbj | 0.15.0 | Apache-2.0 | SMB2/3 远端存储访问 |
+| slf4j-api / mbassador / asn-one | 随 smbj 传递依赖 | MIT / Apache-2.0 | smbj 日志与事件依赖 |
 
 QuickJS 的 `.so` 以预编译形式随仓库分发；其上游源码与构建方式见 <https://bellard.org/quickjs/>。
 分发 APK 时请一并保留上述许可证与版权声明。
