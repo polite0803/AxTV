@@ -1,5 +1,9 @@
 # AxTV 更新日志
 
+## 0.3.9
+
+- **修复 0.3.8 上线后的播放卡住 / 到处报错**：主站 a_bogus 恢复 0.3.5 已验证的 QuickJS bundle（纯算只保留给 login/live/creator 等 page_id 不同的 host）；禁用 OkHttp GET 的 P5 重试（30s 读超时 × 3 会让详情 / 取流接口卡住）；手机面板输入回调切回主线程再改 Compose 状态；登录成功后清除风控只读降级。
+
 ## 0.3.8
 
 - **短信验证码登录（P5）**：`PassportApi` 新增 `sendSmsCode` / `smsLogin`（login 域 page_id 6241），TV 登录页增加手机号 + 验证码入口；发送与登录复用同一 passport 实例，登录成功后会话 Cookie 与主 Cookie 按键合并再走 `profileSelf` 复核。
