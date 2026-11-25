@@ -1,5 +1,12 @@
 # AxTV 更新日志
 
+## 0.3.8
+
+- **短信验证码登录（P5）**：`PassportApi` 新增 `sendSmsCode` / `smsLogin`（login 域 page_id 6241），TV 登录页增加手机号 + 验证码入口；发送与登录复用同一 passport 实例，登录成功后会话 Cookie 与主 Cookie 按键合并再走 `profileSelf` 复核。
+- **通用手机文本通道（P5）**：核心层新增 `TextSession` / `TextSessionManager`（open/input/submit/close，context=search/comment/dm，一次性 token），9979/9980 与 `PanelRuntime` 接线；搜索、评论、私信共用同一通道但按 context 隔离，评论可回复楼层、私信在聊天页直接发送，旧 `PhoneSearchBridge` 保留兜底。
+- **健壮性与错误提示（P5）**：仅 GET/HEAD 对网络异常与 429/5xx 做有界重试（尊重 `Retry-After`，写请求不重试）；`ApiException` 新增 `RISK_CONTROL` / `NEED_VERIFY` / `CREDENTIAL_MISMATCH`，UI 统一出中文提示；收到 `X-Tt-Verify-Passport-Decision` 时停止写操作并降级只读；日志不输出 Cookie / ticket / dtrait / 私钥明文。
+- **私信与通知（P4）**：消息页接入通知分组与私信会话列表 / 聊天页，文本与表情包消息可收发，按 `server_message_id` 去重、断线指数退避重连。
+
 ## 0.3.7
 
 - **直播间实时事件全量接入（P3）**：
