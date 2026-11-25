@@ -1,5 +1,16 @@
 # AxTV 更新日志
 
+## 0.3.7
+
+- **直播间实时事件全量接入（P3）**：
+  - 抽出 `refactor/live/axtv/live/proto/ProtoReader.java` / `ProtoWriter.java`（varint / fixed32 / fixed64 / length-delimited / skip），`LiveFrameCodec` 改为委托它们，直播帧、直播业务消息、PK 与后续 IM 共用同一套编解码。
+  - 新增 `LiveEvent` / `LiveEventDecoder`：弹幕、进场、关注/互动、点赞、房间热度、礼物（含 `to_user` 送礼对象）、控制事件（直播结束/暂停）；未建模的 method 一律返回 null 并保留原消息，不影响既有弹幕链路。
+  - 新增 `PkStateTracker`：PK 开始 / 比分 / 阵营 / 结束的完整状态机，按 msgId 去重、结束事件去重、活跃战局上下文绑定、过期战局不覆盖新战局——判据与参考仓库 `dy_live/pk.py` 一致，并以参考仓库脱敏 wire 帧作黄金向量（`PkStateTrackerTest`）。
+  - `LiveWebSocketClient.Listener` 新增默认回调（礼物 / 进场 / 关注 / 点赞 / 热度 / 控制 / PK / 统一事件出口），旧回调行为不变。
+- **直播互动写操作与榜单接口**：`LiveApi` 新增 `sendChat`（`/webcast/room/chat/`）、`diggRoom`（`/webcast/room/like/`）、`pkRankArmies`（`/webcast/linkmic/battle/ranklist_armies/`）、`contributionRank`（`/webcast/ranklist/audience/`）、`payGradeSeats`（`/webcast/ranklist/paygrade_seats/`）。写操作带 bd-ticket-guard、`x-tt-session-dtrait` 与 csrf，Origin/Referer 走 live 域；未登录时明确报「需要登录」而不是发出必然失败的请求。请求形状由 `LiveApiRequestShapeTest` 固定。
+- **直播间 UI**：顶栏显示热度与点赞总数；PK 期间右上角浮出比分面板；MENU 打开互动面板（发弹幕 / 点赞 / 榜单 / 事件分类开关）；点赞按 100ms 窗口聚合后再刷 UI；列表样式的弹幕面板同时显示礼物与互动事件摘要。
+- **直播发弹幕的输入通道**：电视端输入框直接输入，或用手机面板（9979/9980）输入后点发送；直播使用独立于搜索页的输入桥（`LiveChatBridge`），搜索页与直播间可同时打开而互不覆盖回调。
+
 ## 0.3.6
 
 - **推荐/精选流改用模块流 v1（参考 DouYin_Spider `get_feed`）**：
