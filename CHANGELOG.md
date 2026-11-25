@@ -1,5 +1,14 @@
 # AxTV 更新日志
 
+## 0.3.6
+
+- **推荐/精选流改用模块流 v1（参考 DouYin_Spider `get_feed`）**：
+  - 参考仓库 `get_feed` 实际请求的是 **GET `/aweme/v1/web/module/feed/`（v1）**，不是 v2 POST；“module/feed 只认 POST”只对 v2 成立。v1 在携带完整浏览器参数、至少一个风险标识（`a_bogus` / `msToken` / `verifyFp`）、匿名 `ttwid` 与合法 `Referer`（`https://www.douyin.com/`）时可直接返回 JSON。
+  - 2026-11-25 匿名实测：同参数下 `tab/feed` 只回 2 条，v1 `module/feed` 回 19~20 条；推荐流与精选「全部」因此改走 v1，`tab/feed` 仅作兜底。
+  - 精选具体分区走 v1 → ttwid 轮换后重试 v1 → v2 POST → 404/不可用时降级 `tab/feed` 并标注为非精选内容。`moduleFeed` 的 `tag_id` 为空串时表示“无分区模块流”（与 `get_feed` 同形），不再把「全部」伪装成首页推荐。
+  - 请求形状对齐参考实现：按固定顺序发参，`verifyFp/fp` 在 `a_bogus` 之后追加；`webFeedParams()` 只注入 `msToken/uifid/webid` 与设备参数，避免签名串提前包含 `verifyFp`。
+- **精选 WebView 兜底不再掩盖真实错误**：原生返回未登录/限流/风控等明确错误时，不再触发 42 秒页面请求兜底并清空错误；只有原生静默返回空内容时才尝试磁盘缓存或 WebView 兜底。
+
 ## 0.3.5
 
 - **修复 SMB 认证在部分设备上必然失败**：smbj 0.15.0 的 NTLMv2 实现无条件调用
