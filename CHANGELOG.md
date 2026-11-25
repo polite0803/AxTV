@@ -3,6 +3,10 @@
 ## 0.3.9
 
 - **修复 0.3.8 上线后的播放卡住 / 到处报错**：主站 a_bogus 恢复 0.3.5 已验证的 QuickJS bundle（纯算只保留给 login/live/creator 等 page_id 不同的 host）；禁用 OkHttp GET 的 P5 重试（30s 读超时 × 3 会让详情 / 取流接口卡住）；手机面板输入回调切回主线程再改 Compose 状态；登录成功后清除风控只读降级。
+- **修复设置页账号状态与 Cookie 加密**：扫码登录后账号列表与当前登录状态同步刷新；Keystore AES/GCM 改为由系统生成随机 IV，不再报 `Caller-provided IV not permitted`，登录态可持久化。
+- **修复 module/feed 推荐流与取流**：Android 签名提供器改为纯算优先、QuickJS bundle 兜底，v1 模块流不再返回空体；播放地址遇到十六进制密文串时改用 `/aweme/v1/play/?video_id={uri}` 走 302 取真实 CDN 直链，不再抛 `Malformed URL`（ExoPlayer code=1004）。
+- **修复播放埋点与观看历史 403**：`aweme/stats` 与 `history/write` 补上原版固定的 `X-Secsdk-Csrf-Token: DOWNGRADE` 头；实测缺头时服务端回 `blocked` / HTTP 403，补头后接口正常受理。
+- **修复面板地址与二维码弹窗**：局域网地址扫描跳过 `10.0.2.` 模拟器 NAT 地址，二维码弹窗底部不再被截断。
 
 ## 0.3.8
 
